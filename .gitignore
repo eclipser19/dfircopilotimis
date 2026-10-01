@@ -1,0 +1,18 @@
+# Velociraptor API client config (contains private key + certs) — never commit
+api_client.yaml
+*.config.yaml
+
+# Secrets
+.env
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated reports / evidence output
+reports/
+output/
