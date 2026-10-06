@@ -46,10 +46,84 @@ def restart_conversation(note: str):
 
 
 def after_possible_switch():
+    if cases.consume_settings_change():
+        st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
     if cases.consume_switch():
         restart_conversation(f"📁 **Now in case `{cases.current_id()}` — {case_config.case_name}.** "
                              f"Fresh conversation; earlier messages belong to the previous case.")
         st.rerun()
+
+
+IOC_LABELS = {"ips": "IP addresses", "domains": "Domains", "hashes": "Hashes", "filenames": "File names",
+              "users": "Accounts"}
+
+
+def ioc_fields(prefix: str, initial: dict = None):
+    """IOC text areas (one value per line) with free and AI extraction from the description."""
+    st.markdown("**IOCs** (one per line)")
+    c1, c2 = st.columns(2)
+    c1.button("Extract from description", key=prefix + "extract", on_click=extract_iocs_cb, args=(prefix, False),
+              help="Pattern based, free: IPs, domains, hashes, file names, accounts (also defanged).")
+    c2.button("✨ AI extract", key=prefix + "ai_extract", on_click=extract_iocs_cb, args=(prefix, True),
+              disabled="llm" not in st.session_state,
+              help="One small LLM call; catches what patterns miss. Values are checked against the text.")
+    for kind, label in IOC_LABELS.items():
+        st.text_area(label, value="\n".join((initial or {}).get(kind, [])), key=f"{prefix}ioc_{kind}", height=68)
+
+
+def _ioc_values(prefix: str) -> dict:
+    return {k: [v.strip() for v in st.session_state.get(f"{prefix}ioc_{k}", "").splitlines() if v.strip()]
+            for k in IOC_LABELS}
+
+
+def extract_iocs_cb(prefix: str, use_llm: bool):
+    from copilot.iocs import extract_iocs, llm_extract_iocs, merge
+    text = st.session_state.get(prefix + "desc", "")
+    found = extract_iocs(text)
+    if use_llm and "llm" in st.session_state:
+        try:
+            found = merge(found, llm_extract_iocs(st.session_state.llm, text))
+        except Exception as e:  # network/API errors: keep the free result
+            st.session_state.cs_message = f"AI extraction failed: {e}"
+    combined = merge(_ioc_values(prefix), found)
+    for kind in IOC_LABELS:
+        st.session_state[f"{prefix}ioc_{kind}"] = "\n".join(combined[kind])
+
+
+def create_case_cb():
+    st.session_state.nc_error = ""
+    case_id = st.session_state.get("nc_id", "").strip()
+    copy_from = st.session_state.get("nc_copy")
+    try:
+        cases.create(case_id, st.session_state.get("nc_name", "").strip(),
+                     st.session_state.get("nc_client", "").strip(), st.session_state.get("nc_start", "").strip(),
+                     st.session_state.get("nc_end", "").strip(), st.session_state.get("nc_desc", "").strip(),
+                     int(st.session_state.get("nc_offset", 0)), _ioc_values("nc_"),
+                     None if copy_from in (None, "(none)") else copy_from)
+        cases.switch(case_id)
+    except cases.CaseError as e:
+        st.session_state.nc_error = str(e)
+        return
+    for key in [k for k in st.session_state if str(k).startswith("nc_")]:
+        del st.session_state[key]
+    cases.consume_switch()
+    restart_conversation(f"📁 **Created and opened case `{case_id}` — {case_config.case_name}.**"
+                         + (f" Collected data copied from `{copy_from}`." if copy_from not in (None, "(none)") else ""))
+
+
+def save_settings_cb(case_id: str):
+    p = f"cs_{case_id}_"
+    try:
+        cases.update(case_id, name=st.session_state[p + "name"], client_id=st.session_state[p + "client"],
+                     start_time=st.session_state[p + "start"], end_time=st.session_state[p + "end"],
+                     clock_offset_minutes=int(st.session_state[p + "offset"]),
+                     description=st.session_state[p + "desc"], iocs=_ioc_values(p))
+    except cases.CaseError as e:
+        st.session_state.cs_message = f"❌ {e}"
+        return
+    cases.consume_settings_change()
+    st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
+    st.session_state.cs_message = "✅ Saved. The agent now works with the new settings."
 
 
 # This app is meant for one investigator at a time: the approval hook and the active case are process-wide.
@@ -193,6 +267,7 @@ with st.sidebar:
         # Kept in this browser session only; never written to os.environ.
         st.session_state.current_api_key = api_key_input
         llm = make_llm(api_key_input)
+        st.session_state.llm = llm
         st.session_state.llm_with_tools = llm.bind_tools(tools)
         st.session_state.finalizer = llm.bind_tools(tools, tool_choice="none")
 
@@ -208,23 +283,40 @@ with st.sidebar:
         cases.switch(picked)
         after_possible_switch()
     with st.expander("➕ New case", expanded=False):
-        with st.form("new_case", clear_on_submit=True):
-            new_id = st.text_input("Case ID (folder name)", placeholder="acme-ws42")
-            new_name = st.text_input("Name", placeholder="ACME workstation 42")
-            new_client = st.text_input("Velociraptor client ID", placeholder="C.1234abcd...")
+        st.caption("Fields marked * are required. The client ID can be added later, but is needed to collect.")
+        st.text_input("Case ID *", placeholder="acme-ws42", key="nc_id",
+                      help="Folder name: letters, digits, - and _")
+        st.text_input("Name *", placeholder="ACME workstation 42", key="nc_name")
+        st.text_input("Velociraptor client ID", placeholder="C.1234abcd...", key="nc_client")
+        c1, c2 = st.columns(2)
+        c1.text_input("Window start (UTC)", placeholder="2024-01-15T00:00:00Z", key="nc_start")
+        c2.text_input("Window end (UTC)", placeholder="2024-01-17T00:00:00Z", key="nc_end")
+        st.number_input("Host clock ahead of UTC (minutes)", value=0, step=15, key="nc_offset")
+        st.text_area("What happened / what to find out", key="nc_desc")
+        ioc_fields("nc_")
+        sources = ["(none)"] + [c["id"] for c in case_rows if c["has_data"]]
+        st.selectbox("Copy collected data from", sources, key="nc_copy",
+                     help="Only cases on the same evidence client. Findings are not copied.")
+        st.button("Create and open", type="primary", on_click=create_case_cb)
+        if st.session_state.get("nc_error"):
+            st.error(st.session_state.nc_error)
+
+    if cases.current_id() != cases.LEGACY_ID:
+        with st.expander("⚙️ Case settings", expanded=False):
+            cid = cases.current_id()
+            p = f"cs_{cid}_"
+            st.text_input("Name *", value=case_config.case_name, key=p + "name")
+            st.text_input("Velociraptor client ID", value=case_config.client_id, key=p + "client")
             c1, c2 = st.columns(2)
-            new_start = c1.text_input("Window start (UTC)", placeholder="2024-01-15T00:00:00Z")
-            new_end = c2.text_input("Window end (UTC)", placeholder="2024-01-17T00:00:00Z")
-            new_offset = st.number_input("Host clock ahead of UTC (minutes)", value=0, step=15)
-            new_desc = st.text_area("What happened / what to find out")
-            if st.form_submit_button("Create and open"):
-                try:
-                    cases.create(new_id.strip(), new_name.strip(), new_client.strip(), new_start.strip(),
-                                 new_end.strip(), new_desc.strip(), int(new_offset))
-                    cases.switch(new_id.strip())
-                    after_possible_switch()
-                except cases.CaseError as e:
-                    st.error(str(e))
+            c1.text_input("Window start (UTC)", value=case_config.start_time, key=p + "start")
+            c2.text_input("Window end (UTC)", value=case_config.end_time, key=p + "end")
+            st.number_input("Host clock ahead of UTC (minutes)", value=case_config.clock_offset_minutes,
+                            step=15, key=p + "offset")
+            st.text_area("Description", value=case_config.description, key=p + "desc")
+            ioc_fields(p, case_config.iocs)
+            st.button("Save settings", on_click=save_settings_cb, args=(cid,))
+            if st.session_state.get("cs_message"):
+                st.caption(st.session_state.cs_message)
     st.text(f"{case_config.case_name}\nAnalyst: {case_config.analyst}")
     if case_config.client_id_error:
         st.warning(case_config.client_id_error)

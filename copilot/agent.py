@@ -87,6 +87,9 @@ def run_agent_loop():
     chat_history = [SystemMessage(content=build_system_prompt(case_config))]
 
     def restart_if_switched():
+        if cases.consume_settings_change():
+            chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
+            print("\n[*] Case settings updated.")
         if cases.consume_switch():
             chat_history[:] = [SystemMessage(content=build_system_prompt(case_config))]
             print(f"\n=== Now in case '{cases.current_id()}': {case_config.case_name} "

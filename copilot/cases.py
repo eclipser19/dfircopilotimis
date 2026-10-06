@@ -16,13 +16,14 @@ from datetime import date
 
 import yaml
 
-from copilot.case_config import case_config, cases_dir
+from copilot.case_config import CLIENT_ID_RE, case_config, cases_dir
 from copilot.database import case_db, data_dir_for
 
 CASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 LEGACY_ID = "default"
 
 _switched = False
+_settings_changed = False
 
 
 class CaseError(Exception):
@@ -96,8 +97,26 @@ def consume_switch() -> bool:
 
 
 def create(case_id: str, name: str, client_id: str = "", start_time: str = "", end_time: str = "",
-           description: str = "", clock_offset_minutes: int = 0) -> str:
-    """Creates cases/<case_id>/case.yaml from the template (does not switch to it)."""
+           description: str = "", clock_offset_minutes: int = 0, iocs: dict = None,
+           copy_from: str = None) -> str:
+    """
+    Creates cases/<case_id>/case.yaml from the template (does not switch to it).
+    Required: case_id and name. IOCs are validated; copy_from copies another case's
+    collected data (same evidence client only; findings are not copied).
+    """
+    from copilot.iocs import clean
+    if not (name or "").strip():
+        raise CaseError("A case name is required.")
+    if client_id and not CLIENT_ID_RE.match(client_id):
+        raise CaseError(f"'{client_id}' is not a valid Velociraptor client ID (expected C.<hex>).")
+    source = None
+    if copy_from:
+        source = _read(copy_from)
+        source_client = (source.get("velociraptor", {}) or {}).get("client_id", "")
+        if client_id and source_client and client_id != source_client:
+            raise CaseError(f"Case '{copy_from}' is about client {source_client}, not {client_id}: "
+                            f"data can only be copied between cases on the same evidence.")
+        client_id = client_id or source_client
     from copilot.normalize import normalize_bound
     if not CASE_ID_RE.match(case_id or "") or case_id == LEGACY_ID:
         raise CaseError("Case ID must be 1-64 letters, digits, - or _ (and not 'default').")
@@ -114,7 +133,7 @@ def create(case_id: str, name: str, client_id: str = "", start_time: str = "", e
         "velociraptor": {"client_id": client_id or "", "collection_wait_seconds": 300},
         "scope": {"start_time": start_time or "", "end_time": end_time or "",
                   "clock_offset_minutes": int(clock_offset_minutes or 0), "description": description or ""},
-        "iocs": {"hashes": [], "ips": [], "domains": [], "filenames": [], "users": []},
+        "iocs": clean(iocs or {}),
         "collect": ["Generic.Client.Info", "Windows.EventLogs.RDPAuth", "Windows.Sys.StartupItems",
                     "Windows.Timeline.Prefetch", "Windows.System.TaskScheduler"],
         "collection": {"max_rows": 50000, "apply_time_window": True, "agent_collections": "confirm"},
@@ -125,7 +144,112 @@ def create(case_id: str, name: str, client_id: str = "", start_time: str = "", e
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"# Created by DFIR Copilot. Edit freely; see cases/szechuan/case.yaml for all options.\n")
         yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+    if copy_from:
+        copy_data(copy_from, case_id)
     return path
+
+
+def _read(case_id: str) -> dict:
+    path = _case_file(case_id)
+    if not os.path.isfile(path):
+        raise CaseError(f"No case '{case_id}'.")
+    with open(path, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+# Settings the UI and the agent may change on an existing case.
+EDITABLE = {"name", "client_id", "start_time", "end_time", "description", "clock_offset_minutes", "iocs"}
+
+
+def update(case_id: str, **changes) -> dict:
+    """
+    Changes a case's settings (name, client_id, window, description, clock offset, IOCs).
+    Rewrites its case.yaml (comments in the file are not kept). Reloads it if active.
+    """
+    global _settings_changed
+    from copilot.iocs import clean
+    from copilot.normalize import normalize_bound
+    unknown = set(changes) - EDITABLE
+    if unknown:
+        raise CaseError(f"Cannot change: {', '.join(sorted(unknown))}.")
+    data = _read(case_id)
+    if "name" in changes:
+        if not str(changes["name"]).strip():
+            raise CaseError("A case name is required.")
+        data.setdefault("case", {})["name"] = str(changes["name"]).strip()
+    if "client_id" in changes:
+        cid = str(changes["client_id"] or "").strip()
+        if cid and not CLIENT_ID_RE.match(cid):
+            raise CaseError(f"'{cid}' is not a valid Velociraptor client ID (expected C.<hex>).")
+        data.setdefault("velociraptor", {})["client_id"] = cid
+    scope = data.setdefault("scope", {})
+    for key in ("start_time", "end_time"):
+        if key in changes:
+            try:
+                normalize_bound(changes[key])
+            except ValueError as e:
+                raise CaseError(f"{key}: {e}")
+            scope[key] = changes[key] or ""
+    if "description" in changes:
+        scope["description"] = changes["description"] or ""
+    if "clock_offset_minutes" in changes:
+        scope["clock_offset_minutes"] = int(changes["clock_offset_minutes"] or 0)
+    if "iocs" in changes:
+        data["iocs"] = clean(changes["iocs"])
+    path = _case_file(case_id)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("# Managed by DFIR Copilot (edits from the app rewrite this file).\n")
+        yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+    if case_id == current_id():
+        case_config.switch(path)
+        _settings_changed = True
+    return data
+
+
+def consume_settings_change() -> bool:
+    """True once after the active case's settings changed: refresh the system prompt."""
+    global _settings_changed
+    changed, _settings_changed = _settings_changed, False
+    return changed
+
+
+def copy_data(source_id: str, target_id: str) -> dict:
+    """
+    Copies collected data (records, timeline, search index, collections) from one case to
+    another on the same evidence client. Findings, outputs and the audit trail stay behind;
+    the copy itself is written to the target's audit log.
+    """
+    import sqlite3
+    from copilot.database import CaseDatabase
+    source_data, target_data = _read(source_id), _read(target_id)
+    src_client = (source_data.get("velociraptor", {}) or {}).get("client_id", "")
+    dst_client = (target_data.get("velociraptor", {}) or {}).get("client_id", "")
+    if src_client and dst_client and src_client != dst_client:
+        raise CaseError(f"Cases are on different evidence clients ({src_client} vs {dst_client}).")
+    src_db = os.path.join(data_dir_for(_case_file(source_id)), "case.db")
+    if not os.path.isfile(src_db):
+        raise CaseError(f"Case '{source_id}' has no data yet.")
+    target = CaseDatabase(data_dir_for(_case_file(target_id)))
+    counts = {}
+    try:
+        target.conn.execute("ATTACH DATABASE ? AS src", (src_db,))
+        for table in ("records", "timeline", "collections"):
+            before = target.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            target.conn.execute(f"INSERT OR IGNORE INTO {table} SELECT * FROM src.{table}")
+            counts[table] = target.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] - before
+        if target.has_fts:
+            try:
+                target.conn.execute("INSERT INTO records_fts (evidence_id, text) SELECT s.evidence_id, s.text "
+                                    "FROM src.records_fts s WHERE s.evidence_id NOT IN "
+                                    "(SELECT evidence_id FROM records_fts)")
+            except sqlite3.OperationalError:
+                pass
+        target.conn.commit()
+        target.conn.execute("DETACH DATABASE src")
+        target.log_query("copy_case_data", f"from case {source_id} ({src_db})", counts["records"])
+    finally:
+        target.conn.close()
+    return counts
 
 
 def legacy_data_hint() -> str:

@@ -54,8 +54,8 @@ explanations itself; you write the executive summary, correlations and recommend
 - `Generic.Client.Info` — Basic system info
 
 ## CASES
-The investigator may have several cases. Use `list_cases`, `switch_case` and `create_case` only
-when they ask; everything else always concerns the active case described above.
+The investigator may have several cases. Use `list_cases`, `switch_case`, `create_case` and
+`update_case` only when they ask; everything else always concerns the active case described above.
 
 ## RULES
 1. The database starts empty. Collect before querying, and never report "nothing found"

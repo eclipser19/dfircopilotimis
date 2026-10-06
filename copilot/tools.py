@@ -639,26 +639,70 @@ def switch_case(case_id: str) -> str:
 @tool
 def create_case(case_id: str, name: str, client_id: Optional[str] = None, start_time: Optional[str] = None,
                 end_time: Optional[str] = None, description: Optional[str] = None,
-                clock_offset_minutes: Optional[int] = None) -> str:
+                clock_offset_minutes: Optional[int] = None, iocs: Optional[dict] = None,
+                copy_data_from: Optional[str] = None) -> str:
     """
     Creates a new investigation from what the investigator told you (does not switch to it).
     Only when the investigator asks. Use details they gave; leave the rest empty.
+    IOCs mentioned in the description are also extracted automatically.
     Args:
-        case_id: Short ID for the folder, e.g. 'acme-ws42' (letters, digits, - and _).
-        name: Case name.
+        case_id: Short ID for the folder, e.g. 'acme-ws42' (letters, digits, - and _). Required.
+        name: Case name. Required.
         client_id: Velociraptor client ID of the dead-disk image (C.xxxx), if known.
         start_time: Incident window start, ISO 8601 UTC. Optional.
         end_time: Incident window end, ISO 8601 UTC. Optional.
         description: What happened / what to determine, in the investigator's words.
         clock_offset_minutes: How far the host clock ran ahead of UTC, if known.
+        iocs: Known indicators: {"ips": [], "domains": [], "hashes": [], "filenames": [], "users": []}.
+        copy_data_from: ID of a case on the SAME evidence whose collected data should be copied
+                        (saves re-collecting; findings are not copied).
     """
     from copilot import cases
+    from copilot.iocs import extract_iocs, merge
+    all_iocs = merge(iocs or {}, extract_iocs(description or ""))
     try:
         path = cases.create(case_id, name, client_id or "", start_time or "", end_time or "",
-                            description or "", clock_offset_minutes or 0)
+                            description or "", clock_offset_minutes or 0, all_iocs, copy_data_from)
     except cases.CaseError as e:
         return str(e)
-    return f"Created case '{case_id}' at {path}. Ask the investigator whether to switch to it."
+    found = {k: v for k, v in all_iocs.items() if v}
+    return (f"Created case '{case_id}' at {path}." + (f" IOCs: {_dump(found)}." if found else "") +
+            (f" Collected data copied from '{copy_data_from}'." if copy_data_from else "") +
+            " Ask the investigator whether to switch to it.")
+
+
+@tool
+def update_case(client_id: Optional[str] = None, start_time: Optional[str] = None, end_time: Optional[str] = None,
+                description: Optional[str] = None, clock_offset_minutes: Optional[int] = None,
+                add_iocs: Optional[dict] = None, remove_iocs: Optional[dict] = None) -> str:
+    """
+    Changes the ACTIVE case's settings. Only when the investigator asks (e.g. "add 1.2.3.4 as an
+    IOC", "the window is actually 18-19 Sept"). Pass only what changes.
+    Args:
+        client_id: New Velociraptor client ID.
+        start_time: New window start (ISO 8601 UTC).
+        end_time: New window end (ISO 8601 UTC).
+        description: New description.
+        clock_offset_minutes: Host clock offset ahead of UTC.
+        add_iocs: IOCs to add, e.g. {"ips": ["1.2.3.4"]}.
+        remove_iocs: IOCs to remove, same shape.
+    """
+    from copilot import cases
+    from copilot.iocs import clean, merge
+    changes = {k: v for k, v in {"client_id": client_id, "start_time": start_time, "end_time": end_time,
+                                 "description": description,
+                                 "clock_offset_minutes": clock_offset_minutes}.items() if v is not None}
+    if add_iocs or remove_iocs:
+        current = merge(case_config.iocs, add_iocs or {})
+        drop = clean(remove_iocs or {})
+        changes["iocs"] = {k: [v for v in current[k] if v not in drop[k]] for k in current}
+    if not changes:
+        return "Nothing to change."
+    try:
+        cases.update(cases.current_id(), **changes)
+    except cases.CaseError as e:
+        return str(e)
+    return f"Updated the active case: {', '.join(changes)}. Case context: {case_config.build_system_context()}"
 
 
 # Set by the Streamlit sidebar for the session; otherwise the case file decides.
@@ -722,7 +766,7 @@ tools = [
     activity_histogram, context_window, query_timeline, search_iocs, pivot_entity, get_event_detail,
     case_summary, record_finding, retract_finding, dfir_guide,
     generate_report, export_case, export_results, export_evidence,
-    list_cases, switch_case, create_case,
+    list_cases, switch_case, create_case, update_case,
 ]
 if case_config.allow_raw_vql:
     tools.append(server_vql_query)

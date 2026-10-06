@@ -130,3 +130,41 @@ def test_chat_command_switches_case_without_llm(app_env, tmp_path, monkeypatch):
     assert "Now in case `beta`" in _texts(at)
     assert len(at.session_state["chat_history"]) == 1         # fresh conversation: system prompt only
     cases.consume_switch()
+
+
+def test_new_case_form_extracts_iocs_and_creates(app_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("DFIR_CASES_DIR", str(tmp_path / "cases"))
+    monkeypatch.setenv("DFIR_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("DFIR_CASE_DIR", raising=False)
+    monkeypatch.setattr(case_config, "path", case_config.path)
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.text_input(key="nc_name").input("Guided Szechuan").run()
+    at.text_area(key="nc_desc").input("Brute force from 194[.]61[.]24[.]102, payload coreupdater.exe").run()
+    next(b for b in at.button if b.label == "Extract from description").click().run()
+    assert at.text_area(key="nc_ioc_ips").value == "194.61.24.102"
+    assert at.text_area(key="nc_ioc_filenames").value == "coreupdater.exe"
+    next(b for b in at.button if b.label == "Create and open").click().run()
+    assert "Case ID must be" in _texts(at) or at.error                 # required field missing
+    at.text_input(key="nc_id").input("szechuan-guided").run()
+    next(b for b in at.button if b.label == "Create and open").click().run()
+    assert not at.exception
+    assert case_config.case_name == "Guided Szechuan" and case_config.iocs["ips"] == ["194.61.24.102"]
+    assert "Created and opened case `szechuan-guided`" in _texts(at)
+    cases.consume_switch()
+
+
+def test_case_settings_panel_saves(app_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("DFIR_CASES_DIR", str(tmp_path / "cases"))
+    monkeypatch.setenv("DFIR_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("DFIR_CASE_DIR", raising=False)
+    monkeypatch.setattr(case_config, "path", case_config.path)
+    cases.create("beta", "Beta laptop")
+    cases.switch("beta")
+    cases.consume_switch()
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.text_area(key="cs_beta_ioc_ips").input("10.0.0.5\nnot-an-ip").run()
+    at.number_input(key="cs_beta_offset").set_value(60).run()
+    next(b for b in at.button if b.label == "Save settings").click().run()
+    assert not at.exception
+    assert case_config.iocs["ips"] == ["10.0.0.5"] and case_config.clock_offset_minutes == 60
+    assert "10.0.0.5" in at.session_state["chat_history"][0].content     # the agent sees the new settings

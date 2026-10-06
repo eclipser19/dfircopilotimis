@@ -64,6 +64,14 @@ case_data/<case-id>/outputs/     reports and exports (unless output.dir is set)
   words ("switch to the szechuan case", "create a case for host X"). In Streamlit there is
   also a case picker and a "New case" form in the sidebar.
 - Switching starts a fresh conversation, so nothing from one case leaks into another.
+- Everything is editable from the app (no file access needed): the sidebar's **New case** form
+  (Case ID and Name required; the client ID is needed before collecting) and **Case settings**
+  for the active case (client, window, clock offset, description, IOCs). IOCs can be pulled from
+  the description for free (patterns, including defanged `1.2.3[.]4` / `hxxp://`) or with
+  **✨ AI extract** (one small LLM call; values must appear in the text). Saving rewrites the
+  case.yaml without its comments.
+- A new case on the same evidence can **copy the collected data** of another case instead of
+  re-collecting (same client ID only; findings are not copied). Ask the agent or use the form.
 - `DFIR_CASES_DIR` and `DFIR_DATA_DIR` change the two root folders.
 
 The active case is process-wide: run one Streamlit app per investigator.
