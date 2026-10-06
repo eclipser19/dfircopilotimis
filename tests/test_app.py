@@ -8,7 +8,7 @@ pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 import copilot.database as database  # noqa: E402
-from copilot import collection, outputs, tools  # noqa: E402
+from copilot import cases, collection, outputs, tools  # noqa: E402
 from copilot.case_config import case_config  # noqa: E402
 from copilot.database import CaseDatabase  # noqa: E402
 from conftest import CLIENT, FakeVQL  # noqa: E402
@@ -29,7 +29,7 @@ class ScriptedLLM:
 @pytest.fixture
 def app_env(tmp_path, monkeypatch):
     db = CaseDatabase(str(tmp_path))
-    for module in (database, collection, tools, outputs):
+    for module in (database, collection, tools, outputs, cases):
         monkeypatch.setattr(module, "case_db", db)
     monkeypatch.setenv("DFIR_OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -115,3 +115,18 @@ def test_sidebar_report_format_reaches_the_tool(app_env):
     at = AppTest.from_file(APP, default_timeout=30).run()
     at.multiselect(key="report_formats").select("md").run()
     assert tools.REPORT_FORMATS == ["html", "md"]
+
+
+def test_chat_command_switches_case_without_llm(app_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("DFIR_CASES_DIR", str(tmp_path / "cases"))
+    monkeypatch.setenv("DFIR_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("DFIR_CASE_DIR", raising=False)
+    monkeypatch.setattr(case_config, "path", case_config.path)
+    cases.create("beta", "Beta laptop")
+    at = AppTest.from_file(APP, default_timeout=30).run()   # no LLM configured at all
+    at.chat_input[0].set_value("/case beta").run()
+    assert not at.exception
+    assert case_config.case_name == "Beta laptop"
+    assert "Now in case `beta`" in _texts(at)
+    assert len(at.session_state["chat_history"]) == 1         # fresh conversation: system prompt only
+    cases.consume_switch()

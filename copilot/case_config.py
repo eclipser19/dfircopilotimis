@@ -68,11 +68,25 @@ AGENT_COLLECTION_MODES = ("confirm", "auto", "off")
 CLIENT_ID_RE = re.compile(r"^C\.[0-9a-fA-F]{8,32}$")
 
 
+def cases_dir() -> str:
+    """Folder holding one sub-folder per case: <cases_dir>/<case-id>/case.yaml."""
+    return os.environ.get("DFIR_CASES_DIR", "cases")
+
+
+def initial_case_file() -> str:
+    """DFIR_CASE_FILE, else the case named by DFIR_CASE, else the legacy root case.yaml."""
+    if os.environ.get("DFIR_CASE_FILE"):
+        return os.environ["DFIR_CASE_FILE"]
+    if os.environ.get("DFIR_CASE"):
+        return os.path.join(cases_dir(), os.environ["DFIR_CASE"], "case.yaml")
+    return "case.yaml"
+
+
 class CaseConfig:
     """Loads and provides access to the case.yaml scope file."""
 
     def __init__(self, path=None):
-        self.path = path or os.environ.get("DFIR_CASE_FILE", "case.yaml")
+        self.path = path or initial_case_file()
         self.data = {}
         self._load()
 
@@ -80,6 +94,12 @@ class CaseConfig:
         if os.path.exists(self.path):
             with open(self.path, "r", encoding="utf-8") as f:
                 self.data = yaml.safe_load(f) or {}
+
+    def switch(self, path: str):
+        """Loads another case file in place (every module holding case_config sees it)."""
+        self.path = path
+        self.data = {}
+        self._load()
 
     @property
     def case_name(self) -> str:

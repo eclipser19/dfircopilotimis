@@ -4,7 +4,7 @@ import os
 import streamlit as st
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from copilot import collection, outputs, tools as copilot_tools
+from copilot import cases, collection, commands, outputs, tools as copilot_tools
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
 from copilot.database import case_db
@@ -37,7 +37,22 @@ def queue_request(artifact: str, params: dict):
     return "queued"
 
 
-# This app is meant for one investigator at a time: the approval hook is process-wide.
+def restart_conversation(note: str):
+    """After a case switch: new system prompt for the new case, fresh agent context."""
+    st.session_state.chat_history = [SystemMessage(content=build_system_prompt(case_config))]
+    st.session_state.pending = []
+    st.session_state.triage_dismissed = False
+    st.session_state.messages.append({"role": "assistant", "content": note})
+
+
+def after_possible_switch():
+    if cases.consume_switch():
+        restart_conversation(f"📁 **Now in case `{cases.current_id()}` — {case_config.case_name}.** "
+                             f"Fresh conversation; earlier messages belong to the previous case.")
+        st.rerun()
+
+
+# This app is meant for one investigator at a time: the approval hook and the active case are process-wide.
 collection.CONFIRM = queue_request
 
 
@@ -183,6 +198,33 @@ with st.sidebar:
 
     st.divider()
     st.subheader("📁 Case")
+    case_rows = cases.list_cases()
+    current = cases.current_id()
+    names = {c["id"]: c["name"] for c in case_rows}
+    ids = list(names) if current in names else [current] + list(names)
+    picked = st.selectbox("Active case", ids, index=ids.index(current),
+                          format_func=lambda i: f"{i} — {names.get(i, case_config.case_name)}")
+    if picked != current:
+        cases.switch(picked)
+        after_possible_switch()
+    with st.expander("➕ New case", expanded=False):
+        with st.form("new_case", clear_on_submit=True):
+            new_id = st.text_input("Case ID (folder name)", placeholder="acme-ws42")
+            new_name = st.text_input("Name", placeholder="ACME workstation 42")
+            new_client = st.text_input("Velociraptor client ID", placeholder="C.1234abcd...")
+            c1, c2 = st.columns(2)
+            new_start = c1.text_input("Window start (UTC)", placeholder="2024-01-15T00:00:00Z")
+            new_end = c2.text_input("Window end (UTC)", placeholder="2024-01-17T00:00:00Z")
+            new_offset = st.number_input("Host clock ahead of UTC (minutes)", value=0, step=15)
+            new_desc = st.text_area("What happened / what to find out")
+            if st.form_submit_button("Create and open"):
+                try:
+                    cases.create(new_id.strip(), new_name.strip(), new_client.strip(), new_start.strip(),
+                                 new_end.strip(), new_desc.strip(), int(new_offset))
+                    cases.switch(new_id.strip())
+                    after_possible_switch()
+                except cases.CaseError as e:
+                    st.error(str(e))
     st.text(f"{case_config.case_name}\nAnalyst: {case_config.analyst}")
     if case_config.client_id_error:
         st.warning(case_config.client_id_error)
@@ -252,6 +294,10 @@ with st.sidebar:
 # Main area
 # ==========================================
 st.title("Interactive Investigation")
+st.caption(f"Case `{cases.current_id()}` — {case_config.case_name} · type `/help` for free commands")
+hint = cases.legacy_data_hint()
+if hint:
+    st.warning(hint)
 
 for i, msg in enumerate(st.session_state.messages):
     render_message(msg, i)
@@ -278,7 +324,14 @@ if action:
         resolve_request(arg, approved=(kind == "approve"))
         st.rerun()
 
-if prompt := st.chat_input("Ask the copilot to investigate..."):
+if prompt := st.chat_input("Ask the copilot to investigate... (/help for commands)"):
+    reply = commands.handle(prompt)
+    if reply is not None:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        st.session_state.messages.append({"role": "assistant", "content": reply})
+        after_possible_switch()
+        st.rerun()
     agent_turn(prompt)
+    after_possible_switch()
     if st.session_state.pending:
         st.rerun()  # show the new approval requests in the sidebar

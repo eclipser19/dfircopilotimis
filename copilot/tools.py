@@ -612,6 +612,55 @@ def export_case(include_csv: bool = True) -> str:
     )
 
 
+@tool
+def list_cases() -> str:
+    """Lists all investigations (cases): ID, name, evidence client, whether it has data, and which is active."""
+    from copilot import cases
+    return _dump(cases.list_cases())
+
+
+@tool
+def switch_case(case_id: str) -> str:
+    """
+    Makes another case the active investigation. Only when the investigator asks to.
+    The conversation restarts in the new case after this turn, so finish your answer briefly.
+    Args:
+        case_id: The case ID from list_cases.
+    """
+    from copilot import cases
+    try:
+        info = cases.switch(case_id)
+    except cases.CaseError as e:
+        return str(e)
+    return (f"Switched to case '{info['id']}' ({info['name']}). The conversation will restart in that case "
+            f"after this answer; do not query data now.")
+
+
+@tool
+def create_case(case_id: str, name: str, client_id: Optional[str] = None, start_time: Optional[str] = None,
+                end_time: Optional[str] = None, description: Optional[str] = None,
+                clock_offset_minutes: Optional[int] = None) -> str:
+    """
+    Creates a new investigation from what the investigator told you (does not switch to it).
+    Only when the investigator asks. Use details they gave; leave the rest empty.
+    Args:
+        case_id: Short ID for the folder, e.g. 'acme-ws42' (letters, digits, - and _).
+        name: Case name.
+        client_id: Velociraptor client ID of the dead-disk image (C.xxxx), if known.
+        start_time: Incident window start, ISO 8601 UTC. Optional.
+        end_time: Incident window end, ISO 8601 UTC. Optional.
+        description: What happened / what to determine, in the investigator's words.
+        clock_offset_minutes: How far the host clock ran ahead of UTC, if known.
+    """
+    from copilot import cases
+    try:
+        path = cases.create(case_id, name, client_id or "", start_time or "", end_time or "",
+                            description or "", clock_offset_minutes or 0)
+    except cases.CaseError as e:
+        return str(e)
+    return f"Created case '{case_id}' at {path}. Ask the investigator whether to switch to it."
+
+
 # Set by the Streamlit sidebar for the session; otherwise the case file decides.
 REPORT_FORMATS = None
 
@@ -673,6 +722,7 @@ tools = [
     activity_histogram, context_window, query_timeline, search_iocs, pivot_entity, get_event_detail,
     case_summary, record_finding, retract_finding, dfir_guide,
     generate_report, export_case, export_results, export_evidence,
+    list_cases, switch_case, create_case,
 ]
 if case_config.allow_raw_vql:
     tools.append(server_vql_query)

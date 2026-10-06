@@ -59,6 +59,8 @@ Legend: [x] done and tested · [~] partially done · [ ] not started
 - [x] Streamlit: triage collection prompt/panel, Approve/Deny for agent collection requests, downloads in chat.
 - [x] HTML report (self-contained, scripts blocked, evidence shown as text) next to Markdown.
 - [x] Output directory for reports and exports (`DFIR_OUTPUT_DIR` / `output.dir`); CSV export of any query, JSON export of evidence records.
+- [x] Multiple cases: per-case folders, database and outputs; switch with `/case`, the sidebar picker, or by asking; create cases from the chat or a form.
+- [ ] Per-session case for several simultaneous Streamlit users.
 - [ ] Prompt rewrite once the tools are stable.
 - [ ] Report upload / sharing.
 

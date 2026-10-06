@@ -83,7 +83,17 @@ def run_agent_loop():
     # Same model, but not allowed to call tools: used to wrap up before the budget runs out.
     finalizer = llm.bind_tools(tools, tool_choice="none")
 
+    from copilot import cases, commands
     chat_history = [SystemMessage(content=build_system_prompt(case_config))]
+
+    def restart_if_switched():
+        if cases.consume_switch():
+            chat_history[:] = [SystemMessage(content=build_system_prompt(case_config))]
+            print(f"\n=== Now in case '{cases.current_id()}': {case_config.case_name} "
+                  f"(client {case_config.client_id or 'not set'}) ===")
+            hint = cases.legacy_data_hint()
+            if hint:
+                print(f"[!] {hint}")
     collection.CONFIRM = _confirm_collection
     MAX_STEPS = case_config.max_steps
     usage = TokenUsage()
@@ -93,8 +103,13 @@ def run_agent_loop():
     print("  Case database: case_data/case.db")
     print(f"  Scope file: {case_config.path} {'(Loaded)' if case_config.data else '(Not Found/Empty)'}")
     print(f"  Evidence client: {case_config.client_id or '(not set)'}")
+    print(f"  Case: {cases.current_id()}  ·  /cases to list, /case <id> to switch")
     print("  Type 'exit' to quit, 'report' for findings, 'retract <id> <reason>' to drop one")
     print("=" * 60)
+
+    hint = cases.legacy_data_hint()
+    if hint:
+        print(f"\n[!] {hint}")
 
     summaries = None
     if case_config.client_id_error:
@@ -122,6 +137,12 @@ def run_agent_loop():
         user_input = input("\nInvestigator> ")
         if user_input.lower() in ['quit', 'exit']:
             break
+
+        reply = commands.handle(user_input)
+        if reply is not None:
+            print(f"\n{reply}")
+            restart_if_switched()
+            continue
 
         if user_input.lower().startswith('retract '):
             from copilot.database import case_db
@@ -151,6 +172,7 @@ def run_agent_loop():
 
         chat_history.append(HumanMessage(content=user_input))
         _process_turn(llm_with_tools, chat_history, MAX_STEPS, usage, case_config.max_tokens_per_turn, finalizer)
+        restart_if_switched()
 
 
 class TokenUsage:

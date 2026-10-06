@@ -48,6 +48,26 @@ pip install -r requirements.txt
 4. **LLM.** Set `OPENAI_API_KEY` (or enter it when prompted). Optional:
    `DFIR_LLM_MODEL`, `DFIR_LLM_BASE_URL`.
 
+## Cases
+
+Each investigation is a folder with its own settings, database and outputs:
+
+```
+cases/<case-id>/case.yaml        settings (scope, client ID, IOCs, triage list, limits)
+case_data/<case-id>/case.db      collected data, findings, audit log
+case_data/<case-id>/outputs/     reports and exports (unless output.dir is set)
+```
+
+- Start in a case: `$env:DFIR_CASE = "szechuan"` (or `DFIR_CASE_FILE` with a path). Without
+  either, the legacy root `case.yaml` with `case_data/case.db` is used (listed as `default`).
+- Switch in the chat with free commands (no LLM): `/cases`, `/case <id>`, `/help`. Or ask in
+  words ("switch to the szechuan case", "create a case for host X"). In Streamlit there is
+  also a case picker and a "New case" form in the sidebar.
+- Switching starts a fresh conversation, so nothing from one case leaks into another.
+- `DFIR_CASES_DIR` and `DFIR_DATA_DIR` change the two root folders.
+
+The active case is process-wide: run one Streamlit app per investigator.
+
 ## Knowledge base
 
 `copilot/knowledge_data/` holds the DFIR reference the copilot relies on, as plain YAML

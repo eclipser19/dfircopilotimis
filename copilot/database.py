@@ -31,7 +31,15 @@ class CaseDatabase:
     """
 
     def __init__(self, case_dir="case_data"):
+        self.conn = None
+        self.open(case_dir)
+
+    def open(self, case_dir: str):
+        """(Re)opens the database of a case directory in place, e.g. when switching cases."""
         os.makedirs(case_dir, exist_ok=True)
+        if self.conn is not None:
+            self.conn.close()
+        self.case_dir = case_dir
         self.db_path = os.path.join(case_dir, "case.db")
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
@@ -422,5 +430,21 @@ def _compact(row: dict) -> dict:
     return {k: v for k, v in row.items() if v not in (None, "")}
 
 
+def data_dir_for(case_file: str) -> str:
+    """
+    Where a case keeps its database and outputs. DFIR_CASE_DIR wins; a case file at
+    <cases_dir>/<id>/case.yaml uses <data root>/<id>; the legacy root case.yaml uses the root.
+    """
+    if os.environ.get("DFIR_CASE_DIR"):
+        return os.environ["DFIR_CASE_DIR"]
+    from copilot.case_config import cases_dir
+    root = os.environ.get("DFIR_DATA_DIR", "case_data")
+    folder = os.path.dirname(os.path.abspath(case_file))
+    if os.path.dirname(folder) == os.path.abspath(cases_dir()):
+        return os.path.join(root, os.path.basename(folder))
+    return root
+
+
 # Global instance
-case_db = CaseDatabase(os.environ.get("DFIR_CASE_DIR", "case_data"))
+from copilot.case_config import initial_case_file  # noqa: E402
+case_db = CaseDatabase(data_dir_for(initial_case_file()))
