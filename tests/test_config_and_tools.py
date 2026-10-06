@@ -98,3 +98,13 @@ def test_event_detail_is_capped(case):
     case.ingest_artifact_results([{"EventTime": "2020-09-19T02:35:54Z", "Blob": "x" * 50000}], "S", client_id="C.1")
     eid = case.query_timeline()["events"][0]["evidence_id"]
     assert len(tools.get_event_detail.invoke({"evidence_id": eid})) < 7000
+
+
+def test_clock_skew_reaches_the_prompt(monkeypatch):
+    monkeypatch.setattr(case_config, "data", {"scope": {"start_time": "2020-09-18T00:00:00Z",
+                                                        "end_time": "2020-09-20T00:00:00Z",
+                                                        "clock_offset_minutes": 60}})
+    ctx = case_config.build_system_context()
+    assert "60 minutes AHEAD of true UTC" in ctx and "subtract 60 minutes" in ctx
+    monkeypatch.setattr(case_config, "data", {})
+    assert "CLOCK SKEW" not in case_config.build_system_context()

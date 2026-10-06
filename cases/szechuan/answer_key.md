@@ -2,7 +2,8 @@
 
 For grading the copilot's report. **Do not give this file to the agent.**
 Source: DFIR Madness "Answers to the Case of the Stolen Szechuan Sauce" (the author
-marks several times as approximate, "@"). All times UTC, 19 September 2020.
+marks several times as approximate, "@"). All times are TRUE UTC, 19 September 2020;
+the disk image records them one hour later (see the clock trap below).
 
 ## What the Desktop image should show
 | # | Time (UTC) | Event | Where to expect evidence | Found? |
@@ -25,8 +26,13 @@ marks several times as approximate, "@"). All times UTC, 19 September 2020.
 - Malware: Metasploit/Meterpreter reverse shell, `coreupdater.exe` (the answers page
   also writes `coreupdate.exe`; write-ups use `coreupdater.exe`). Migrated into `spoolsv.exe` on the DC.
 - Users who logged on to the Desktop: **Administrator** and **Rick Sanchez**.
-- Clock trap: VMs set to UTC-7 instead of UTC-6. A report quoting 03:35 for the RDP
-  logon is using uncorrected local time.
+- Clock trap: VMs set to UTC-7 instead of UTC-6, so the hosts' clocks ran **one hour
+  ahead**. Every host-recorded time (event logs and NTFS included) is +1h: the RDP logon is
+  recorded at 03:35:54 but really happened at 02:35:54 UTC. A report quoting 03:35 without
+  the correction has fallen for it.
+- Expected link: the HKLM Run key launches the hidden PowerShell loader at every logon, so
+  PowerShell 4104 script blocks right after a later logon (e.g. ricksanchez) are the
+  persistence firing, not a separate intrusion.
 
 ## Out of scope for this image (on the DC)
 Brute force 02:19–02:21, DC download 02:24:06, DC service 02:27:49, secret.zip 02:30–02:31,

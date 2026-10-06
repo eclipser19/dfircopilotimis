@@ -102,6 +102,11 @@ class CaseConfig:
         return self.data.get("scope", {}).get("description", "") or ""
 
     @property
+    def clock_offset_minutes(self) -> int:
+        """How far the evidence host's clock ran AHEAD of true UTC (negative = behind)."""
+        return int(self.data.get("scope", {}).get("clock_offset_minutes", 0) or 0)
+
+    @property
     def has_scope(self) -> bool:
         return bool(self.start_time and self.end_time)
 
@@ -222,6 +227,16 @@ class CaseConfig:
             lines.append(f"  Time Window: {self.start_time} → {self.end_time}")
             if self.description:
                 lines.append(f"  Description: {self.description}")
+
+        if self.clock_offset_minutes:
+            ahead = self.clock_offset_minutes > 0
+            n = abs(self.clock_offset_minutes)
+            lines.append(
+                f"\nHOST CLOCK SKEW: the evidence host's clock ran {n} minutes {'AHEAD of' if ahead else 'BEHIND'} "
+                f"true UTC. ALL host-recorded times are affected, including event logs and NTFS (they are "
+                f"computed from the skewed clock). The database shows recorded times. When reporting, give "
+                f"the corrected time ({'subtract' if ahead else 'add'} {n} minutes) and the recorded time, "
+                f"e.g. '02:35:54 UTC (recorded 03:35:54)'. Query the database with recorded times.")
 
         if self.has_iocs:
             lines.append(f"\nKNOWN IOCs:")

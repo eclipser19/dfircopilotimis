@@ -17,6 +17,8 @@ scope:
   # The client noticed on 19 Sep 2020; a day either side covers the run-up and aftermath.
   start_time: "2020-09-18T00:00:00Z"
   end_time: "2020-09-20T00:00:00Z"
+  # Host clock ran 60 minutes ahead of true UTC: recorded 03:35:54 = real 02:35:54.
+  clock_offset_minutes: 60
   description: >
     The client's secret Szechuan sauce recipe was found for sale on the dark web.
     They suspect a breach of their small network (domain C137 / CITADEL): a domain
@@ -25,8 +27,8 @@ scope:
     Determine whether it was compromised, how, when, by whom, what ran, what
     persisted, and what data was accessed or taken.
     Clock warning from the client: the machines' time zone was set incorrectly
-    (UTC-7, should be UTC-6). Prefer timestamps stored in UTC (event logs, NTFS)
-    and flag any conclusion that relies on local-time values.
+    (UTC-7 instead of UTC-6), so their clocks ran one hour ahead of true UTC
+    (confirmed against the network capture). See clock_offset_minutes.
 
 # Blind run: no IOCs. For a second, guided run, uncomment the attacker IP only.
 iocs:
