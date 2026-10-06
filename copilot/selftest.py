@@ -35,9 +35,9 @@ def main():
         print(f"[!] {case_config.client_id_error}")
         sys.exit(1)
 
-    info = _step("API connection", lambda: _query("SELECT * FROM info()"))
-    print(f"    server: Velociraptor {info[0].get('Version', {}).get('version', '?')}"
-          if isinstance(info[0].get("Version"), dict) else f"    server: {info[0].get('Hostname', '?')}")
+    # Needs no special permission (info() would need MACHINE_STATE, which an
+    # investigator-role API user rightly doesn't have).
+    _step("API connection", lambda: _query("SELECT 1 AS ok FROM scope()"))
 
     client = _step(f"client {case_config.client_id}", lambda: _query(
         "SELECT client_id, os_info.hostname AS hostname, os_info.system AS os FROM clients(client_id=DfirClientId)",
