@@ -318,14 +318,16 @@ def get_event_detail(evidence_id: str) -> str:
 @tool
 def case_summary() -> str:
     """
-    Returns a summary of all data currently in the case database: records and timeline
-    events, how many records have no timestamp, time range, and breakdown by artifact.
+    Summary of the case database: records and timeline events, how many records have no
+    timestamp, time range, breakdown by artifact, and ALL recorded findings (including ones
+    from earlier sessions) with their IDs. Read this before writing a report or summary.
     """
     stats = case_db.get_stats()
     findings = case_db.get_findings()
-    stats["recorded_findings"] = len(findings)
-    if findings:
-        stats["findings"] = findings
+    stats["findings"] = [{"id": f["finding_id"], "time_recorded": f["timestamp_utc"], "title": f["title"],
+                          "confidence": f["confidence"], "mitre": f["mitre_technique"]} for f in findings]
+    retracted = case_db.get_findings(include_retracted=True)
+    stats["retracted_findings"] = len(retracted) - len(findings)
     return _dump(stats)
 
 
@@ -336,8 +338,10 @@ def record_finding(title: str, description: str, evidence_ids: list,
     """
     Record a forensic finding for the final report. Call this whenever you discover
     something suspicious or malicious during analysis. The finding's time is taken
-    automatically from the earliest timestamp of its evidence, so cite the evidence
-    records that show WHEN it happened (e.g. the 7045 event, the logon event).
+    automatically from the FIRST evidence ID, so list first the record that shows WHEN
+    it happened (e.g. the 7045 event, the logon event), then supporting records.
+    Record what the evidence shows; avoid "nothing found" findings unless the search was
+    complete and appropriate (say exactly what was searched).
     Args:
         title: Short title (e.g., 'Webshell Detected').
         description: Detailed explanation of the finding (give corrected and recorded times if the host clock was skewed).
@@ -359,7 +363,7 @@ def record_finding(title: str, description: str, evidence_ids: list,
         confidence = "medium"
     window = (normalize_bound(case_config.start_time), normalize_bound(case_config.end_time)) \
         if case_config.has_scope else (None, None)
-    when = finding_time(case_db, evidence_ids, window)
+    when = finding_time(case_db, evidence_ids, window)  # from the FIRST evidence ID
     if when is None and timestamp_utc:
         try:
             when = normalize_bound(timestamp_utc)
@@ -381,6 +385,22 @@ _RAW_VQL_BLOCKLIST = re.compile(
     r"pskill|reg_set_value|reg_rm_\w+|starl|query)\s*\(",
     re.IGNORECASE,
 )
+
+
+@tool
+def retract_finding(finding_id: str, reason: str) -> str:
+    """
+    Retract a finding that later evidence contradicts or that was recorded in error
+    (e.g. "no archive found" after the USN journal shows one). Retracted findings leave
+    the report body and are listed in an appendix with the reason.
+    Args:
+        finding_id: The finding ID (a unique prefix is enough).
+        reason: Why it is retracted, citing the contradicting evidence or finding.
+    """
+    found = case_db.retract_finding(finding_id, reason)
+    if not found:
+        return f"No unique finding matches '{finding_id}'. Use case_summary to see finding IDs."
+    return f"Retracted finding {found['finding_id']}: {found['title']}"
 
 
 @tool
@@ -478,6 +498,8 @@ def generate_report(executive_summary: str, recommendations: str, correlations: 
     """
     Generates the final DFIR report (Markdown) from the recorded findings and the case
     database. Call this at the END of an investigation, when the investigator asks.
+    FIRST call case_summary: the summary must cover ALL active findings, including those
+    recorded in earlier sessions, and contradicted findings should be retracted beforehand.
     Times (corrected and recorded), the evidence timeline, indicators, artifact
     explanations and audit log are filled in automatically; you only write:
     Args:
@@ -516,7 +538,7 @@ tools = [
     search_clients, collect_artifact, check_collection, list_collections,
     list_artifacts, describe_artifact,
     activity_histogram, context_window, query_timeline, search_iocs, pivot_entity, get_event_detail,
-    case_summary, record_finding,
+    case_summary, record_finding, retract_finding,
     generate_report, export_case,
 ]
 if case_config.allow_raw_vql:

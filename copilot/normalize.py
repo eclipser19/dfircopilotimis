@@ -92,9 +92,9 @@ DESCRIPTION_FIELDS = ["message", "commandline", "scriptblocktext", "line", "comm
 
 
 def event_type_for(source: str) -> str:
-    artifact = source.split("/", 1)[0]
+    artifact = source.split("/", 1)[0].lower()
     for pattern, event_type in EVENT_TYPES:
-        if fnmatch.fnmatchcase(artifact, pattern):
+        if fnmatch.fnmatchcase(artifact, pattern.lower()):
             return event_type
     return "other"
 
@@ -211,14 +211,35 @@ def extract_entities(row: dict) -> dict:
     return entities
 
 
+# Short fields that say what kind of event a row is; shown before long messages.
+KEY_FIELDS = ["LogonType", "Reason", "ServiceName", "TaskName", "Channel"]
+# Entities in the order they should appear; path last (often just the log file).
+DESCRIPTION_ENTITIES = ["event_id", "user", "ip", "process", "command_line", "hash"]
+
+
 def describe(row: dict, entities: dict, limit: int = 500) -> str:
+    """
+    One line per record: identifying facts first (event ID, key fields, user, IP...),
+    then the message, then the path, so truncated text still says what happened.
+    """
     fields = {}
     for key, value in flatten(row):
         if value not in (None, "") and not isinstance(value, bool):
             fields.setdefault(_last_segment(key).lower(), str(value))
     primary = next((fields[f] for f in DESCRIPTION_FIELDS if f in fields), "")
-    extras = [f"{k}={v}" for k, v in entities.items() if v and v not in primary]
-    text = "; ".join(p for p in [primary] + extras if p)
+    parts = []
+    for entity in DESCRIPTION_ENTITIES:
+        value = entities.get(entity)
+        if value and value not in primary:
+            parts.append(f"{entity}={value}")
+    for name in KEY_FIELDS:
+        value = fields.get(name.lower())
+        if value and value not in primary and name != "Channel":
+            parts.insert(1 if parts and parts[0].startswith("event_id=") else 0, f"{name}={value}")
+    parts.append(primary)
+    if entities.get("path") and entities["path"] not in primary:
+        parts.append(f"path={entities['path']}")
+    text = "; ".join(p for p in parts if p)
     if not text:
         text = json.dumps({k: v for k, v in row.items() if not isinstance(v, (dict, list))}, default=str)
     text = " ".join(text.split())

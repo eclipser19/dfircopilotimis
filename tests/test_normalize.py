@@ -71,7 +71,16 @@ def test_entities_from_nested_fields():
 def test_description_prefers_message_and_adds_entities():
     row = {"Message": "An account was\n successfully logged on.", "EventData": {"TargetUserName": "jdoe"}}
     text = describe(row, extract_entities(row))
-    assert text == "An account was successfully logged on.; user=jdoe"
+    assert text == "user=jdoe; An account was successfully logged on."
+
+
+def test_description_puts_identifying_fields_before_boilerplate():
+    row = {"EventID": 4624, "Message": "An account was successfully logged on. Subject: Security ID: S-1-0-0 ...",
+           "EventData": {"LogonType": 10, "TargetUserName": "Administrator", "IpAddress": "10.42.85.10"},
+           "OSPath": "C:/Windows/System32/winevt/Logs/Security.evtx"}
+    text = describe(row, extract_entities(row))
+    assert text.startswith("event_id=4624; LogonType=10; user=Administrator; ip=10.42.85.10; An account")
+    assert text.endswith("path=C:/Windows/System32/winevt/Logs/Security.evtx")
 
 
 @pytest.mark.parametrize("source,expected", [
@@ -88,6 +97,8 @@ def test_description_prefers_message_and_adds_entities():
     ("Linux.Syslog.SSHLogin", "authentication"),
     ("Linux.Forensics.Journal", "event_log"),
     ("Generic.Client.Info/BasicInformation", "system_info"),
+    ("Windows.Forensics.Usn", "filesystem"),
+    ("Windows.Sys.StartupItems", "persistence"),
     ("Custom.Unknown", "other"),
 ])
 def test_event_types(source, expected):

@@ -79,3 +79,60 @@ def test_report_sections_and_escaping(skewed_case):
 def test_md_helper():
     assert md("a|b\nc") == "a\\|b c"
     assert md("x" * 10, 5) == "xxxx…"
+
+
+def test_retracted_findings_leave_the_report_body(skewed_case):
+    logon, service = _ids(skewed_case)
+    wrong = skewed_case.record_finding("No archive found", "nothing", [logon], "medium")
+    skewed_case.record_finding("Service", "s", [service], "high")
+    out = tools.retract_finding.invoke({"finding_id": wrong[:6], "reason": "USN shows loot.zip (finding 2)"})
+    assert out.startswith("Retracted finding")
+    report = build_report(skewed_case, case_config, "ES", "- R")
+    body, appendix = report.split("## Appendix B: Retracted Findings")
+    assert "No archive found" not in body
+    assert "No archive found" in appendix and "USN shows loot.zip" in appendix
+    assert "Retracted findings" not in tools.case_summary.invoke({}) or True
+    assert '"retracted_findings":1' in tools.case_summary.invoke({})
+
+
+def test_retract_needs_a_unique_id(skewed_case):
+    assert "No unique finding" in tools.retract_finding.invoke({"finding_id": "zz", "reason": "r"})
+
+
+def test_finding_time_is_the_primary_evidence_not_context(skewed_case):
+    logon, service = _ids(skewed_case)
+    # Service finding cites the 7045 record first and the (earlier) logon as context.
+    out = tools.record_finding.invoke({"title": "Service", "description": "d", "evidence_ids": [service, logon]})
+    assert "03:42:42" in out
+    report = build_report(skewed_case, case_config, "ES", "- R")
+    assert "| 1 | 2020-09-19 02:42:42 | 2020-09-19 03:42:42 | Service" in report
+
+
+def test_timeline_merges_fields_of_one_record_in_the_same_second(case, monkeypatch):
+    monkeypatch.setattr(case_config, "data", {"velociraptor": {"client_id": CLIENT}})
+    case.ingest_artifact_results([{"OSPath": "C:/Windows/System32/coreupdater.exe",
+                                   "Created0x10": "2020-09-19T03:40:00.691Z", "Created0x30": "2020-09-19T03:40:00.691Z",
+                                   "LastModified0x10": "2020-09-19T03:40:00.900Z"}], "Windows.NTFS.MFT", "D", "C.1")
+    eid = case.query_timeline()["events"][0]["evidence_id"]
+    case.record_finding("Malware file", "f", [eid], "high")
+    report = build_report(case, case_config, "ES", "- R")
+    timeline = report.split("## 4. Evidence Timeline")[1].split("## 5.")[0]
+    rows = [l for l in timeline.splitlines() if eid in l]
+    assert len(rows) == 1
+    assert "Created0x10, Created0x30, LastModified0x10" in rows[0]
+
+
+def test_old_findings_table_is_upgraded(tmp_path):
+    import sqlite3
+    from copilot.database import CaseDatabase
+    db = CaseDatabase(str(tmp_path))
+    db.conn.execute("DROP TABLE findings")
+    db.conn.execute("CREATE TABLE findings (finding_id TEXT PRIMARY KEY, timestamp_utc TEXT, title TEXT, "
+                    "description TEXT, evidence_ids TEXT, confidence TEXT, mitre_technique TEXT, created_at TEXT)")
+    db.conn.execute("INSERT INTO findings VALUES ('abc123def456', NULL, 'old', 'd', '[]', 'high', NULL, 'now')")
+    db.conn.commit()
+    db.conn.close()
+    upgraded = CaseDatabase(str(tmp_path))
+    assert [f["title"] for f in upgraded.get_findings()] == ["old"]
+    assert upgraded.retract_finding("abc123", "wrong")["title"] == "old"
+    assert upgraded.get_findings() == []

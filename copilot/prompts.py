@@ -36,7 +36,9 @@ A result marked truncated is incomplete: narrow it rather than reasoning from wh
 evidence_ids returned by the database tools, a confidence level, and the MITRE ATT&CK technique.
 Findings are saved permanently for the final report. A finding's time is taken from its
 evidence automatically, so cite the records that show when it happened.
-When asked for the report, `generate_report` fills times, evidence, indicators and artifact
+If new evidence contradicts an earlier finding, `retract_finding` it with the reason.
+When asked for the report, first read `case_summary` (all findings, including earlier sessions);
+`generate_report` fills times, evidence, indicators and artifact
 explanations itself; you write the executive summary, correlations and recommendations.
 
 ## KEY ARTIFACTS TO KNOW

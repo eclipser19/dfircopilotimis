@@ -10,7 +10,7 @@ from itertools import combinations
 from jinja2 import Environment
 
 from copilot.knowledge import artifact_info
-from copilot.normalize import parse_timestamp
+from copilot.normalize import event_type_for, normalize_row, parse_timestamp
 from copilot.report_template import REPORT_TEMPLATE
 
 MAX_TIMELINE_ROWS = 200
@@ -50,6 +50,11 @@ def _evidence(db, evidence_id: str, window: tuple) -> dict:
     rec = db.get_event_detail(evidence_id)
     if not rec:
         return {}
+    # Re-describe from the raw row so records ingested by older versions read well too.
+    try:
+        rec["description"] = normalize_row(json.loads(rec["raw_data"]), rec["source"])["description"]
+    except (ValueError, TypeError):
+        pass
     stamps = [t for t in rec["timestamps"] if _in_window(t["timestamp_utc"], window)] or rec["timestamps"]
     return {"evidence_id": evidence_id, "source": rec["source"], "description": rec["description"],
             "timestamps": stamps, "first": stamps[0]["timestamp_utc"] if stamps else None,
@@ -81,27 +86,32 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
                 evidence_cache[eid] = _evidence(db, eid, window)
             if evidence_cache[eid]:
                 items.append(evidence_cache[eid])
-        times = sorted(e["first"] for e in items if e["first"])
-        findings.append({**raw, "evidence": items, "time": times[0] if times else None})
+        # The first cited record is the primary one: its time is the finding's time.
+        primary = items[0]["first"] if items else None
+        findings.append({**raw, "evidence": items, "time": primary})
     findings.sort(key=lambda f: (f["time"] is None, f["time"] or ""))
     for n, f in enumerate(findings, 1):
         f["number"] = n
 
     # Evidence timeline: every timestamp of every cited record, inside the incident window.
-    seen, timeline = set(), []
+    # Timestamps of the same record within the same second are merged into one row.
+    rows = {}
     for f in findings:
         for e in f["evidence"]:
             for t in e["timestamps"]:
-                key = (e["evidence_id"], t["timestamp_utc"])
-                if key in seen:
-                    seen_row = next(r for r in timeline if r["key"] == key)
-                    seen_row["findings"].add(f["number"])
-                    continue
-                seen.add(key)
-                timeline.append({"key": key, "ts": t["timestamp_utc"], "field": t["timestamp_desc"],
-                                 "source": e["source"], "description": e["description"],
-                                 "evidence_id": e["evidence_id"], "findings": {f["number"]}})
-    timeline.sort(key=lambda r: r["ts"])
+                key = (e["evidence_id"], t["timestamp_utc"][:19])
+                row = rows.get(key)
+                if row is None:
+                    row = rows[key] = {"ts": t["timestamp_utc"], "fields": [], "source": e["source"],
+                                       "description": e["description"], "evidence_id": e["evidence_id"],
+                                       "findings": set()}
+                for field in t["timestamp_desc"].split(", "):
+                    if field not in row["fields"]:
+                        row["fields"].append(field)
+                row["findings"].add(f["number"])
+    timeline = sorted(rows.values(), key=lambda r: (r["ts"], r["evidence_id"]))
+    for r in timeline:
+        r["field"] = ", ".join(r["fields"])
     timeline_truncated = len(timeline) > MAX_TIMELINE_ROWS
     timeline = timeline[:MAX_TIMELINE_ROWS]
 
@@ -142,8 +152,10 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
     # Artifacts: what each collected source is, where it lives, what it proves.
     artifacts = []
     for src in stats["by_source"]:
+        src["event_type"] = event_type_for(src["source"])  # current mapping, not the one stored at ingest
         info = artifact_info(src["source"])
         artifacts.append({**src, **info})
+    retracted = [f for f in db.get_findings(include_retracted=True) if (f.get("status") or "active") != "active"]
 
     cur = db.conn.cursor()
     audit_log = [dict(r) for r in cur.execute("SELECT * FROM audit_log ORDER BY timestamp_utc ASC")]
@@ -169,15 +181,14 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
         findings=findings, timeline=timeline, timeline_truncated=timeline_truncated,
         max_timeline=MAX_TIMELINE_ROWS, related=related, related_minutes=RELATED_WITHIN_MINUTES,
         indicators=indicators, iocs_searched=iocs_searched, artifacts=artifacts,
-        collections=collections, audit_log=audit_log,
+        collections=collections, audit_log=audit_log, retracted=retracted,
     )
 
 
 def finding_time(db, evidence_ids: list, window: tuple):
-    """Earliest recorded timestamp of the evidence (inside the window when possible)."""
-    times = []
-    for eid in evidence_ids:
+    """Recorded time of the primary (first) evidence record, inside the window when possible."""
+    for eid in evidence_ids[:1]:
         ev = _evidence(db, str(eid), window)
         if ev and ev["first"]:
-            times.append(ev["first"])
-    return min(times) if times else None
+            return ev["first"]
+    return None

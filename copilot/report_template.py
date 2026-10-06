@@ -50,7 +50,7 @@ REPORT_TEMPLATE = """# Digital Forensics & Incident Response Report
 | {{ f.number }} | {{ f.time | utc }} | {{ f.time | rec }} | {{ f.title | md }} | {{ f.confidence or "—" }} | {{ f.mitre_technique or "—" }} |
 {% endfor %}
 
-Finding times are taken from the earliest timestamp of the evidence each finding cites.
+A finding's time is the earliest timestamp of the first (primary) record it cites.
 {% else %}
 *No findings were recorded.*
 {% endif %}
@@ -65,7 +65,7 @@ Every timestamp of the records cited by findings{% if has_scope %}, inside the i
 | UTC | Recorded | Source | Time field | Event | Evidence | Finding |
 |---|---|---|---|---|---|---|
 {% for r in timeline %}
-| {{ r.ts | utc }} | {{ r.ts | rec }} | {{ r.source | md }} | {{ r.field | md(40) }} | {{ r.description | md(160) }} | `{{ r.evidence_id }}` | {{ r.findings | sort | join(", ") }} |
+| {{ r.ts | utc }} | {{ r.ts | rec }} | {{ r.source | md }} | {{ r.field | md(60) }} | {{ r.description | md(160) }} | `{{ r.evidence_id }}` | {{ r.findings | sort | join(", ") }} |
 {% endfor %}
 {% if timeline_truncated %}
 
@@ -182,7 +182,19 @@ Values extracted from the evidence cited by findings.
 *No collections recorded.*
 {% endif %}
 
-## Appendix B: Query Audit Log
+## Appendix B: Retracted Findings
+
+{% if retracted %}
+| Finding | Reason |
+|---|---|
+{% for r in retracted %}
+| {{ r.title | md }} | {{ r.status_reason | md(300) }} |
+{% endfor %}
+{% else %}
+*None.*
+{% endif %}
+
+## Appendix C: Query Audit Log
 
 {% if audit_log %}
 | Time (analysis) | Tool | Query | Rows |

@@ -93,7 +93,7 @@ def run_agent_loop():
     print("  Case database: case_data/case.db")
     print(f"  Scope file: {case_config.path} {'(Loaded)' if case_config.data else '(Not Found/Empty)'}")
     print(f"  Evidence client: {case_config.client_id or '(not set)'}")
-    print("  Type 'exit' to quit, 'report' for findings summary")
+    print("  Type 'exit' to quit, 'report' for findings, 'retract <id> <reason>' to drop one")
     print("=" * 60)
 
     summaries = None
@@ -123,6 +123,14 @@ def run_agent_loop():
         if user_input.lower() in ['quit', 'exit']:
             break
 
+        if user_input.lower().startswith('retract '):
+            from copilot.database import case_db
+            parts = user_input.split(maxsplit=2)
+            reason = parts[2] if len(parts) > 2 else "Retracted by the investigator."
+            found = case_db.retract_finding(parts[1], reason) if len(parts) > 1 else {}
+            print(f"  Retracted: {found['title']}" if found else "  No unique finding with that ID.")
+            continue
+
         if user_input.lower() == 'report':
             from copilot.database import case_db
             findings = case_db.get_findings()
@@ -135,7 +143,7 @@ def run_agent_loop():
             print(f"  Findings: {len(findings)}")
             print(f"{'='*60}")
             for f in findings:
-                print(f"\n  [{(f['confidence'] or 'unknown').upper()}] {f['title']}")
+                print(f"\n  [{(f['confidence'] or 'unknown').upper()}] {f['title']}  (id {f['finding_id']})")
                 print(f"  {f['description']}")
                 if f['mitre_technique']:
                     print(f"  MITRE: {f['mitre_technique']}")

@@ -13,8 +13,8 @@ the disk image records them one hour later (see the clock trap below).
 | 3 | @02:41–02:42:42 | Persistence: service `coreupdater` installed (LocalSystem, auto-start) | System 7045, Services | ☐ |
 | 4 | @02:41 | Persistence: registry Run key for the same malware | StartupItems / Run keys | ☐ |
 | 5 | — | Malware moved from Administrator's Downloads to `C:\Windows\System32\` | MFT, Prefetch, Amcache | ☐ |
-| 6 | @02:46 | `loot.zip` created with File Explorer | MFT, LNK / JumpLists | ☐ |
-| 7 | @02:48 | `loot.zip` exfiltrated, then deleted | MFT, USN, Recycle Bin | ☐ |
+| 6 | @02:46 | `loot.zip` created with File Explorer (USN: created 02:46:15 as `My Social Security Number.zip` in `C:\Users\mortysmith\Documents`, renamed to `loot.zip` 02:46:18) | USN journal, MFT, LNK / JumpLists | ☐ |
+| 7 | @02:48 | `loot.zip` exfiltrated, then deleted (USN: deleted 02:47:09) | USN journal, Recycle Bin | ☐ |
 | 8 | later | Attacker logs off; logs in again, restarts and migrates Meterpreter, exits RDP | Security 4624/4634/4647, RDP logs | ☐ |
 | 9 | ~03:00 | Last interactive logoff | Security 4634/4647 | ☐ |
 

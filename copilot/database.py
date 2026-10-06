@@ -114,6 +114,11 @@ class CaseDatabase:
             );
         """)
         cur.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
+        # Added after v2 shipped: findings can be retracted when later evidence disproves them.
+        cols = {r[1] for r in cur.execute("PRAGMA table_info(findings)")}
+        if "status" not in cols:
+            cur.execute("ALTER TABLE findings ADD COLUMN status TEXT DEFAULT 'active'")
+            cur.execute("ALTER TABLE findings ADD COLUMN status_reason TEXT")
         # Trigram FTS gives case-insensitive substring search; needs SQLite >= 3.34.
         try:
             cur.execute("CREATE VIRTUAL TABLE IF NOT EXISTS records_fts "
@@ -294,17 +299,37 @@ class CaseDatabase:
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute(
-            "INSERT INTO findings VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO findings (finding_id, timestamp_utc, title, description, evidence_ids, confidence, "
+            "mitre_technique, created_at, status) VALUES (?,?,?,?,?,?,?,?, 'active')",
             (finding_id, timestamp_utc, title, description,
              json.dumps(evidence_ids), confidence, mitre_technique, now)
         )
         self.conn.commit()
         return finding_id
 
-    def get_findings(self) -> list:
+    def get_findings(self, include_retracted: bool = False) -> list:
         cur = self.conn.cursor()
-        cur.execute("SELECT * FROM findings ORDER BY timestamp_utc IS NULL, timestamp_utc ASC")
+        where = "" if include_retracted else "WHERE COALESCE(status, 'active') = 'active'"
+        cur.execute(f"SELECT * FROM findings {where} ORDER BY timestamp_utc IS NULL, timestamp_utc ASC")
         return [dict(r) for r in cur.fetchall()]
+
+    def find_finding(self, finding_id: str) -> dict:
+        """Exact ID or a unique prefix (the agent often quotes IDs shortened)."""
+        prefix = finding_id.strip().rstrip(".…")
+        cur = self.conn.cursor()
+        rows = [dict(r) for r in cur.execute("SELECT * FROM findings WHERE finding_id LIKE ? ESCAPE '\\'",
+                                            (_escape_like(prefix) + "%",))]
+        if len(rows) != 1 or len(prefix) < 4:
+            return {}
+        return rows[0]
+
+    def retract_finding(self, finding_id: str, reason: str) -> dict:
+        found = self.find_finding(finding_id)
+        if found:
+            self.conn.execute("UPDATE findings SET status = 'retracted', status_reason = ? WHERE finding_id = ?",
+                              (reason, found["finding_id"]))
+            self.conn.commit()
+        return found
 
     # --- Collections ---
     def upsert_collection(self, flow_id: str, **fields):
