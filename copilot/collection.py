@@ -4,6 +4,9 @@ Collecting Velociraptor artifacts from the case's dead-disk client into the case
 Every user- or LLM-supplied value (client ID, artifact name, parameters, flow ID)
 is passed to Velociraptor as a VQLEnv variable and referenced by name in the
 query. Nothing is ever formatted into the VQL text.
+
+Variable names carry a `Dfir` prefix: VQL resolves built-in names first, so a
+variable called e.g. `Artifact` silently becomes the Artifact plugin instead.
 """
 import json
 import re
@@ -17,15 +20,15 @@ from copilot.vql_client import get_vql, VQLError
 # Parameters go in `spec` ({"Artifact.Name": {"Param": "value"}}): the form current
 # Velociraptor versions require. The older `env=` form is rejected by them.
 SCHEDULE_VQL = (
-    "SELECT collect_client(client_id=ClientId, artifacts=Artifact, "
-    "spec=parse_json(data=Spec)) AS flow FROM scope()"
+    "SELECT collect_client(client_id=DfirClientId, artifacts=DfirArtifact, "
+    "spec=parse_json(data=DfirSpec)) AS flow FROM scope()"
 )
 POLL_VQL = (
     "SELECT state, status, total_collected_rows, artifacts_with_results "
-    "FROM flows(client_id=ClientId, flow_id=FlowId)"
+    "FROM flows(client_id=DfirClientId, flow_id=DfirFlowId)"
 )
-SOURCE_VQL = "SELECT * FROM source(client_id=ClientId, flow_id=FlowId, artifact=Artifact)"
-HOSTNAME_VQL = "SELECT os_info.hostname AS hostname FROM clients(client_id=ClientId)"
+SOURCE_VQL = "SELECT * FROM source(client_id=DfirClientId, flow_id=DfirFlowId, artifact=DfirArtifact)"
+HOSTNAME_VQL = "SELECT os_info.hostname AS hostname FROM clients(client_id=DfirClientId)"
 
 POLL_INTERVAL = 2
 
@@ -98,7 +101,7 @@ def schedule(artifact: str, params: dict = None, vql=None) -> str:
     _check_artifact(artifact)
     encoded = encode_params(params)
 
-    env = {"ClientId": client_id, "Artifact": artifact, "Spec": json.dumps({artifact: encoded})}
+    env = {"DfirClientId": client_id, "DfirArtifact": artifact, "DfirSpec": json.dumps({artifact: encoded})}
     rows, log = _run(vql, SCHEDULE_VQL, env)
     case_db.log_query("collect_artifact", f"{SCHEDULE_VQL} -- env={json.dumps(env)}", len(rows), artifact)
 
@@ -120,7 +123,7 @@ def poll(flow_id: str, vql=None) -> dict:
     if not known:
         raise CollectionError(f"Flow '{flow_id}' was not started by this case.")
 
-    rows, log = _run(vql, POLL_VQL, {"ClientId": known["client_id"], "FlowId": flow_id})
+    rows, log = _run(vql, POLL_VQL, {"DfirClientId": known["client_id"], "DfirFlowId": flow_id})
     if not rows:
         raise CollectionError(f"Flow '{flow_id}' not found on the server.\n{log}".strip())
 
@@ -143,7 +146,7 @@ def ingest(flow_id: str, artifacts_with_results: list, vql=None) -> int:
     client_id = known["client_id"]
     hostname = "Unknown"
     try:
-        host_rows, _ = _run(vql, HOSTNAME_VQL, {"ClientId": client_id})
+        host_rows, _ = _run(vql, HOSTNAME_VQL, {"DfirClientId": client_id})
         if host_rows and host_rows[0].get("hostname"):
             hostname = host_rows[0]["hostname"]
     except CollectionError:
@@ -152,7 +155,7 @@ def ingest(flow_id: str, artifacts_with_results: list, vql=None) -> int:
     total = 0
     for sub_artifact in artifacts_with_results:
         logs = []
-        env = {"ClientId": client_id, "FlowId": flow_id, "Artifact": sub_artifact}
+        env = {"DfirClientId": client_id, "DfirFlowId": flow_id, "DfirArtifact": sub_artifact}
         try:
             rows = vql.iter_rows(SOURCE_VQL, env=env, logs=logs)
             added = case_db.ingest_artifact_results(rows, sub_artifact, hostname, client_id)

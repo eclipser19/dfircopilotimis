@@ -43,7 +43,7 @@ class FakeVQL:
 
     def iter_rows(self, query, env=None, logs=None, timeout=None):
         self.calls.append((query, dict(env or {})))
-        yield from self.rows.get(env["Artifact"], [])
+        yield from self.rows.get(env["DfirArtifact"], [])
 
 
 @pytest.fixture

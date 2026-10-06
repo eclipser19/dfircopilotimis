@@ -96,8 +96,8 @@ def list_artifacts(keyword: str) -> str:
         keyword: Text to look for in artifact names.
     """
     res = get_vql().run_vql(
-        "SELECT name, description FROM artifact_definitions() WHERE name =~ Keyword",
-        env={"Keyword": "(?i)" + _re2_escape(keyword)},
+        "SELECT name, description FROM artifact_definitions() WHERE name =~ DfirKeyword",
+        env={"DfirKeyword": "(?i)" + _re2_escape(keyword)},
     )
     rows = [
         {"name": r.get("name"), "description": (r.get("description") or "").strip()[:300]}
@@ -118,8 +118,8 @@ def describe_artifact(artifact_name: str) -> str:
         artifact_name: The exact artifact name.
     """
     res = get_vql().run_vql(
-        "SELECT name, description, parameters FROM artifact_definitions(names=Name)",
-        env={"Name": artifact_name},
+        "SELECT name, description, parameters FROM artifact_definitions(names=DfirName)",
+        env={"DfirName": artifact_name},
     )
     if not res.get("results"):
         return safe_json_truncate(res) if res.get("error") else f"Artifact '{artifact_name}' not found."

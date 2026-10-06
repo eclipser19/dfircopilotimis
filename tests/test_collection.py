@@ -15,15 +15,15 @@ def test_params_go_through_env_never_into_vql_text(case):
     query, env = vql.calls[0]
     assert query == collection.SCHEDULE_VQL
     assert nasty not in query
-    assert env["ClientId"] == CLIENT
-    assert env["Artifact"] == "Generic.Client.Info"
-    assert json.loads(env["Spec"]) == {"Generic.Client.Info": {"Path": nasty, "Recurse": "Y"}}
+    assert env["DfirClientId"] == CLIENT
+    assert env["DfirArtifact"] == "Generic.Client.Info"
+    assert json.loads(env["DfirSpec"]) == {"Generic.Client.Info": {"Path": nasty, "Recurse": "Y"}}
 
 
 def test_no_params_still_sends_spec_for_the_artifact(case):
     vql = FakeVQL()
     collection.schedule("Generic.Client.Info", vql=vql)
-    assert json.loads(vql.calls[0][1]["Spec"]) == {"Generic.Client.Info": {}}
+    assert json.loads(vql.calls[0][1]["DfirSpec"]) == {"Generic.Client.Info": {}}
 
 
 def test_progress_noise_stripped_from_errors(case):
@@ -128,3 +128,14 @@ def test_auto_collect_reports_each_artifact_without_llm(case, monkeypatch):
         a, vql=FakeVQL(), sleep=lambda s: None))
     assert [s["state"] for s in summaries] == ["FINISHED", "NOT_STARTED"]
     assert "not allowed" in summaries[1]["error"]
+
+
+def test_vql_variables_cannot_shadow_builtins(case):
+    """`Artifact` etc. are built-in VQL names; our variables must never reuse them."""
+    vql = FakeVQL()
+    collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None)
+    for query, env in vql.calls:
+        assert env, query
+        for key in env:
+            assert key.startswith("Dfir"), (key, query)
+            assert key in query, (key, query)

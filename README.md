@@ -39,6 +39,15 @@ pip install -r requirements.txt
 
 ## Run
 
+Check the Velociraptor side first (no LLM involved): connection, the case's
+client, artifact lookup, and one real collection.
+
+```bash
+python -m copilot.selftest
+```
+
+Then:
+
 ```bash
 python main.py          # terminal
 streamlit run app.py    # web chat
