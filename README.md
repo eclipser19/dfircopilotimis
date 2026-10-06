@@ -80,8 +80,21 @@ python main.py          # terminal
 streamlit run app.py    # web chat
 ```
 
-Case data (database, reports, exports) goes to `case_data/`, or to
-`DFIR_CASE_DIR` if set.
+The case database lives in `case_data/` (or `DFIR_CASE_DIR`). Files the copilot produces
+(HTML + Markdown reports, case exports, CSV exports of query results, JSON evidence
+extracts) go to the output directory: `DFIR_OUTPUT_DIR`, else `output.dir` in the case
+file (e.g. `/uploads` on a server), else `case_data/outputs/`.
+
+In the Streamlit app:
+- an empty case offers the triage collection (same as the CLI's first question), and the
+  sidebar's **Triage collection** panel can run it any time;
+- collections the agent asks for appear under **Collection requests** with Approve / Deny;
+- every file the agent produces appears in the chat as a download button, and the sidebar
+  lists recent files. Ask e.g. "export the timeline 02:30-03:00 as a file" or "give me the
+  full records of the evidence for finding 3".
+
+The HTML report is self-contained and safe to open: evidence text is shown as text (never
+interpreted as HTML) and the page blocks scripts and external content.
 
 ## Tests
 

@@ -55,8 +55,11 @@ Legend: [x] done and tested · [~] partially done · [ ] not started
 - [ ] HTML/PDF export.
 
 ## Step 5: Agent core & UI
-- [ ] One agent loop shared by CLI and Streamlit (the loop is still duplicated in `app.py`).
-- [ ] Prompt rewrite once the tools above are stable.
+- [x] One agent loop (`run_turn`) shared by CLI and Streamlit, with token budget and wrap-up.
+- [x] Streamlit: triage collection prompt/panel, Approve/Deny for agent collection requests, downloads in chat.
+- [x] HTML report (self-contained, scripts blocked, evidence shown as text) next to Markdown.
+- [x] Output directory for reports and exports (`DFIR_OUTPUT_DIR` / `output.dir`); CSV export of any query, JSON export of evidence records.
+- [ ] Prompt rewrite once the tools are stable.
 - [ ] Report upload / sharing.
 
 ## Environment (outside this repo)

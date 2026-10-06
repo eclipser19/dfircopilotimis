@@ -359,7 +359,8 @@ def check(flow_id: str, vql=None) -> dict:
     return _finish(flow_id, poll(flow_id, vql), vql)
 
 
-# Set by the CLI: called as confirm(artifact, params) -> bool before an agent collection.
+# Set by the UI: confirm(artifact, params) -> True (go), False (declined) or "queued"
+# (Streamlit: the investigator decides later with Approve/Deny buttons).
 CONFIRM = None
 
 
@@ -380,7 +381,12 @@ def _check_agent_request(artifact: str, params: dict):
         if CONFIRM is None:
             raise CollectionError("Agent collections need the investigator's approval, which isn't "
                                   "available here. Ask the investigator to collect it.")
-        if not CONFIRM(artifact, params or {}):
+        decision = CONFIRM(artifact, params or {})
+        if decision == "queued":
+            raise CollectionError(
+                f"Collecting '{artifact}' is waiting for the investigator's approval. If they approve, "
+                f"the result will be added to the conversation. Continue with the data already collected.")
+        if not decision:
             raise CollectionError(f"The investigator declined collecting '{artifact}'. "
                                   f"Continue with the data already collected or ask them.")
 

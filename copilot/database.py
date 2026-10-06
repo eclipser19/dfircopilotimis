@@ -104,6 +104,15 @@ class CaseDatabase:
                 ingested      INTEGER DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS outputs (
+                output_id   INTEGER PRIMARY KEY AUTOINCREMENT,
+                path        TEXT,
+                kind        TEXT,
+                description TEXT,
+                created_at  TEXT,
+                size        INTEGER
+            );
+
             CREATE TABLE IF NOT EXISTS audit_log (
                 log_id        TEXT PRIMARY KEY,
                 timestamp_utc TEXT,

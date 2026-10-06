@@ -393,6 +393,107 @@ _RAW_VQL_BLOCKLIST = re.compile(
 )
 
 
+EXPORT_MAX_ROWS = 200000
+_EXPORT_COLUMNS = ["source", "event_type", "hostname", "description", "user", "process", "command_line",
+                   "path", "hash", "ip", "event_id", "evidence_id"]
+
+
+def _with_raw(rows: list) -> list:
+    ids = [r["evidence_id"] for r in rows]
+    raw = {}
+    for i in range(0, len(ids), 500):
+        chunk = ids[i:i + 500]
+        q = f"SELECT evidence_id, raw_data FROM records WHERE evidence_id IN ({','.join('?' * len(chunk))})"
+        raw.update({r[0]: r[1] for r in case_db.conn.execute(q, chunk)})
+    for r in rows:
+        r["raw_data"] = raw.get(r["evidence_id"], "")
+    return rows
+
+
+@tool
+def export_results(query_type: str, start_time: Optional[str] = None, end_time: Optional[str] = None,
+                   event_type: Optional[str] = None, source: Optional[str] = None,
+                   keyword: Optional[str] = None, field: Optional[str] = None,
+                   include_raw: bool = False) -> str:
+    """
+    Saves ALL rows of a query (not just the page you see) as a CSV file for the investigator
+    to download, e.g. "give me the timeline of 02:30-03:00 as a file". Returns the file path.
+    Args:
+        query_type: 'timeline' (time window), 'search' (keyword) or 'pivot' (keyword in one field).
+        start_time: For timeline: ISO 8601 start. Optional.
+        end_time: For timeline: ISO 8601 end. Optional.
+        event_type: For timeline: event type filter. Optional.
+        source: For timeline: artifact source filter. Optional.
+        keyword: For search/pivot: the term or entity.
+        field: For pivot: user, process, command_line, path, hash, ip or event_id.
+        include_raw: Add the full raw record (JSON) as a column.
+    """
+    import csv
+    from copilot import outputs
+    from copilot.report import Clock
+    try:
+        if query_type == "timeline":
+            res = case_db.query_timeline(start_time, end_time, event_type, source, limit=EXPORT_MAX_ROWS)
+            rows, total = res["events"], res["total"]
+            clock = Clock(case_config.clock_offset_minutes)
+            for r in rows:
+                r["corrected_utc"] = clock.corrected(r["timestamp_utc"])
+            header = (["corrected_utc"] if clock.skewed else []) + ["timestamp_utc", "timestamp_desc"] + _EXPORT_COLUMNS
+            label = f"timeline {start_time or 'start'} to {end_time or 'end'}"
+        elif query_type in ("search", "pivot"):
+            if not keyword:
+                return "export_results needs a keyword for search/pivot."
+            res = (case_db.search_events(keyword, limit=EXPORT_MAX_ROWS) if query_type == "search"
+                   else case_db.pivot_entity(keyword, field, limit=EXPORT_MAX_ROWS))
+            rows, total = res["records"], res["total"]
+            header = ["first_seen", "last_seen"] + _EXPORT_COLUMNS
+            label = f"{query_type} '{keyword}'" + (f" in {field}" if field else "")
+        else:
+            return "query_type must be 'timeline', 'search' or 'pivot'."
+    except ValueError as e:
+        return str(e)
+    if include_raw:
+        rows = _with_raw(rows)
+        header.append("raw_data")
+
+    path = outputs.new_path(f"{query_type}_{keyword or source or 'results'}", "csv")
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    note = f" (first {EXPORT_MAX_ROWS:,} of {total:,})" if total > len(rows) else ""
+    outputs.register(path, "results", f"{label}: {len(rows):,} rows{note}")
+    case_db.log_query("export_results", f"type={query_type} start={start_time} end={end_time} type={event_type} "
+                      f"source={source} keyword={keyword} field={field}", len(rows))
+    return f"Saved {len(rows):,} rows{note} to {path}"
+
+
+@tool
+def export_evidence(evidence_ids: list) -> str:
+    """
+    Saves the complete original records (raw data and every timestamp) of the given
+    evidence IDs as a JSON file for the investigator to download. Returns the file path.
+    Args:
+        evidence_ids: Evidence IDs to export.
+    """
+    from copilot import outputs
+    records, missing = [], []
+    for eid in evidence_ids:
+        rec = case_db.get_event_detail(str(eid))
+        if not rec:
+            missing.append(eid)
+            continue
+        rec["raw_data"] = json.loads(rec["raw_data"]) if rec.get("raw_data") else None
+        records.append(rec)
+    if not records:
+        return f"None of these evidence IDs exist: {missing}"
+    path = outputs.new_path("evidence", "json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(records, f, indent=2, ensure_ascii=False, default=str)
+    outputs.register(path, "evidence", f"{len(records)} evidence record(s): {', '.join(r['evidence_id'] for r in records)}")
+    return f"Saved {len(records)} record(s) to {path}" + (f"; not found: {missing}" if missing else "")
+
+
 @tool
 def dfir_guide(topic: str) -> str:
     """
@@ -459,8 +560,9 @@ def export_case(include_csv: bool = True) -> str:
     import os
     from datetime import datetime
 
-    export_dir = os.path.join("case_data", "export")
-    os.makedirs(export_dir, exist_ok=True)
+    from copilot import outputs
+    import tempfile
+    export_dir = tempfile.mkdtemp(prefix="case_export_")
 
     # Consistent copy of the live database
     with sqlite3.connect(os.path.join(export_dir, "case.db")) as dest:
@@ -488,18 +590,15 @@ def export_case(include_csv: bool = True) -> str:
                     writer.writerow([desc[0] for desc in cur.description])
                     writer.writerows(rows)
 
-    # Create the zip
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    zip_name = f"case_export_{timestamp}"
-    zip_path = shutil.make_archive(
-        os.path.join("case_data", zip_name), "zip", export_dir
-    )
+    # Create the zip in the output directory
+    zip_path = shutil.make_archive(outputs.new_path("case_export", "zip")[:-4], "zip", export_dir)
 
     # Cleanup export dir
     shutil.rmtree(export_dir)
 
     # Get file size
     size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+    outputs.register(zip_path, "export", "Full case export (database + CSVs)")
 
     return (
         f"Case exported successfully!\n"
@@ -529,25 +628,29 @@ def generate_report(executive_summary: str, recommendations: str, correlations: 
         correlations: How the findings connect (e.g. logon -> execution -> persistence), citing finding
                       titles and evidence IDs; state which links are proven and which are inferred.
     """
-    import os
-    from datetime import datetime
     from copilot.report import build_report
 
     if not case_db.get_stats().get("total_records"):
         return ("Report not generated: the case database is empty, so there is no evidence to report on. "
                 "Collect artifacts successfully first (see list_collections).")
+    from copilot import outputs
+    from copilot.report_html import to_html
     report_md = build_report(case_db, case_config, executive_summary, recommendations, correlations)
-
-    out_dir = os.path.dirname(case_db.db_path)
-    report_path = os.path.join(out_dir, f"dfir_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
-    with open(report_path, "w", encoding="utf-8") as f:
+    stem = f"dfir_report_{case_config.case_name}"
+    md_path = outputs.new_path(stem, "md")
+    with open(md_path, "w", encoding="utf-8") as f:
         f.write(report_md)
+    html_path = md_path[:-3] + ".html"
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write(to_html(report_md, f"DFIR Report - {case_config.case_name}"))
+    outputs.register(html_path, "report", "DFIR report (HTML)")
+    outputs.register(md_path, "report", "DFIR report (Markdown)")
     findings = case_db.get_findings()
     return (
-        f"Report generated: {os.path.abspath(report_path)}\n"
+        f"Report generated:\n- {html_path}\n- {md_path}\n"
         f"Sections: Executive Summary, Scope & Evidence, Findings Overview ({len(findings)}), Evidence Timeline, "
         f"Detailed Findings, Correlations, Indicators, Artifacts/Locations/Meanings, Recommendations, "
-        f"Collections and Audit Log appendices."
+        f"appendices (collections, cited evidence records, retracted findings, audit log)."
     )
 
 
@@ -559,7 +662,7 @@ tools = [
     list_artifacts, describe_artifact,
     activity_histogram, context_window, query_timeline, search_iocs, pivot_entity, get_event_detail,
     case_summary, record_finding, retract_finding, dfir_guide,
-    generate_report, export_case,
+    generate_report, export_case, export_results, export_evidence,
 ]
 if case_config.allow_raw_vql:
     tools.append(server_vql_query)

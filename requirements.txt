@@ -5,3 +5,4 @@ langchain-openai
 pyyaml
 jinja2
 streamlit
+markdown-it-py

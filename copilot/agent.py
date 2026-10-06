@@ -187,44 +187,58 @@ WRAP_UP_PROMPT = (
 )
 
 
-def _print_answer(response):
-    print("\n### Agent Response ###\n")
+def answer_text(response) -> str:
+    """Text content of a model response (string or content blocks)."""
     if isinstance(response.content, list):
-        for block in response.content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                print(block["text"])
-            elif isinstance(block, str):
-                print(block)
-    else:
-        print(response.content)
+        return "\n".join(b["text"] if isinstance(b, dict) else str(b) for b in response.content
+                         if isinstance(b, str) or (isinstance(b, dict) and b.get("type") == "text"))
+    return str(response.content or "")
 
 
-def _process_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, max_tokens: int = None,
-                  finalizer=None):
+def _print_event(kind: str, payload):
+    """CLI renderer for run_turn events."""
+    if kind == "tool":
+        print(f"[*] Agent is running tool: {payload}...")
+    elif kind == "collection":
+        print(f"    {payload}")
+    elif kind == "notice":
+        print(f"\n[!] {payload}")
+    elif kind == "answer":
+        print("\n### Agent Response ###\n")
+        print(payload)
+    elif kind == "usage":
+        print(f"\n{payload}")
+
+
+def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, max_tokens: int = None,
+             finalizer=None, emit=_print_event) -> str:
     """
-    Processes a single conversational turn with tool calling loop, within step and token
-    limits. With a `finalizer` (the model without tools), the agent is made to answer
-    once 80% of the token budget is used, instead of stopping with nothing.
+    One investigator turn: the tool-calling loop within step and token limits, shared by the
+    CLI and Streamlit. Progress is reported through emit(kind, payload) with kind in
+    tool | collection | notice | answer | usage. With a `finalizer` (the model without tools)
+    the agent is made to answer at 80% of the token budget instead of stopping with nothing.
+    Returns the answer text ("" if none).
     """
     usage = usage or TokenUsage()
     usage.start_turn()
+    answer = ""
     answered = False
     try:
         step_count = 0
         while step_count < max_steps:
             if max_tokens and finalizer is not None and usage.turn_total >= WRAP_UP_AT * max_tokens:
-                print(f"\n[!] {usage.turn_total:,} of {max_tokens:,} tokens used: asking the agent to wrap up.")
+                emit("notice", f"{usage.turn_total:,} of {max_tokens:,} tokens used: asking the agent to wrap up.")
                 chat_history.append(HumanMessage(content=WRAP_UP_PROMPT))
                 trim_chat_history(chat_history)
                 response = finalizer.invoke(chat_history)
                 usage.add(response)
                 chat_history.append(response)
-                _print_answer(response)
-                answered = True
+                answer, answered = answer_text(response), True
+                emit("answer", answer)
                 break
             if max_tokens and usage.turn_total >= max_tokens:
-                print(f"\n[!] Token budget for this turn reached ({usage.turn_total:,} >= {max_tokens:,}). "
-                      f"Halting; ask a narrower question or raise agent.max_tokens_per_turn.")
+                emit("notice", f"Token budget for this turn reached ({usage.turn_total:,} >= {max_tokens:,}). "
+                               f"Halting; ask a narrower question or raise agent.max_tokens_per_turn.")
                 break
             step_count += 1
             trim_chat_history(chat_history)
@@ -234,12 +248,12 @@ def _process_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = N
             chat_history.append(response)
 
             if not response.tool_calls:
-                answered = True
-                _print_answer(response)
+                answer, answered = answer_text(response), True
+                emit("answer", answer)
                 break
 
             for tool_call in response.tool_calls:
-                print(f"[*] Agent is running tool: {tool_call['name']}...")
+                emit("tool", tool_call["name"])
                 try:
                     tool_fn = tool_map[tool_call["name"]]
                     tool_output = tool_fn.invoke(tool_call["args"])
@@ -247,9 +261,9 @@ def _process_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = N
                     tool_output = f"Tool execution failed: {e}"
                 if tool_call["name"] in ("collect_artifact", "check_collection"):
                     try:
-                        print(f"    {status_line(json.loads(tool_output))}")
+                        emit("collection", status_line(json.loads(tool_output)))
                     except (ValueError, TypeError):
-                        print(f"    {str(tool_output)[:300]}")
+                        emit("collection", str(tool_output)[:300])
 
                 chat_history.append(ToolMessage(
                     content=str(tool_output),
@@ -258,9 +272,17 @@ def _process_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = N
                 ))
 
         if not answered and step_count >= max_steps:
-            print("\n[!] Agent reached maximum tool steps. Halting.")
+            emit("notice", "Agent reached maximum tool steps. Halting.")
 
     except Exception as e:
-        print(f"Agent Error: {e}")
-    print(f"\n{usage.summary()}")
+        emit("notice", f"Agent Error: {e}")
+    emit("usage", usage.summary())
+    return answer
+
+
+def _process_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, max_tokens: int = None,
+                  finalizer=None):
+    """CLI turn (prints as it goes). Kept for the CLI loop and tests."""
+    usage = usage or TokenUsage()
+    run_turn(llm_with_tools, chat_history, max_steps, usage, max_tokens, finalizer)
     return usage
