@@ -158,9 +158,14 @@ def describe_artifact(artifact_name: str) -> str:
     if not res.get("results"):
         return safe_json_truncate(res) if res.get("error") else f"Artifact '{artifact_name}' not found."
     row = res["results"][0]
+    from copilot.knowledge import artifact_info
+    known = artifact_info(row.get("name", ""))
     info = {
         "name": row.get("name"),
         "allowed_for_this_case": case_config.is_artifact_allowed(row.get("name", "")),
+        "heavy_needs_filter": case_config.is_heavy(row.get("name", "")),
+        "evidence_location": known.get("location"),
+        "tips": known.get("tips", []),
         "description": (row.get("description") or "").strip(),
         "parameters": [
             {k: p.get(k) for k in ("name", "type", "default", "description") if p.get(k) not in (None, "")}
@@ -330,23 +335,38 @@ def record_finding(title: str, description: str, evidence_ids: list,
                    timestamp_utc: Optional[str] = None) -> str:
     """
     Record a forensic finding for the final report. Call this whenever you discover
-    something suspicious or malicious during analysis.
+    something suspicious or malicious during analysis. The finding's time is taken
+    automatically from the earliest timestamp of its evidence, so cite the evidence
+    records that show WHEN it happened (e.g. the 7045 event, the logon event).
     Args:
         title: Short title (e.g., 'Webshell Detected').
-        description: Detailed explanation of the finding.
+        description: Detailed explanation of the finding (give corrected and recorded times if the host clock was skewed).
         evidence_ids: List of evidence_id strings that support this finding.
         confidence: 'low', 'medium', or 'high'.
         mitre_technique: MITRE ATT&CK technique ID (e.g., 'T1505.003'). Optional.
-        timestamp_utc: When the event occurred. Optional.
+        timestamp_utc: Only used when none of the evidence has a timestamp (recorded host time). Optional.
     """
+    from copilot.normalize import normalize_bound
+    from copilot.report import finding_time
     if not evidence_ids:
         return "Not recorded: a finding needs at least one evidence_id from the case database."
     unknown = [e for e in evidence_ids if not case_db.get_event_detail(str(e))]
     if unknown:
         return (f"Not recorded: these evidence_ids do not exist in the case database: {unknown}. "
                 f"Use IDs returned by query_timeline/search_iocs/pivot_entity.")
-    fid = case_db.record_finding(title, description, evidence_ids, confidence, mitre_technique, timestamp_utc)
-    return f"Finding recorded with ID: {fid}"
+    confidence = (confidence or "medium").lower()
+    if confidence not in ("low", "medium", "high"):
+        confidence = "medium"
+    window = (normalize_bound(case_config.start_time), normalize_bound(case_config.end_time)) \
+        if case_config.has_scope else (None, None)
+    when = finding_time(case_db, evidence_ids, window)
+    if when is None and timestamp_utc:
+        try:
+            when = normalize_bound(timestamp_utc)
+        except ValueError:
+            when = None
+    fid = case_db.record_finding(title, description, evidence_ids, confidence, mitre_technique, when)
+    return f"Finding recorded with ID: {fid} (time from evidence: {when or 'none'})"
 
 
 # Functions and plugins that execute, write, upload, reach the network or change
@@ -454,78 +474,38 @@ def export_case(include_csv: bool = True) -> str:
 
 
 @tool
-def generate_report(executive_summary: str, recommendations: str) -> str:
+def generate_report(executive_summary: str, recommendations: str, correlations: Optional[str] = None) -> str:
     """
-    Generates the final DFIR report as a Markdown file using all recorded findings,
-    the case database, and the audit log. Call this at the END of an investigation.
-    
-    The report structure is fixed by template — you only write the narrative sections.
+    Generates the final DFIR report (Markdown) from the recorded findings and the case
+    database. Call this at the END of an investigation, when the investigator asks.
+    Times (corrected and recorded), the evidence timeline, indicators, artifact
+    explanations and audit log are filled in automatically; you only write:
     Args:
-        executive_summary: A 2-4 paragraph executive summary of what happened, 
-                          the impact, and what was found. Write this based on recorded findings.
-        recommendations: Bullet-point remediation recommendations based on findings.
+        executive_summary: 2-4 paragraphs for a non-technical reader: what happened, when (corrected
+                           UTC), how, impact, and what remains unknown. Based only on recorded findings.
+        recommendations: Bullet-point remediation and follow-up recommendations.
+        correlations: How the findings connect (e.g. logon -> execution -> persistence), citing finding
+                      titles and evidence IDs; state which links are proven and which are inferred.
     """
     import os
-    from datetime import datetime, timezone
-    from jinja2 import Template
-    from copilot.report_template import REPORT_TEMPLATE
+    from datetime import datetime
+    from copilot.report import build_report
 
-    stats = case_db.get_stats()
-    if not stats.get("total_records"):
+    if not case_db.get_stats().get("total_records"):
         return ("Report not generated: the case database is empty, so there is no evidence to report on. "
                 "Collect artifacts successfully first (see list_collections).")
-    findings = case_db.get_findings()
+    report_md = build_report(case_db, case_config, executive_summary, recommendations, correlations)
 
-    # Get audit log
-    cur = case_db.conn.cursor()
-    cur.execute("SELECT * FROM audit_log ORDER BY timestamp_utc ASC")
-    audit_log = [dict(r) for r in cur.fetchall()]
-
-    # Search for IOCs if provided in case.yaml
-    iocs_searched = []
-    if case_config.has_iocs:
-        for ioc_type, values in case_config.iocs.items():
-            for val in (values or []):
-                hits = case_db.search_events(str(val), limit=1)["total"]
-                iocs_searched.append({"value": val, "type": ioc_type, "hits": hits})
-
-    # Render the template
-    template = Template(REPORT_TEMPLATE)
-    report_md = template.render(
-        case_name=case_config.case_name,
-        analyst=case_config.analyst,
-        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
-        executive_summary=executive_summary,
-        has_scope=case_config.has_scope,
-        start_time=case_config.start_time,
-        end_time=case_config.end_time,
-        scope_description=case_config.description,
-        sources=stats.get("by_source", []),
-        total_records=stats.get("total_records", 0),
-        timeline_events=stats.get("timeline_events", 0),
-        undated_records=stats.get("undated_records", 0),
-        earliest=stats.get("earliest", "N/A"),
-        latest=stats.get("latest", "N/A"),
-        findings=findings,
-        iocs_searched=iocs_searched,
-        recommendations=recommendations,
-        audit_log=audit_log,
-    )
-
-    # Save to file
-    os.makedirs("case_data", exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_path = os.path.join("case_data", f"dfir_report_{timestamp}.md")
+    out_dir = os.path.dirname(case_db.db_path)
+    report_path = os.path.join(out_dir, f"dfir_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md")
     with open(report_path, "w", encoding="utf-8") as f:
         f.write(report_md)
-
+    findings = case_db.get_findings()
     return (
-        f"Report generated successfully!\n"
-        f"File: {os.path.abspath(report_path)}\n"
-        f"Sections: Executive Summary, Scope & Evidence, Timeline, "
-        f"Detailed Findings ({len(findings)}), IOC Summary, "
-        f"Recommendations, Audit Log ({len(audit_log)} queries)\n"
-        f"\nThe investigator can open this Markdown file or convert it to PDF."
+        f"Report generated: {os.path.abspath(report_path)}\n"
+        f"Sections: Executive Summary, Scope & Evidence, Findings Overview ({len(findings)}), Evidence Timeline, "
+        f"Detailed Findings, Correlations, Indicators, Artifacts/Locations/Meanings, Recommendations, "
+        f"Collections and Audit Log appendices."
     )
 
 

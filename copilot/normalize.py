@@ -60,6 +60,7 @@ EVENT_TYPES = [
     ("Windows.System.TaskScheduler*", "persistence"),
     ("Windows.System.Services*", "persistence"),
     ("Linux.Sys.Crontab*", "persistence"),
+    ("Windows.Sys.StartupItems*", "persistence"),
     ("Linux.Ssh.AuthorizedKeys*", "persistence"),
     ("Windows.Registry.*", "registry"),
     ("Windows.Applications.*", "browser"),
@@ -76,7 +77,8 @@ EVENT_TYPE_NAMES = sorted({t for _, t in EVENT_TYPES} | {"other"})
 # Entity -> field names (matched case-insensitively on the last path segment).
 ENTITY_FIELDS = {
     "user": ["username", "user", "subjectusername", "targetusername", "accountname", "owner", "name_of_user"],
-    "process": ["executable", "exe", "image", "processname", "newprocessname", "binary", "application", "binarypath"],
+    "process": ["executable", "exe", "image", "processname", "newprocessname", "binary", "application", "binarypath",
+                "imagepath", "servicefilename"],
     "command_line": ["commandline", "cmdline", "command", "line", "scriptblocktext", "arguments"],
     "path": ["ospath", "fullpath", "path", "filename", "targetpath", "sourcefile", "file"],
     "hash": ["sha256", "sha1", "md5", "hash", "filehash"],
@@ -223,11 +225,16 @@ def describe(row: dict, entities: dict, limit: int = 500) -> str:
     return text[:limit]
 
 
+# Sources whose timestamps describe the collection, not the evidence.
+NO_TIMELINE_SOURCES = ["Generic.Client.Info/BasicInformation"]
+
+
 def normalize_row(row: dict, source: str, now: datetime = None) -> dict:
     entities = extract_entities(row)
+    on_timeline = not any(fnmatch.fnmatchcase(source, p) for p in NO_TIMELINE_SOURCES)
     return {
         "event_type": event_type_for(source),
         "entities": entities,
         "description": describe(row, entities),
-        "timestamps": extract_timestamps(row, now),
+        "timestamps": extract_timestamps(row, now) if on_timeline else [],
     }

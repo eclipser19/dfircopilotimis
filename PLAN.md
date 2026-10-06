@@ -43,11 +43,15 @@ Legend: [x] done and tested · [~] partially done · [ ] not started
 - [x] `activity_histogram` — events per minute/hour/day and type, to find bursts.
 - [x] `context_window(timestamp, ±minutes)` — what happened around an event, across all sources.
 
-## Step 4: Report
-- [ ] Event timeline section (not just findings), with evidence excerpts per finding.
-- [ ] "Artifacts, locations & meanings" section from a static reference table.
-- [ ] Correlations section; IOC hit counts not capped.
-- [ ] Markdown escaping of evidence text; HTML/PDF output.
+## Step 4: Report ✅
+- [x] Report built from the database (`copilot/report.py`); the LLM only writes the executive summary, correlation analysis and recommendations.
+- [x] Finding times derived from their evidence (not typed by the LLM); corrected UTC and recorded host time side by side (`scope.clock_offset_minutes`).
+- [x] Evidence timeline of every cited record; per-finding evidence tables.
+- [x] Correlations: LLM narrative plus computed links (shared evidence, within 15 minutes).
+- [x] Indicators observed (IPs, accounts, processes, paths, hashes, command lines) from cited evidence; case IOC hit counts.
+- [x] "Artifacts, locations & meanings" from a static reference (`copilot/knowledge.py`), also shown to the agent as artifact tips.
+- [x] Markdown-safe cells, contiguous tables; collections and audit appendices.
+- [ ] HTML/PDF export.
 
 ## Step 5: Agent core & UI
 - [ ] One agent loop shared by CLI and Streamlit (the loop is still duplicated in `app.py`).

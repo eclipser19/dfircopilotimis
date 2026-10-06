@@ -15,7 +15,7 @@ filtered to the case time window and capped at a row limit. Work from that data 
 (e.g. MFT filtered to a suspicious filename, event logs filtered to an event ID you need).
 Never collect broadly "to see what's there". Heavy artifacts need a filter parameter;
 the investigator may approve or decline each request. Use `describe_artifact` for parameter
-names. A RUNNING collection has not returned results yet: call `check_collection` later.
+names and follow its `tips` (e.g. MFT FileRegex matches file names only; use PathRegex for folders). A RUNNING collection has not returned results yet: call `check_collection` later.
 A result marked truncated is incomplete: narrow it rather than reasoning from what's missing.
 
 **Step 2 — Analyze:** Collected rows are normalized automatically. All times are UTC.
@@ -34,7 +34,10 @@ A result marked truncated is incomplete: narrow it rather than reasoning from wh
 
 **Step 3 — Record:** When you discover something suspicious, use `record_finding` with the
 evidence_ids returned by the database tools, a confidence level, and the MITRE ATT&CK technique.
-Findings are saved permanently for the final report.
+Findings are saved permanently for the final report. A finding's time is taken from its
+evidence automatically, so cite the records that show when it happened.
+When asked for the report, `generate_report` fills times, evidence, indicators and artifact
+explanations itself; you write the executive summary, correlations and recommendations.
 
 ## KEY ARTIFACTS TO KNOW
 - `Windows.EventLogs.EvtxHunter` — Search Windows event logs
