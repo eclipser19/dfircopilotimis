@@ -5,33 +5,75 @@ import uuid
 import os
 from datetime import datetime, timezone
 
+from copilot.normalize import normalize_row, normalize_bound, ENTITY_FIELDS
+
+SCHEMA_VERSION = 2
+ENTITY_COLUMNS = list(ENTITY_FIELDS)  # user, process, command_line, path, hash, ip, event_id
+RECORD_COLUMNS = ["evidence_id", "client_id", "hostname", "source", "event_type", "description",
+                  *ENTITY_COLUMNS, "first_seen", "last_seen"]
+
+
+class SchemaError(Exception):
+    """The case database was created by an incompatible version."""
+
 
 class CaseDatabase:
-    """SQLite database for storing normalized forensic events per case."""
+    """
+    SQLite case database.
+      records  — one row per artifact result row (raw data + extracted entities)
+      timeline — one row per distinct timestamp found in a record (UTC, fixed width)
+      records_fts — full-text (substring) index over records, when SQLite supports it
+    """
 
     def __init__(self, case_dir="case_data"):
         os.makedirs(case_dir, exist_ok=True)
         self.db_path = os.path.join(case_dir, "case.db")
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
+        self._check_schema()
         self._init_tables()
+
+    def _check_schema(self):
+        cur = self.conn.cursor()
+        tables = {r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if "events" in tables and "records" not in tables:
+            raise SchemaError(
+                f"{self.db_path} was created by an older DFIR Copilot version. "
+                f"Delete it (or start a new case directory) and collect again.")
 
     def _init_tables(self):
         cur = self.conn.cursor()
-        cur.executescript("""
-            CREATE TABLE IF NOT EXISTS events (
+        entity_cols = ",\n".join(f"                {c} TEXT" for c in ENTITY_COLUMNS)
+        cur.executescript(f"""
+            CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+
+            CREATE TABLE IF NOT EXISTS records (
                 evidence_id   TEXT PRIMARY KEY,
-                timestamp_utc TEXT,
+                client_id     TEXT,
                 hostname      TEXT,
                 source        TEXT,
                 event_type    TEXT,
                 description   TEXT,
+{entity_cols},
+                first_seen    TEXT,
+                last_seen     TEXT,
                 raw_data      TEXT,
                 ingested_at   TEXT
             );
-            CREATE INDEX IF NOT EXISTS idx_events_ts ON events(timestamp_utc);
-            CREATE INDEX IF NOT EXISTS idx_events_source ON events(source);
-            CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
+            CREATE INDEX IF NOT EXISTS idx_records_source ON records(source);
+            CREATE INDEX IF NOT EXISTS idx_records_type ON records(event_type);
+            CREATE INDEX IF NOT EXISTS idx_records_user ON records(user);
+            CREATE INDEX IF NOT EXISTS idx_records_process ON records(process);
+            CREATE INDEX IF NOT EXISTS idx_records_ip ON records(ip);
+            CREATE INDEX IF NOT EXISTS idx_records_hash ON records(hash);
+
+            CREATE TABLE IF NOT EXISTS timeline (
+                evidence_id    TEXT,
+                timestamp_utc  TEXT,
+                timestamp_desc TEXT,
+                PRIMARY KEY (evidence_id, timestamp_utc)
+            );
+            CREATE INDEX IF NOT EXISTS idx_timeline_ts ON timeline(timestamp_utc);
 
             CREATE TABLE IF NOT EXISTS findings (
                 finding_id    TEXT PRIMARY KEY,
@@ -66,63 +108,51 @@ class CaseDatabase:
                 artifact      TEXT
             );
         """)
+        cur.execute("INSERT OR IGNORE INTO meta VALUES ('schema_version', ?)", (str(SCHEMA_VERSION),))
+        # Trigram FTS gives case-insensitive substring search; needs SQLite >= 3.34.
+        try:
+            cur.execute("CREATE VIRTUAL TABLE IF NOT EXISTS records_fts "
+                        "USING fts5(evidence_id UNINDEXED, text, tokenize='trigram')")
+            self.has_fts = True
+        except sqlite3.OperationalError:
+            self.has_fts = False
         self.conn.commit()
 
-    # --- Event Ingestion ---
+    # --- Ingestion ---
     def ingest_artifact_results(self, results, source: str, hostname: str = "Unknown",
                                 client_id: str = "") -> int:
         """
-        Ingests raw artifact result rows (any iterable, so large flows can be
-        streamed) into the events table. Attempts to extract a timestamp from
-        common Velociraptor fields. Returns the number of NEW rows; rows already
-        in the database (e.g. from re-collecting an artifact) are skipped.
+        Normalizes and stores artifact result rows (any iterable, so large flows
+        can be streamed). Returns the number of NEW records; rows already in the
+        database (e.g. from re-collecting an artifact) are skipped.
         """
         cur = self.conn.cursor()
         count = 0
         now = datetime.now(timezone.utc).isoformat()
-
-        # Common timestamp field names in Velociraptor artifacts
-        ts_fields = [
-            "EventTime", "Timestamp", "timestamp", "event_time",
-            "TimeCreated", "Created0x10", "LastModified0x10",
-            "LastRunTime", "CreatedDate", "ModifiedDate",
-            "Mtime", "Atime", "Ctime", "Btime",
-            "mtime", "atime", "ctime", "btime",
-            "Created", "Modified", "LastAccessed",
-            "StartTime", "EndTime", "LoginTime",
-            "client_time", "SourceDate",
-        ]
+        placeholders = ",".join("?" * (len(RECORD_COLUMNS) + 2))
 
         for row in results:
             raw = json.dumps(row, sort_keys=True, default=str)
             evidence_id = _evidence_id(client_id, source, raw)
+            norm = normalize_row(row if isinstance(row, dict) else {"value": row}, source)
+            stamps = norm["timestamps"]
+            entities = norm["entities"]
 
-            # Try to find a timestamp
-            ts = None
-            for field in ts_fields:
-                val = row.get(field)
-                if val and str(val).strip() and str(val) != "0":
-                    ts = str(val)
-                    break
-
-            # Build a human-readable description from key fields
-            desc_parts = []
-            for key in ["Message", "message", "Name", "FullPath", "CommandLine",
-                        "Exe", "Details", "UserName", "SourceName", "EventID"]:
-                val = row.get(key)
-                if val:
-                    desc_parts.append(f"{key}={val}")
-            description = "; ".join(desc_parts) if desc_parts else raw[:500]
-
-            # Guess event type from the source artifact name
-            event_type = _guess_event_type(source)
-
-            cur.execute(
-                "INSERT OR IGNORE INTO events (evidence_id, timestamp_utc, hostname, source, event_type, description, raw_data, ingested_at) VALUES (?,?,?,?,?,?,?,?)",
-                (evidence_id, ts, hostname, source, event_type, description, raw, now)
-            )
-            count += cur.rowcount
-            if count and count % 5000 == 0:
+            values = [evidence_id, client_id, hostname, source, norm["event_type"], norm["description"],
+                      *[entities.get(c) for c in ENTITY_COLUMNS],
+                      stamps[0][0] if stamps else None, stamps[-1][0] if stamps else None,
+                      raw, now]
+            cur.execute(f"INSERT OR IGNORE INTO records ({','.join(RECORD_COLUMNS)}, raw_data, ingested_at) "
+                        f"VALUES ({placeholders})", values)
+            if not cur.rowcount:
+                continue
+            count += 1
+            cur.executemany("INSERT OR IGNORE INTO timeline VALUES (?,?,?)",
+                            [(evidence_id, ts, desc) for ts, desc in stamps])
+            if self.has_fts:
+                text = " ".join([norm["description"], *entities.values(), raw])
+                cur.execute("INSERT INTO records_fts (evidence_id, text) VALUES (?, ?)", (evidence_id, text))
+            if count % 5000 == 0:
                 self.conn.commit()
 
         self.conn.commit()
@@ -131,60 +161,100 @@ class CaseDatabase:
     # --- Query Tools ---
     def query_timeline(self, start: str = None, end: str = None,
                        event_type: str = None, source: str = None,
-                       limit: int = 200) -> list:
-        """Query events within a time window, optionally filtered."""
-        query = "SELECT evidence_id, timestamp_utc, hostname, source, event_type, description FROM events WHERE 1=1"
-        params = []
-
+                       limit: int = 200) -> dict:
+        """
+        Timeline events (one per timestamp) in a window, oldest first.
+        Returns {"total", "events", "undated"}: `undated` counts matching records
+        that have no timestamp at all, so they aren't silently missing.
+        """
+        start, end = normalize_bound(start), normalize_bound(end)
+        where, params = [], []
         if start:
-            query += " AND timestamp_utc >= ?"
+            where.append("t.timestamp_utc >= ?")
             params.append(start)
         if end:
-            query += " AND timestamp_utc <= ?"
+            where.append("t.timestamp_utc <= ?")
             params.append(end)
-        if event_type:
-            query += " AND event_type = ?"
-            params.append(event_type)
-        if source:
-            query += " AND source LIKE ?"
-            params.append(f"%{source}%")
-
-        query += " ORDER BY timestamp_utc ASC LIMIT ?"
-        params.append(limit)
+        rec_where, rec_params = _record_filters(event_type, source)
+        where += rec_where
+        params += rec_params
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
 
         cur = self.conn.cursor()
-        cur.execute(query, params)
-        return [dict(r) for r in cur.fetchall()]
+        base = f"FROM timeline t JOIN records r ON r.evidence_id = t.evidence_id {clause}"
+        total = cur.execute(f"SELECT COUNT(*) {base}", params).fetchone()[0]
+        cols = ", ".join(f"r.{c}" for c in RECORD_COLUMNS if c not in ("first_seen", "last_seen", "client_id"))
+        cur.execute(f"SELECT t.timestamp_utc, t.timestamp_desc, {cols} {base} "
+                    f"ORDER BY t.timestamp_utc ASC LIMIT ?", params + [limit])
+        events = [_compact(dict(r)) for r in cur.fetchall()]
 
-    def search_events(self, keyword: str, limit: int = 100) -> list:
-        """Full-text search across descriptions and raw data."""
+        undated_clause = " AND ".join(["r.first_seen IS NULL"] + rec_where)
+        cur.execute(f"SELECT r.source, COUNT(*) AS records FROM records r WHERE {undated_clause} "
+                    f"GROUP BY r.source", rec_params)
+        undated = [dict(r) for r in cur.fetchall()]
+        return {"total": total, "events": events, "undated": undated}
+
+    def search_events(self, keyword: str, limit: int = 100) -> dict:
+        """Case-insensitive substring search across descriptions, entities and raw data."""
         cur = self.conn.cursor()
-        cur.execute(
-            "SELECT evidence_id, timestamp_utc, hostname, source, event_type, description FROM events WHERE description LIKE ? OR raw_data LIKE ? ORDER BY timestamp_utc ASC LIMIT ?",
-            (f"%{keyword}%", f"%{keyword}%", limit)
-        )
-        return [dict(r) for r in cur.fetchall()]
+        if self.has_fts and len(keyword) >= 3:
+            match = '"' + keyword.replace('"', '""') + '"'
+            ids_sql = "SELECT evidence_id FROM records_fts WHERE records_fts MATCH ?"
+            params = [match]
+        else:
+            like = f"%{_escape_like(keyword)}%"
+            ids_sql = ("SELECT evidence_id FROM records WHERE description LIKE ? ESCAPE '\\' "
+                       "OR raw_data LIKE ? ESCAPE '\\'")
+            params = [like, like]
+        return self._records_where(f"r.evidence_id IN ({ids_sql})", params, limit)
 
-    def pivot_entity(self, entity: str, limit: int = 100) -> list:
-        """Find all events mentioning a specific user, process, IP, or path."""
-        return self.search_events(entity, limit)
+    def pivot_entity(self, entity: str, field: str = None, limit: int = 100) -> dict:
+        """
+        Records whose extracted `field` (user, process, ip, ...) contains `entity`;
+        without a field, a full search.
+        """
+        if not field:
+            return self.search_events(entity, limit)
+        if field not in ENTITY_COLUMNS:
+            raise ValueError(f"Unknown field '{field}'. Use one of: {', '.join(ENTITY_COLUMNS)}.")
+        return self._records_where(f"r.{field} LIKE ? ESCAPE '\\'", [f"%{_escape_like(entity)}%"], limit)
+
+    def _records_where(self, condition: str, params: list, limit: int) -> dict:
+        cur = self.conn.cursor()
+        total = cur.execute(f"SELECT COUNT(*) FROM records r WHERE {condition}", params).fetchone()[0]
+        cols = ", ".join(f"r.{c}" for c in RECORD_COLUMNS if c != "client_id")
+        cur.execute(f"SELECT {cols} FROM records r WHERE {condition} "
+                    f"ORDER BY r.first_seen IS NULL, r.first_seen ASC LIMIT ?", params + [limit])
+        return {"total": total, "records": [_compact(dict(r)) for r in cur.fetchall()]}
 
     def get_event_detail(self, evidence_id: str) -> dict:
-        """Get full raw data for a specific evidence ID."""
+        """Full record (raw data included) plus every timestamp found in it."""
         cur = self.conn.cursor()
-        cur.execute("SELECT * FROM events WHERE evidence_id = ?", (evidence_id,))
+        cur.execute("SELECT * FROM records WHERE evidence_id = ?", (evidence_id,))
         row = cur.fetchone()
-        return dict(row) if row else {}
+        if not row:
+            return {}
+        record = dict(row)
+        cur.execute("SELECT timestamp_utc, timestamp_desc FROM timeline WHERE evidence_id = ? "
+                    "ORDER BY timestamp_utc", (evidence_id,))
+        record["timestamps"] = [dict(r) for r in cur.fetchall()]
+        return record
 
     def get_stats(self) -> dict:
-        """Get summary statistics of the case database."""
+        """Summary statistics of the case database."""
         cur = self.conn.cursor()
-        cur.execute("SELECT COUNT(*) as total, COUNT(DISTINCT source) as sources, MIN(timestamp_utc) as earliest, MAX(timestamp_utc) as latest FROM events")
-        row = cur.fetchone()
-        cur.execute("SELECT source, COUNT(*) as count FROM events GROUP BY source ORDER BY count DESC")
+        row = cur.execute("SELECT COUNT(*) AS records, COUNT(first_seen) AS dated, "
+                          "COUNT(DISTINCT source) AS sources FROM records").fetchone()
+        span = cur.execute("SELECT COUNT(*) AS events, MIN(timestamp_utc) AS earliest, "
+                           "MAX(timestamp_utc) AS latest FROM timeline").fetchone()
+        cur.execute("SELECT r.source, r.event_type, COUNT(*) AS records, COUNT(r.first_seen) AS dated_records, "
+                    "MIN(r.first_seen) AS earliest, MAX(r.last_seen) AS latest "
+                    "FROM records r GROUP BY r.source ORDER BY records DESC")
         by_source = [dict(r) for r in cur.fetchall()]
-        return {"total_events": row["total"], "unique_sources": row["sources"],
-                "earliest": row["earliest"], "latest": row["latest"],
+        return {"total_records": row["records"], "dated_records": row["dated"],
+                "undated_records": row["records"] - row["dated"],
+                "timeline_events": span["events"], "unique_sources": row["sources"],
+                "earliest": span["earliest"], "latest": span["latest"],
                 "by_source": by_source}
 
     # --- Findings ---
@@ -204,7 +274,7 @@ class CaseDatabase:
 
     def get_findings(self) -> list:
         cur = self.conn.cursor()
-        cur.execute("SELECT * FROM findings ORDER BY timestamp_utc ASC")
+        cur.execute("SELECT * FROM findings ORDER BY timestamp_utc IS NULL, timestamp_utc ASC")
         return [dict(r) for r in cur.fetchall()]
 
     # --- Collections ---
@@ -250,26 +320,24 @@ def _evidence_id(client_id: str, source: str, raw_row: str) -> str:
     return hashlib.sha256(f"{client_id}|{source}|{raw_row}".encode("utf-8")).hexdigest()[:16]
 
 
-def _guess_event_type(source: str) -> str:
-    """Guess event category from artifact source name."""
-    s = source.lower()
-    if any(k in s for k in ["evtx", "eventlog", "event"]):
-        return "event_log"
-    if any(k in s for k in ["prefetch", "amcache", "shimcache"]):
-        return "execution"
-    if any(k in s for k in ["mft", "usn", "ntfs", "filefinder"]):
-        return "filesystem"
-    if any(k in s for k in ["network", "netstat", "dns", "connection"]):
-        return "network"
-    if any(k in s for k in ["registry", "run", "service", "schtask", "persistence"]):
-        return "persistence"
-    if any(k in s for k in ["browser", "chrome", "firefox", "edge", "history"]):
-        return "browser"
-    if any(k in s for k in ["logon", "login", "session", "rdp"]):
-        return "authentication"
-    if any(k in s for k in ["powershell", "psreadline", "script"]):
-        return "script_execution"
-    return "other"
+def _escape_like(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _record_filters(event_type: str, source: str) -> tuple:
+    where, params = [], []
+    if event_type:
+        where.append("r.event_type = ?")
+        params.append(event_type)
+    if source:
+        where.append("r.source LIKE ? ESCAPE '\\'")
+        params.append(f"%{_escape_like(source)}%")
+    return where, params
+
+
+def _compact(row: dict) -> dict:
+    """Drops empty columns so tool output stays small."""
+    return {k: v for k, v in row.items() if v not in (None, "")}
 
 
 # Global instance

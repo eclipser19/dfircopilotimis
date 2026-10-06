@@ -14,10 +14,16 @@ Use `list_artifacts` and `describe_artifact` to find artifacts and their paramet
 If a collection reports state RUNNING, it has NOT returned results yet: continue with other
 work and call `check_collection` with its flow_id later. Use `list_collections` to see all.
 
-**Step 2 — Analyze:** Use `query_timeline`, `search_iocs`, and `pivot_entity` to query the database.
-These tools correlate across ALL collected artifacts, filter by time windows, and trace entities.
-Use `get_event_detail` to inspect specific events in full.
-Use `case_summary` to see what data has been collected so far.
+**Step 2 — Analyze:** Collected rows are normalized automatically. All times are UTC.
+- `query_timeline`: one event per timestamp, oldest first. `timestamp_desc` names the field the time
+  came from (e.g. MFT Created0x10 vs Modified0x10; Prefetch LastRunTimes[3]): say which one you rely on.
+  It reports the total number of matches; if only part is shown, narrow the window instead of guessing.
+  It also lists records WITHOUT timestamps (e.g. PSReadline command history): those never appear on
+  the timeline, so search them with `search_iocs` / `pivot_entity`.
+- `search_iocs`: case-insensitive substring search over all collected data.
+- `pivot_entity`: follow a user, process, path, hash, IP or event ID (use `field` for precision).
+- `get_event_detail`: the full raw record and all of its timestamps.
+- `case_summary`: what has been collected so far.
 
 **Step 3 — Record:** When you discover something suspicious, use `record_finding` with the
 evidence_ids returned by the database tools, a confidence level, and the MITRE ATT&CK technique.

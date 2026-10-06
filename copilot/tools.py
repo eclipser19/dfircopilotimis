@@ -6,6 +6,7 @@ from copilot.collection import CollectionError
 from copilot.vql_client import get_vql
 from copilot.database import case_db
 from copilot.case_config import case_config
+from copilot.normalize import EVENT_TYPE_NAMES
 
 
 def safe_json_truncate(res_dict: dict, max_records: int = 50) -> str:
@@ -140,75 +141,103 @@ def describe_artifact(artifact_name: str) -> str:
 # DATABASE QUERY TOOLS (for the LLM to analyze collected data)
 # ========================================================================
 
+def _shown(total: int, shown: int) -> str:
+    if total > shown:
+        return (f"Showing {shown} of {total} matches (oldest first). Narrow the time window, "
+                f"event_type or source to see the rest.")
+    return f"{total} match." if total == 1 else f"{total} matches."
+
+
 @tool
 def query_timeline(start_time: str = None, end_time: str = None,
                    event_type: str = None, source: str = None) -> str:
     """
-    Query the case database for events within a time window.
+    Timeline of the case: one event per timestamp found in the collected data, in UTC,
+    oldest first. Each event names the field its time came from (timestamp_desc, e.g.
+    'Created0x10' vs 'Modified0x10'). Reports the total number of matches, and how many
+    matching records have no timestamp at all (e.g. PSReadline history) so they aren't missed;
+    find those with search_iocs or pivot_entity.
     Args:
         start_time: ISO 8601 start (e.g., '2024-01-15T10:00:00Z'). Optional.
         end_time: ISO 8601 end (e.g., '2024-01-15T10:10:00Z'). Optional.
-        event_type: Filter by type (event_log, execution, filesystem, network, persistence, browser, authentication, script_execution). Optional.
+        event_type: One of: {types}. Optional.
         source: Filter by artifact source name (partial match). Optional.
     """
-    results = case_db.query_timeline(start_time, end_time, event_type, source)
-    case_db.log_query("query_timeline", f"start={start_time} end={end_time} type={event_type} source={source}", len(results))
-    if not results:
+    try:
+        res = case_db.query_timeline(start_time, end_time, event_type, source)
+    except ValueError as e:
+        return str(e)
+    case_db.log_query("query_timeline", f"start={start_time} end={end_time} type={event_type} source={source}",
+                      res["total"])
+    out = {"summary": _shown(res["total"], len(res["events"])), "events": res["events"]}
+    if res["undated"]:
+        out["records_without_timestamps"] = res["undated"]
+    if not res["total"] and not res["undated"]:
         return "No events found matching the criteria. Try broadening the time range or collecting more artifacts first."
-    return json.dumps(results, indent=2)
+    return json.dumps(out, indent=2, default=str)
+
+
+query_timeline.description = query_timeline.description.replace("{types}", ", ".join(EVENT_TYPE_NAMES))
 
 
 @tool
 def search_iocs(keyword: str) -> str:
     """
-    Search the case database for any events mentioning a keyword (IP, hash, filename, user, process name, etc.).
+    Case-insensitive substring search over every collected record (description, extracted
+    fields and the full raw data) for an IOC or term: IP, hash, domain, filename, user, etc.
+    Returns the total number of matching records and each record's first/last timestamp.
     Args:
         keyword: The IOC or search term to look for.
     """
-    results = case_db.search_events(keyword)
-    case_db.log_query("search_iocs", f"keyword={keyword}", len(results))
-    if not results:
-        return f"No events found matching '{keyword}'. Try collecting more artifacts or using a different search term."
-    return json.dumps(results, indent=2)
+    res = case_db.search_events(keyword)
+    case_db.log_query("search_iocs", f"keyword={keyword}", res["total"])
+    if not res["total"]:
+        return f"No records found matching '{keyword}'. Try collecting more artifacts or using a different search term."
+    return json.dumps({"summary": _shown(res["total"], len(res["records"])), "records": res["records"]},
+                      indent=2, default=str)
 
 
 @tool
-def pivot_entity(entity: str) -> str:
+def pivot_entity(entity: str, field: str = None) -> str:
     """
-    Find all events related to a specific entity (username, process, IP address, file path).
-    Use this to trace lateral movement, follow a user's activity, or map a process tree.
+    Find all records related to an entity. With `field`, matches only that extracted field
+    (more precise); without it, searches everything.
+    Use this to follow a user's activity, trace a process, or find everything about an IP.
     Args:
-        entity: The entity to pivot on (e.g., 'svchost.exe', 'SYSTEM', '192.168.1.50').
+        entity: The value to pivot on (e.g., 'svchost.exe', 'jdoe', '192.168.1.50').
+        field: Optional: user, process, command_line, path, hash, ip or event_id.
     """
-    results = case_db.pivot_entity(entity)
-    case_db.log_query("pivot_entity", f"entity={entity}", len(results))
-    if not results:
-        return f"No events found for entity '{entity}'."
-    return json.dumps(results, indent=2)
+    try:
+        res = case_db.pivot_entity(entity, field)
+    except ValueError as e:
+        return str(e)
+    case_db.log_query("pivot_entity", f"entity={entity} field={field}", res["total"])
+    if not res["total"]:
+        return f"No records found for '{entity}'" + (f" in field '{field}'." if field else ".")
+    return json.dumps({"summary": _shown(res["total"], len(res["records"])), "records": res["records"]},
+                      indent=2, default=str)
 
 
 @tool
 def get_event_detail(evidence_id: str) -> str:
     """
-    Retrieve the full raw JSON data for a specific event by its evidence_id.
-    Use this when you need to inspect the complete original artifact data.
+    Retrieve one record in full: its raw artifact data and every timestamp found in it.
     Args:
         evidence_id: The evidence ID to look up (returned by timeline/search/pivot tools).
     """
     result = case_db.get_event_detail(evidence_id)
     if not result:
-        return f"No event found with evidence_id '{evidence_id}'."
-    # Parse raw_data back to dict for readability
+        return f"No record found with evidence_id '{evidence_id}'."
     if result.get("raw_data"):
         result["raw_data"] = json.loads(result["raw_data"])
-    return json.dumps(result, indent=2)
+    return json.dumps({k: v for k, v in result.items() if v not in (None, "")}, indent=2, default=str)
 
 
 @tool
 def case_summary() -> str:
     """
-    Returns a summary of all data currently in the case database:
-    total events, sources collected, time range, and breakdown by artifact.
+    Returns a summary of all data currently in the case database: records and timeline
+    events, how many records have no timestamp, time range, and breakdown by artifact.
     """
     stats = case_db.get_stats()
     findings = case_db.get_findings()
@@ -280,7 +309,8 @@ def export_case(include_csv: bool = True) -> str:
     Exports the entire case database for offline investigation.
     Creates a ZIP file containing:
     - case.db (SQLite database - open with DB Browser, DBeaver, or Python)
-    - events.csv (all normalized events - open with Excel or Timeline Explorer)
+    - records.csv (every collected row with extracted fields)
+    - timeline.csv (one row per timestamp - open with Excel or Timeline Explorer)
     - findings.csv (all recorded findings)
     - audit_log.csv (full query audit trail for chain of custody)
     Args:
@@ -288,19 +318,31 @@ def export_case(include_csv: bool = True) -> str:
     """
     import csv
     import shutil
+    import sqlite3
     import os
     from datetime import datetime
 
     export_dir = os.path.join("case_data", "export")
     os.makedirs(export_dir, exist_ok=True)
 
-    # Copy the database
-    shutil.copy2(case_db.db_path, os.path.join(export_dir, "case.db"))
+    # Consistent copy of the live database
+    with sqlite3.connect(os.path.join(export_dir, "case.db")) as dest:
+        case_db.conn.backup(dest)
 
     if include_csv:
         cur = case_db.conn.cursor()
-        for table in ["events", "findings", "audit_log"]:
-            cur.execute(f"SELECT * FROM {table}")
+        exports = {
+            "records": "SELECT * FROM records",
+            "timeline": ("SELECT t.timestamp_utc, t.timestamp_desc, r.source, r.event_type, r.hostname, "
+                         "r.description, r.user, r.process, r.command_line, r.path, r.hash, r.ip, r.event_id, "
+                         "t.evidence_id FROM timeline t JOIN records r ON r.evidence_id = t.evidence_id "
+                         "ORDER BY t.timestamp_utc"),
+            "findings": "SELECT * FROM findings",
+            "collections": "SELECT * FROM collections",
+            "audit_log": "SELECT * FROM audit_log",
+        }
+        for table, query in exports.items():
+            cur.execute(query)
             rows = cur.fetchall()
             if rows:
                 csv_path = os.path.join(export_dir, f"{table}.csv")
@@ -327,10 +369,10 @@ def export_case(include_csv: bool = True) -> str:
         f"File: {os.path.abspath(zip_path)}\n"
         f"Size: {size_mb:.2f} MB\n"
         f"Contents: case.db (SQLite)"
-        + (" + events.csv, findings.csv, audit_log.csv" if include_csv else "")
+        + (" + records.csv, timeline.csv, findings.csv, collections.csv, audit_log.csv" if include_csv else "")
         + f"\n\nThe investigator can download this file and open:\n"
         f"- case.db with DB Browser for SQLite, DBeaver, or Python\n"
-        f"- events.csv with Excel or Timeline Explorer for manual analysis"
+        f"- timeline.csv with Excel or Timeline Explorer for manual analysis"
     )
 
 
@@ -352,7 +394,7 @@ def generate_report(executive_summary: str, recommendations: str) -> str:
     from copilot.report_template import REPORT_TEMPLATE
 
     stats = case_db.get_stats()
-    if not stats.get("total_events"):
+    if not stats.get("total_records"):
         return ("Report not generated: the case database is empty, so there is no evidence to report on. "
                 "Collect artifacts successfully first (see list_collections).")
     findings = case_db.get_findings()
@@ -367,8 +409,8 @@ def generate_report(executive_summary: str, recommendations: str) -> str:
     if case_config.has_iocs:
         for ioc_type, values in case_config.iocs.items():
             for val in (values or []):
-                hits = case_db.search_events(str(val))
-                iocs_searched.append({"value": val, "type": ioc_type, "hits": len(hits)})
+                hits = case_db.search_events(str(val), limit=1)["total"]
+                iocs_searched.append({"value": val, "type": ioc_type, "hits": hits})
 
     # Render the template
     template = Template(REPORT_TEMPLATE)
@@ -382,7 +424,9 @@ def generate_report(executive_summary: str, recommendations: str) -> str:
         end_time=case_config.end_time,
         scope_description=case_config.description,
         sources=stats.get("by_source", []),
-        total_events=stats.get("total_events", 0),
+        total_records=stats.get("total_records", 0),
+        timeline_events=stats.get("timeline_events", 0),
+        undated_records=stats.get("undated_records", 0),
         earliest=stats.get("earliest", "N/A"),
         latest=stats.get("latest", "N/A"),
         findings=findings,

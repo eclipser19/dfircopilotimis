@@ -19,17 +19,20 @@ pip install -r requirements.txt
    artifacts but has no server command execution or filesystem write permission,
    which is the real safety net behind the agent's own allowlists.
 
-2. **Present the image as a virtual client.** Mount the image read-only and
-   generate a remapping for it with `velociraptor deaddisk` (check its flags with
-   `velociraptor deaddisk --help` on your version). Then run the server and a client
-   that uses the remapping (this is the local Windows test setup):
+2. **Present the image as a virtual client.** Velociraptor (0.7.2+) reads E01
+   images directly, so nothing needs to be mounted and no admin rights are needed.
+   Point `deaddisk` at the first segment (`.E01`; the other segments must be in the
+   same folder) and run a client with the generated remapping:
    ```powershell
+   .\velociraptor.exe deaddisk --add_windows_disk=D:\evidence\image.E01 deaddisk.yaml -v
    .\velociraptor.exe --config server.config.yaml frontend
    .\velociraptor.exe --config deaddisk_client.config.yaml --remap deaddisk.yaml client
    ```
    The image then appears as a client. Put its client ID in `case.yaml` under
-   `velociraptor.client_id`. Windows and Linux images are both supported by the
-   default artifact allowlist.
+   `velociraptor.client_id`. Check `deaddisk --help` on your version for other
+   options (e.g. Linux images). Avoid remapping a live drive (`file_nocase` on
+   `C:\`): running Windows keeps event logs, registry hives and `$MFT` locked, so
+   most artifacts come back empty.
 
 3. **Case file.** Edit `case.yaml`: incident window, IOCs, artifacts to
    auto-collect, and optionally which artifacts the agent may collect.

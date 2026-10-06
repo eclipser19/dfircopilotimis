@@ -28,15 +28,18 @@ REPORT_TEMPLATE = """# Digital Forensics & Incident Response Report
 
 ### Evidence Sources Collected
 
-| Source Artifact | Events Collected |
-|---|---|
+| Source Artifact | Type | Records | With Timestamps | Earliest (UTC) | Latest (UTC) |
+|---|---|---|---|---|---|
 {% for src in sources %}
-| {{ src.source }} | {{ src.count }} |
+| {{ src.source }} | {{ src.event_type }} | {{ src.records }} | {{ src.dated_records }} | {{ src.earliest or "—" }} | {{ src.latest or "—" }} |
 {% endfor %}
 
-**Total Events in Database:** {{ total_events }}
+**Records in Database:** {{ total_records }} ({{ undated_records }} without timestamps)
+**Timeline Events:** {{ timeline_events }}
 **Earliest Event:** {{ earliest }}
 **Latest Event:** {{ latest }}
+
+All times are UTC.
 
 ---
 

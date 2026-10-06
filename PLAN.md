@@ -23,15 +23,17 @@ Legend: [x] done and tested · [~] partially done · [ ] not started
 - [x] One system prompt and one LLM factory shared by CLI and Streamlit; API key no longer put in `os.environ`.
 - [x] `case_data/` git-ignored; `requirements.txt`; pytest suite (`tests/`).
 
-## Step 2: Normalization (the core)
-- [ ] Per-artifact mappers: UTC ISO-8601 timestamps (RFC3339 offsets, epoch, FILETIME), one timeline event per timestamp (MACB).
-- [ ] Structured columns for pivoting: user, process, command line, path, hash, IP, event ID.
-- [ ] Rows without timestamps (e.g. PSReadline) kept visible and labelled, not silently dropped from timelines.
-- [ ] Event-type mapping per artifact instead of substring guessing.
-- [ ] SQLite FTS5 for keyword search.
+## Step 2: Normalization (the core) ✅
+- [x] Timestamps found by value anywhere in a row (ISO-8601/RFC3339 with offsets, epoch s/ms/µs/ns, FILETIME), normalized to fixed-width UTC; placeholder dates (1601/1970) and far-future values dropped.
+- [x] One timeline event per distinct timestamp in a record, labelled with its source field(s) (MACB-style).
+- [x] Structured fields for pivoting: user, process, command line, path, hash, IP, event ID.
+- [x] Rows without timestamps (e.g. PSReadline) kept as records and reported by timeline queries, not dropped.
+- [x] Event type from an ordered artifact-name table (Windows + Linux).
+- [x] SQLite FTS5 (trigram) for case-insensitive substring search; LIKE fallback.
+- [ ] Per-artifact refinements once real output is seen (e.g. Amcache date formats, better descriptions).
 
 ## Step 3: Query tools for correlation
-- [ ] Every query returns total matches + "showing N of M".
+- [x] Every query returns total matches + "showing N of M".
 - [ ] Aggregations (events per hour / source / user) to find activity bursts.
 - [ ] `context_window(timestamp, ±minutes)` — what happened around an event, across all sources.
 
@@ -47,5 +49,6 @@ Legend: [x] done and tested · [~] partially done · [ ] not started
 - [ ] Report upload / sharing.
 
 ## Environment (outside this repo)
-- [~] Dead-disk virtual client via `velociraptor deaddisk` remapping — documented in README, verify against the server's Velociraptor version.
+- [x] Dead-disk virtual client via `velociraptor deaddisk` remapping (E01 read directly, no admin) — documented in README.
+- [ ] End-to-end run against a public practice image with a known answer key.
 - [ ] Image hashing and read-only mount procedure recorded in the case file.

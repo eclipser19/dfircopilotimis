@@ -57,12 +57,13 @@ with st.sidebar:
         pass # Streamlit auto-reruns anyway
     
     stats = case_db.get_stats()
-    st.metric("Total Events", stats["total_events"])
+    st.metric("Records", stats["total_records"])
+    st.caption(f"{stats['timeline_events']} timeline events · {stats['undated_records']} records without timestamps")
     
     if stats["by_source"]:
         st.write("**Collected Artifacts:**")
         for src in stats["by_source"]:
-            st.caption(f"- {src['source']} ({src['count']})")
+            st.caption(f"- {src['source']} ({src['records']})")
     else:
         st.caption("No data collected yet.")
         

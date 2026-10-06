@@ -47,12 +47,12 @@ def test_finished_collection_is_ingested_once(case):
     first = collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None)
     assert first["state"] == "FINISHED"
     assert first["new_rows_ingested"] == 1
-    assert case.get_stats()["total_events"] == 1
+    assert case.get_stats()["total_records"] == 1
 
     # Checking the same flow again must not ingest again.
     again = collection.check("F.TEST1", vql=FakeVQL())
     assert again["new_rows_ingested"] == 1
-    assert case.get_stats()["total_events"] == 1
+    assert case.get_stats()["total_records"] == 1
 
 
 def test_recollecting_same_rows_does_not_duplicate(case):
@@ -60,7 +60,7 @@ def test_recollecting_same_rows_does_not_duplicate(case):
     case.upsert_collection("F.TEST1", ingested=0)  # simulate a second, separate flow
     second = collection.check("F.TEST1", vql=FakeVQL())
     assert second["new_rows_ingested"] == 0
-    assert case.get_stats()["total_events"] == 1
+    assert case.get_stats()["total_records"] == 1
 
 
 def test_running_collection_is_reported_not_called_empty(case):
@@ -69,7 +69,7 @@ def test_running_collection_is_reported_not_called_empty(case):
     assert summary["state"] == "RUNNING"
     assert "new_rows_ingested" not in summary
     assert "check_collection" in summary["note"]
-    assert case.get_stats()["total_events"] == 0
+    assert case.get_stats()["total_records"] == 0
 
     later = collection.check("F.TEST1", vql=FakeVQL(states=("FINISHED",)))
     assert later["state"] == "FINISHED"
@@ -85,7 +85,7 @@ def test_errored_collection_surfaces_error(case):
 
 def test_hostname_comes_from_client_lookup(case):
     collection.collect("Generic.Client.Info", vql=FakeVQL(), sleep=lambda s: None)
-    rows = case.query_timeline()
+    rows = case.search_events("WS01")["records"]
     assert rows and rows[0]["hostname"] == "WS01"
 
 

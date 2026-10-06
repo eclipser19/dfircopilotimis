@@ -41,8 +41,8 @@ def test_re2_escape():
 
 
 def test_record_finding_rejects_unknown_evidence(case):
-    case.ingest_artifact_results([{"Message": "x"}], "Test.Src", client_id="C.1")
-    real_id = case.query_timeline()[0]["evidence_id"]
+    case.ingest_artifact_results([{"Message": "Test row"}], "Test.Src", client_id="C.1")
+    real_id = case.search_events("Test")["records"][0]["evidence_id"]
 
     out = tools.record_finding.invoke({"title": "t", "description": "d", "evidence_ids": ["made-up"]})
     assert out.startswith("Not recorded") and case.get_findings() == []
@@ -58,7 +58,7 @@ def test_evidence_ids_are_stable(case):
     rows = [{"Message": "a"}, {"Message": "b"}]
     assert case.ingest_artifact_results(rows, "S", client_id="C.1") == 2
     assert case.ingest_artifact_results(iter(rows), "S", client_id="C.1") == 0
-    assert case.get_stats()["total_events"] == 2
+    assert case.get_stats()["total_records"] == 2
 
 
 def test_linux_artifacts_allowed_but_shell_refused(monkeypatch):
