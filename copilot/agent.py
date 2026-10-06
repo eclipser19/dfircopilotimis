@@ -63,7 +63,8 @@ def run_agent_loop():
     llm_with_tools = make_llm(api_key).bind_tools(tools)
 
     chat_history = [SystemMessage(content=build_system_prompt(case_config))]
-    MAX_STEPS = 15
+    MAX_STEPS = case_config.max_steps
+    usage = TokenUsage()
 
     print("=" * 60)
     print("  DFIR Copilot v2 — Database-Backed Analysis")
@@ -93,7 +94,7 @@ def run_agent_loop():
             "If an incident time window is defined, query the timeline for that window."
         )
         chat_history.append(HumanMessage(content=auto_prompt))
-        _process_turn(llm_with_tools, chat_history, MAX_STEPS)
+        _process_turn(llm_with_tools, chat_history, MAX_STEPS, usage, case_config.max_tokens_per_turn)
 
     while True:
         user_input = input("\nInvestigator> ")
@@ -119,21 +120,56 @@ def run_agent_loop():
             continue
 
         chat_history.append(HumanMessage(content=user_input))
-        _process_turn(llm_with_tools, chat_history, MAX_STEPS)
+        _process_turn(llm_with_tools, chat_history, MAX_STEPS, usage, case_config.max_tokens_per_turn)
 
 
-def _process_turn(llm_with_tools, chat_history, max_steps):
-    """Processes a single conversational turn with tool calling loop."""
+class TokenUsage:
+    """Counts tokens reported by the LLM API, per turn and for the whole session."""
+
+    def __init__(self):
+        self.session_input = self.session_output = 0
+        self.turn_input = self.turn_output = 0
+
+    def start_turn(self):
+        self.turn_input = self.turn_output = 0
+
+    def add(self, response):
+        meta = getattr(response, "usage_metadata", None) or {}
+        self.turn_input += meta.get("input_tokens", 0)
+        self.turn_output += meta.get("output_tokens", 0)
+        self.session_input += meta.get("input_tokens", 0)
+        self.session_output += meta.get("output_tokens", 0)
+
+    @property
+    def turn_total(self) -> int:
+        return self.turn_input + self.turn_output
+
+    def summary(self) -> str:
+        return (f"[tokens] this turn: {self.turn_input:,} in / {self.turn_output:,} out"
+                f" | session: {self.session_input + self.session_output:,}")
+
+
+def _process_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, max_tokens: int = None):
+    """Processes a single conversational turn with tool calling loop, within step and token limits."""
+    usage = usage or TokenUsage()
+    usage.start_turn()
+    answered = False
     try:
         step_count = 0
         while step_count < max_steps:
+            if max_tokens and usage.turn_total >= max_tokens:
+                print(f"\n[!] Token budget for this turn reached ({usage.turn_total:,} >= {max_tokens:,}). "
+                      f"Halting; ask a narrower question or raise agent.max_tokens_per_turn.")
+                break
             step_count += 1
             trim_chat_history(chat_history)
 
             response = llm_with_tools.invoke(chat_history)
+            usage.add(response)
             chat_history.append(response)
 
             if not response.tool_calls:
+                answered = True
                 print("\n### Agent Response ###\n")
                 if isinstance(response.content, list):
                     for block in response.content:
@@ -159,8 +195,10 @@ def _process_turn(llm_with_tools, chat_history, max_steps):
                     name=tool_call["name"]
                 ))
 
-        if step_count >= max_steps:
+        if not answered and step_count >= max_steps:
             print("\n[!] Agent reached maximum tool steps. Halting.")
 
     except Exception as e:
         print(f"Agent Error: {e}")
+    print(f"\n{usage.summary()}")
+    return usage

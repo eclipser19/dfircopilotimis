@@ -145,6 +145,16 @@ class CaseConfig:
         return any(fnmatch.fnmatchcase(name, pat) for pat in self.artifact_allowlist)
 
     @property
+    def max_steps(self) -> int:
+        """LLM calls allowed per investigator turn."""
+        return int((self.data.get("agent", {}) or {}).get("max_steps", 15))
+
+    @property
+    def max_tokens_per_turn(self) -> int:
+        """Token budget (input + output, all LLM calls) per investigator turn."""
+        return int((self.data.get("agent", {}) or {}).get("max_tokens_per_turn", 300000))
+
+    @property
     def allow_raw_vql(self) -> bool:
         return bool((self.data.get("agent", {}) or {}).get("allow_raw_vql", False))
 

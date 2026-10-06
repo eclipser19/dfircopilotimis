@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AI
 from copilot.tools import tools, tool_map
 from copilot.case_config import case_config
 from copilot.database import case_db
-from copilot.agent import trim_chat_history
+from copilot.agent import trim_chat_history, TokenUsage
 from copilot.llm import make_llm
 from copilot.prompts import build_system_prompt
 
@@ -19,6 +19,7 @@ if "chat_history" not in st.session_state:
     sys_msg = SystemMessage(content=build_system_prompt(case_config))
     st.session_state.chat_history = [sys_msg]
     st.session_state.messages = []  # For UI display
+    st.session_state.usage = TokenUsage()
 
 # ==========================================
 # UI Layout: Sidebar (Case Info & DB)
@@ -52,6 +53,9 @@ with st.sidebar:
     else:
         st.text("Time: No scope defined.")
         
+    if "usage" in st.session_state:
+        st.caption(f"LLM tokens this session: {st.session_state.usage.session_input + st.session_state.usage.session_output:,}")
+
     st.subheader("📊 Database Stats")
     if st.button("Refresh Stats"):
         pass # Streamlit auto-reruns anyway
@@ -101,15 +105,22 @@ if prompt := st.chat_input("Ask the copilot to investigate..."):
             status_container = st.empty()
             
             step_count = 0
-            MAX_STEPS = 15
+            MAX_STEPS = case_config.max_steps
+            usage = st.session_state.usage
+            usage.start_turn()
             final_answer = ""
-            
+            budget_hit = False
+
             while step_count < MAX_STEPS:
+                if usage.turn_total >= case_config.max_tokens_per_turn:
+                    budget_hit = True
+                    break
                 step_count += 1
                 trim_chat_history(st.session_state.chat_history)
                 
                 with status_container.status(f"Thinking (Step {step_count})...", expanded=True) as status:
                     response = st.session_state.llm_with_tools.invoke(st.session_state.chat_history)
+                    usage.add(response)
                     st.session_state.chat_history.append(response)
 
                     if not response.tool_calls:
@@ -140,5 +151,9 @@ if prompt := st.chat_input("Ask the copilot to investigate..."):
                 else:
                     st.markdown(final_answer)
                     st.session_state.messages.append({"role": "assistant", "content": final_answer})
+            elif budget_hit:
+                st.error(f"Token budget for this turn reached ({usage.turn_total:,} tokens). "
+                         f"Ask a narrower question or raise agent.max_tokens_per_turn in case.yaml.")
             else:
                 st.error("Agent reached maximum steps without a final answer.")
+            st.caption(usage.summary())

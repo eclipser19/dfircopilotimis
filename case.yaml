@@ -39,4 +39,6 @@ collect:
 #     - "Windows.Forensics.*"
 
 agent:
-  allow_raw_vql: false   # enable the server_vql_query fallback tool (read-only, filtered)
+  allow_raw_vql: false          # enable the server_vql_query fallback tool (read-only, filtered)
+  max_steps: 15                 # LLM calls per question before the agent must stop
+  max_tokens_per_turn: 300000   # token budget per question (input + output); the turn stops when reached
