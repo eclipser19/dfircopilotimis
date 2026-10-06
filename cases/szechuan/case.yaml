@@ -45,6 +45,12 @@ collect:
   - Windows.Timeline.Prefetch          # program execution
   - Windows.System.TaskScheduler       # scheduled tasks
 
+# Collection limits (apply to every collection, investigator's or agent's).
+collection:
+  max_rows: 50000            # rows per collection; results beyond are dropped and flagged as truncated
+  apply_time_window: true    # pass scope start/end into artifacts' own date filters (DateAfter/DateBefore...)
+  agent_collections: confirm # confirm: you approve each agent request (y/n) | auto | off
+
 agent:
   allow_raw_vql: false
   max_steps: 15

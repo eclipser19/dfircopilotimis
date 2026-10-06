@@ -1,5 +1,6 @@
 import json
 import re
+from typing import Optional
 from langchain_core.tools import tool
 from copilot import collection
 from copilot.collection import CollectionError
@@ -49,18 +50,22 @@ def search_clients() -> str:
 
 
 @tool
-def collect_artifact(artifact_name: str, parameters: dict = None) -> str:
+def collect_artifact(artifact_name: str, parameters: Optional[dict] = None) -> str:
     """
-    Collects a Velociraptor artifact from the case's dead-disk image and stores the
-    results in the case database. Waits a limited time; if the collection is still
-    running, it returns state RUNNING and a flow_id to pass to `check_collection` later.
-    Only artifacts allowed by the case configuration can be collected.
+    TARGETED follow-up collection from the case's disk image, stored in the case database.
+    The case's standard triage artifacts are already collected: analyze those first and
+    only collect more to test a specific lead. The case time window is applied to the
+    artifact's date filters automatically, and results are capped at a row limit.
+    Heavy artifacts (MFT, USN journal, EvtxHunter, file searches) require a filter
+    parameter (e.g. a filename/path regex or event IDs). The investigator may be asked
+    to approve the collection. If it is still running, it returns state RUNNING and a
+    flow_id for `check_collection`.
     Args:
-        artifact_name: The artifact name (e.g., 'Windows.EventLogs.EvtxHunter').
-        parameters: Artifact parameters (e.g., {'IocRegex': 'evil'}). Use `describe_artifact` to see valid names.
+        artifact_name: The artifact name (e.g., 'Windows.NTFS.MFT').
+        parameters: Artifact parameters (e.g., {'FileRegex': 'coreupdater'}). Use `describe_artifact` for valid names.
     """
     try:
-        return json.dumps(collection.collect(artifact_name, parameters), indent=2)
+        return json.dumps(collection.collect(artifact_name, parameters, requested_by="agent"), indent=2)
     except CollectionError as e:
         return f"Collection not started or failed: {e}"
 
@@ -149,8 +154,8 @@ def _shown(total: int, shown: int) -> str:
 
 
 @tool
-def query_timeline(start_time: str = None, end_time: str = None,
-                   event_type: str = None, source: str = None) -> str:
+def query_timeline(start_time: Optional[str] = None, end_time: Optional[str] = None,
+                   event_type: Optional[str] = None, source: Optional[str] = None) -> str:
     """
     Timeline of the case: one event per timestamp found in the collected data, in UTC,
     oldest first. Each event names the field its time came from (timestamp_desc, e.g.
@@ -181,6 +186,49 @@ query_timeline.description = query_timeline.description.replace("{types}", ", ".
 
 
 @tool
+def activity_histogram(start_time: Optional[str] = None, end_time: Optional[str] = None, bucket: str = "hour",
+                       event_type: Optional[str] = None, source: Optional[str] = None) -> str:
+    """
+    Counts timeline events per time bucket and event type (UTC). Use it first to find
+    bursts of activity worth zooming into, instead of reading raw timelines.
+    Args:
+        start_time: ISO 8601 start. Optional.
+        end_time: ISO 8601 end. Optional.
+        bucket: 'minute', 'hour' (default) or 'day'.
+        event_type: Optional event type filter.
+        source: Optional artifact source filter (partial match).
+    """
+    try:
+        rows = case_db.activity_histogram(start_time, end_time, bucket, event_type, source)
+    except ValueError as e:
+        return str(e)
+    case_db.log_query("activity_histogram", f"start={start_time} end={end_time} bucket={bucket} "
+                      f"type={event_type} source={source}", len(rows))
+    return json.dumps(rows, indent=2) if rows else "No timeline events in that range."
+
+
+@tool
+def context_window(timestamp: str, minutes: int = 5, event_type: Optional[str] = None) -> str:
+    """
+    Everything on the timeline within ±`minutes` of a moment, across all collected
+    sources: the main correlation tool once you have an event of interest
+    (e.g. what ran right after a logon, what was written right after a download).
+    Args:
+        timestamp: ISO 8601 time of the event of interest (UTC).
+        minutes: Window on each side (default 5, max 120).
+        event_type: Optional event type filter.
+    """
+    from datetime import timedelta
+    from copilot.normalize import parse_timestamp, format_ts
+    center = parse_timestamp(timestamp, "time")
+    if center is None:
+        return f"Unrecognized timestamp '{timestamp}'. Use ISO 8601, e.g. 2020-09-19T02:35:54Z."
+    delta = timedelta(minutes=max(1, min(int(minutes), 120)))
+    return query_timeline.invoke({"start_time": format_ts(center - delta), "end_time": format_ts(center + delta),
+                                  "event_type": event_type})
+
+
+@tool
 def search_iocs(keyword: str) -> str:
     """
     Case-insensitive substring search over every collected record (description, extracted
@@ -198,7 +246,7 @@ def search_iocs(keyword: str) -> str:
 
 
 @tool
-def pivot_entity(entity: str, field: str = None) -> str:
+def pivot_entity(entity: str, field: Optional[str] = None) -> str:
     """
     Find all records related to an entity. With `field`, matches only that extracted field
     (more precise); without it, searches everything.
@@ -249,8 +297,8 @@ def case_summary() -> str:
 
 @tool
 def record_finding(title: str, description: str, evidence_ids: list,
-                   confidence: str = "medium", mitre_technique: str = None,
-                   timestamp_utc: str = None) -> str:
+                   confidence: str = "medium", mitre_technique: Optional[str] = None,
+                   timestamp_utc: Optional[str] = None) -> str:
     """
     Record a forensic finding for the final report. Call this whenever you discover
     something suspicious or malicious during analysis.
@@ -458,7 +506,7 @@ def generate_report(executive_summary: str, recommendations: str) -> str:
 tools = [
     search_clients, collect_artifact, check_collection, list_collections,
     list_artifacts, describe_artifact,
-    query_timeline, search_iocs, pivot_entity, get_event_detail,
+    activity_histogram, context_window, query_timeline, search_iocs, pivot_entity, get_event_detail,
     case_summary, record_finding,
     generate_report, export_case,
 ]

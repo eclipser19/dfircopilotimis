@@ -34,8 +34,16 @@ pip install -r requirements.txt
    `C:\`): running Windows keeps event logs, registry hives and `$MFT` locked, so
    most artifacts come back empty.
 
-3. **Case file.** Edit `case.yaml`: incident window, IOCs, artifacts to
-   auto-collect, and optionally which artifacts the agent may collect.
+3. **Case file.** Edit `case.yaml` (or use another file via `DFIR_CASE_FILE`):
+   incident window, IOCs, triage artifacts to auto-collect, and limits.
+   How collection works:
+   - The `collect:` list runs first, without the LLM. The incident window is passed
+     into each artifact's own date filters, and each collection is capped at
+     `collection.max_rows` rows.
+   - The agent then analyzes the case database. If it needs more data it asks for a
+     targeted collection; heavy artifacts (MFT, USN, EvtxHunter) need a filter, and
+     with `agent_collections: confirm` you approve each request (y/n).
+   See `cases/szechuan/` for a complete example with an answer key.
 
 4. **LLM.** Set `OPENAI_API_KEY` (or enter it when prompted). Optional:
    `DFIR_LLM_MODEL`, `DFIR_LLM_BASE_URL`.

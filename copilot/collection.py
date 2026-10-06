@@ -19,10 +19,17 @@ from copilot.vql_client import get_vql, VQLError
 
 # Parameters go in `spec` ({"Artifact.Name": {"Param": "value"}}): the form current
 # Velociraptor versions require. The older `env=` form is rejected by them.
+# max_rows is our own validated integer (never user text), so it is formatted in.
 SCHEDULE_VQL = (
     "SELECT collect_client(client_id=DfirClientId, artifacts=DfirArtifact, "
-    "spec=parse_json(data=DfirSpec)) AS flow FROM scope()"
+    "spec=parse_json(data=DfirSpec){limits}) AS flow FROM scope()"
 )
+PARAMS_VQL = "SELECT parameters FROM artifact_definitions(names=DfirName)"
+
+# Artifact parameter names that take the start / end of a time window.
+TIME_AFTER_PARAMS = {"dateafter", "startdate", "starttime", "earliesttime", "timeafter", "fromdate", "datetimeafter"}
+TIME_BEFORE_PARAMS = {"datebefore", "enddate", "endtime", "latesttime", "timebefore", "todate", "datetimebefore"}
+
 POLL_VQL = (
     "SELECT state, status, total_collected_rows, artifacts_with_results "
     "FROM flows(client_id=DfirClientId, flow_id=DfirFlowId)"
@@ -107,6 +114,44 @@ def _run(vql, query: str, env: dict) -> tuple:
     return res.get("results", []), log
 
 
+def artifact_parameters(artifact: str, vql) -> list:
+    """Parameter names the artifact accepts ([] if they can't be looked up)."""
+    try:
+        rows, _ = _run(vql, PARAMS_VQL, {"DfirName": artifact})
+    except CollectionError:
+        return []
+    return [p.get("name") for p in ((rows[0].get("parameters") if rows else None) or []) if p.get("name")]
+
+
+def with_time_window(artifact: str, params: dict, vql) -> tuple:
+    """
+    Fills the artifact's own date-filter parameters from the case scope, so
+    Velociraptor drops out-of-window rows before sending them. Parameters the
+    caller set explicitly are left alone. Returns (params, names_applied).
+    """
+    params = dict(params or {})
+    if not (case_config.apply_time_window and case_config.has_scope):
+        return params, []
+    given = {k.lower() for k in params}
+    applied = []
+    for name in artifact_parameters(artifact, vql):
+        low = name.lower()
+        if low in given:
+            continue
+        if low in TIME_AFTER_PARAMS:
+            params[name] = case_config.start_time
+            applied.append(name)
+        elif low in TIME_BEFORE_PARAMS:
+            params[name] = case_config.end_time
+            applied.append(name)
+    return params, applied
+
+
+def _schedule_query(with_limits: bool) -> str:
+    limits = f", max_rows={int(case_config.max_rows)}" if with_limits else ""
+    return SCHEDULE_VQL.format(limits=limits)
+
+
 def schedule(artifact: str, params: dict = None, vql=None) -> str:
     """Starts a collection on the case client and returns its flow ID."""
     vql = vql or get_vql()
@@ -115,8 +160,13 @@ def schedule(artifact: str, params: dict = None, vql=None) -> str:
     encoded = encode_params(params)
 
     env = {"DfirClientId": client_id, "DfirArtifact": artifact, "DfirSpec": json.dumps({artifact: encoded})}
-    rows, log = _run(vql, SCHEDULE_VQL, env)
-    case_db.log_query("collect_artifact", f"{SCHEDULE_VQL} -- env={json.dumps(env)}", len(rows), artifact)
+    query = _schedule_query(with_limits=True)
+    rows, log = _run(vql, query, env)
+    if not rows and "max_rows" in log:
+        # Older collect_client without row limits: our ingest cap still applies.
+        query = _schedule_query(with_limits=False)
+        rows, log = _run(vql, query, env)
+    case_db.log_query("collect_artifact", f"{query} -- env={json.dumps(env)}", len(rows), artifact)
 
     flow = (rows[0].get("flow") if rows else None) or {}
     flow_id = flow.get("flow_id")
@@ -185,13 +235,23 @@ def ingest(flow_id: str, status: dict, vql=None) -> dict:
 
     read = 0
     new = 0
+    truncated = False
+    limit = case_config.max_rows
     for sub_artifact in sub_artifacts:
+        if read >= limit:
+            truncated = True
+            break
         query, env = _source_query(client_id, flow_id, sub_artifact)
         logs = []
         counted = [0]
+        budget = limit - read
 
         def counting(rows):
+            nonlocal truncated
             for row in rows:
+                if counted[0] >= budget:
+                    truncated = True
+                    return
                 counted[0] += 1
                 yield row
 
@@ -209,7 +269,7 @@ def ingest(flow_id: str, status: dict, vql=None) -> dict:
     complete = read > 0 or not status["total_collected_rows"]
     if complete:
         case_db.upsert_collection(flow_id, ingested=1, rows_ingested=new, finished_at=_now())
-    return {"rows_read": read, "new_rows": new}
+    return {"rows_read": read, "new_rows": new, "truncated": truncated}
 
 
 def flow_log_problems(client_id: str, flow_id: str, vql) -> list:
@@ -265,6 +325,11 @@ def _summary(flow_id: str, status: dict, result: dict = None) -> dict:
                 summary["read_log"] = known["error"]
         elif not result.get("new_rows"):
             summary["note"] = "All rows were already in the case database (collected before)."
+        if result.get("truncated") or (total and total >= case_config.max_rows):
+            summary["truncated"] = True
+            summary["note"] = (f"Hit the {case_config.max_rows:,}-row limit: results are INCOMPLETE. "
+                               f"Collect again with narrower filters rather than drawing conclusions "
+                               f"from what is missing.")
     elif status["state"] in ("ERROR", "CANCELLED"):
         summary["error"] = status["error"]
         summary["note"] = f"Collection {status['state'].lower()}. Nothing was ingested."
@@ -280,10 +345,45 @@ def check(flow_id: str, vql=None) -> dict:
     return _finish(flow_id, poll(flow_id, vql), vql)
 
 
+# Set by the CLI: called as confirm(artifact, params) -> bool before an agent collection.
+CONFIRM = None
+
+
+def _check_agent_request(artifact: str, params: dict):
+    mode = case_config.agent_collections
+    if mode == "off":
+        raise CollectionError("The investigator has disabled agent collections for this case "
+                              "(collection.agent_collections: off). Work with the data already collected.")
+    if case_config.is_heavy(artifact):
+        filters = [k for k, v in (params or {}).items()
+                   if v not in (None, "") and k.lower() not in TIME_AFTER_PARAMS | TIME_BEFORE_PARAMS]
+        if not filters:
+            raise CollectionError(
+                f"'{artifact}' can return millions of rows. Pass at least one filter parameter "
+                f"(e.g. a filename/path regex, event IDs or a search regex; see describe_artifact) "
+                f"based on a lead you already have.")
+    if mode == "confirm":
+        if CONFIRM is None:
+            raise CollectionError("Agent collections need the investigator's approval, which isn't "
+                                  "available here. Ask the investigator to collect it.")
+        if not CONFIRM(artifact, params or {}):
+            raise CollectionError(f"The investigator declined collecting '{artifact}'. "
+                                  f"Continue with the data already collected or ask them.")
+
+
 def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=None,
-            sleep=time.sleep) -> dict:
-    """Schedules a collection and waits up to `wait_seconds` for it to finish."""
+            sleep=time.sleep, requested_by: str = "investigator") -> dict:
+    """
+    Schedules a collection and waits up to `wait_seconds` for it to finish.
+    `requested_by="agent"` applies the agent rules (filters for heavy artifacts,
+    investigator approval).
+    """
     vql = vql or get_vql()
+    _target_client()
+    _check_artifact(artifact)
+    params, window = with_time_window(artifact, params, vql)
+    if requested_by == "agent":
+        _check_agent_request(artifact, params)
     wait = case_config.collection_wait_seconds if wait_seconds is None else wait_seconds
     flow_id = schedule(artifact, params, vql)
 
@@ -294,4 +394,7 @@ def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=No
             break
         sleep(POLL_INTERVAL)
 
-    return _finish(flow_id, status, vql)
+    summary = _finish(flow_id, status, vql)
+    if window:
+        summary["time_window_applied"] = {name: params[name] for name in window}
+    return summary

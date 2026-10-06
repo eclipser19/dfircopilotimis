@@ -20,7 +20,8 @@ class FakeVQL:
     """Answers the collection queries; records every (query, env) it receives."""
 
     def __init__(self, states=("FINISHED",), rows=None, flow_error="", schedule_fails=False,
-                 reported_rows=None, listed=None, flow_logs=None):
+                 reported_rows=None, listed=None, flow_logs=None, artifact_params=None,
+                 rejects_max_rows=False):
         self.states = list(states)
         self.rows = rows if rows is not None else {"Generic.Client.Info/BasicInformation": [{"Hostname": "WS01"}]}
         self.flow_error = flow_error
@@ -29,11 +30,17 @@ class FakeVQL:
         self.reported_rows = reported_rows
         self.listed = listed
         self.flow_logs = flow_logs or []
+        self.artifact_params = artifact_params or []
+        self.rejects_max_rows = rejects_max_rows
         self.calls = []
 
     def run_vql(self, query, env=None, timeout=None):
         self.calls.append((query, dict(env or {})))
+        if "FROM artifact_definitions(" in query:
+            return {"results": [{"parameters": [{"name": n} for n in self.artifact_params]}], "log": ""}
         if "collect_client" in query:
+            if self.rejects_max_rows and "max_rows" in query:
+                return {"results": [], "log": "collect_client: Unexpected arg max_rows"}
             if self.schedule_fails:
                 return {"results": [], "log": "artifact not found", "error": None}
             return {"results": [{"flow": {"flow_id": "F.TEST1"}}], "log": ""}

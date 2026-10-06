@@ -40,6 +40,8 @@ def auto_collect(case_config, collect=None) -> list:
         except collection.CollectionError as e:
             summary = {"artifact": artifact, "state": "NOT_STARTED", "error": str(e)}
         line = f"    -> {summary.get('state')}"
+        if summary.get("time_window_applied"):
+            line += f" (time window: {', '.join(summary['time_window_applied'])})"
         if summary.get("state") == "FINISHED":
             line += (f": Velociraptor rows {summary.get('rows_collected_by_velociraptor')}, "
                      f"read {summary.get('rows_read')}, new {summary.get('new_rows_ingested')}")
@@ -54,7 +56,17 @@ def auto_collect(case_config, collect=None) -> list:
     return summaries
 
 
+def _confirm_collection(artifact: str, params: dict) -> bool:
+    """CLI approval for collections the agent asks for."""
+    print(f"\n[?] The agent wants to collect {artifact}")
+    if params:
+        print(f"    parameters: {json.dumps(params)}")
+    answer = input("    Allow? (y/N): ").strip().lower()
+    return answer in ("y", "yes")
+
+
 def run_agent_loop():
+    from copilot import collection
     from copilot.case_config import case_config
     from copilot.llm import make_llm
     from copilot.prompts import build_system_prompt
@@ -63,6 +75,7 @@ def run_agent_loop():
     llm_with_tools = make_llm(api_key).bind_tools(tools)
 
     chat_history = [SystemMessage(content=build_system_prompt(case_config))]
+    collection.CONFIRM = _confirm_collection
     MAX_STEPS = case_config.max_steps
     usage = TokenUsage()
 

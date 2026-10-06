@@ -89,3 +89,24 @@ def test_old_database_is_refused_with_clear_message(tmp_path):
     conn.close()
     with pytest.raises(SchemaError, match="older DFIR Copilot version"):
         CaseDatabase(str(tmp_path))
+
+
+def test_search_index_is_small_but_finds_nested_values(db):
+    big = "A" * 100000
+    db.ingest_artifact_results([{"EventData": {"Payload": big, "Url": "http://194.61.24.102/coreupdater.exe"}}],
+                               "S", client_id="C.1")
+    indexed = db.conn.execute("SELECT length(text) FROM records_fts").fetchone()[0]
+    assert indexed < 7000
+    assert db.search_events("194.61.24.102")["total"] == 1
+
+
+def test_activity_histogram(db):
+    rows = [{"EventTime": "2020-09-19T02:35:00Z", "Message": "a"}, {"EventTime": "2020-09-19T02:40:00Z", "Message": "b"},
+            {"EventTime": "2020-09-19T05:00:00Z", "Message": "c"}]
+    db.ingest_artifact_results(rows, "Windows.EventLogs.RDPAuth", client_id="C.1")
+    assert db.activity_histogram(bucket="hour") == [
+        {"bucket": "2020-09-19T02", "event_type": "authentication", "events": 2},
+        {"bucket": "2020-09-19T05", "event_type": "authentication", "events": 1},
+    ]
+    with pytest.raises(ValueError):
+        db.activity_histogram(bucket="week")

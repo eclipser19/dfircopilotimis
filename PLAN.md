@@ -32,10 +32,16 @@ Legend: [x] done and tested · [~] partially done · [ ] not started
 - [x] SQLite FTS5 (trigram) for case-insensitive substring search; LIKE fallback.
 - [ ] Per-artifact refinements once real output is seen (e.g. Amcache date formats, better descriptions).
 
-## Step 3: Query tools for correlation
+## Step 2b: Bounded collection ("triage first, targeted follow-ups") ✅
+- [x] Case time window passed into each artifact's own date parameters (DateAfter/DateBefore, dateAfter...), so Velociraptor filters before sending.
+- [x] Row limit per collection (`collection.max_rows`), sent to Velociraptor and enforced on ingest; truncated results flagged as incomplete.
+- [x] Agent collections are targeted follow-ups: heavy artifacts (MFT, USN, EvtxHunter, file searches) need a filter; investigator approves each (`collection.agent_collections: confirm|auto|off`).
+- [x] Search index holds short text per record instead of whole raw rows (was the main cause of multi-GB databases).
+
+## Step 3: Query tools for correlation ✅
 - [x] Every query returns total matches + "showing N of M".
-- [ ] Aggregations (events per hour / source / user) to find activity bursts.
-- [ ] `context_window(timestamp, ±minutes)` — what happened around an event, across all sources.
+- [x] `activity_histogram` — events per minute/hour/day and type, to find bursts.
+- [x] `context_window(timestamp, ±minutes)` — what happened around an event, across all sources.
 
 ## Step 4: Report
 - [ ] Event timeline section (not just findings), with evidence excerpts per finding.

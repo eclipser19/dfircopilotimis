@@ -5,9 +5,14 @@ import uuid
 import os
 from datetime import datetime, timezone
 
-from copilot.normalize import normalize_row, normalize_bound, ENTITY_FIELDS
+from copilot.normalize import normalize_row, normalize_bound, flatten, ENTITY_FIELDS
 
 SCHEMA_VERSION = 2
+
+# The search index holds short text per record, not the whole raw row: indexing raw
+# rows with trigrams made the database several times larger than the data.
+FTS_VALUE_CHARS = 300
+FTS_RECORD_CHARS = 6000
 ENTITY_COLUMNS = list(ENTITY_FIELDS)  # user, process, command_line, path, hash, ip, event_id
 RECORD_COLUMNS = ["evidence_id", "client_id", "hostname", "source", "event_type", "description",
                   *ENTITY_COLUMNS, "first_seen", "last_seen"]
@@ -150,7 +155,7 @@ class CaseDatabase:
             cur.executemany("INSERT OR IGNORE INTO timeline VALUES (?,?,?)",
                             [(evidence_id, ts, desc) for ts, desc in stamps])
             if self.has_fts:
-                text = " ".join([norm["description"], *entities.values(), raw])
+                text = _search_text(row, norm["description"], entities)
                 cur.execute("INSERT INTO records_fts (evidence_id, text) VALUES (?, ?)", (evidence_id, text))
             if count % 5000 == 0:
                 self.conn.commit()
@@ -193,6 +198,30 @@ class CaseDatabase:
                     f"GROUP BY r.source", rec_params)
         undated = [dict(r) for r in cur.fetchall()]
         return {"total": total, "events": events, "undated": undated}
+
+    def activity_histogram(self, start: str = None, end: str = None, bucket: str = "hour",
+                           event_type: str = None, source: str = None, limit: int = 200) -> list:
+        """Timeline event counts per time bucket and event type, to spot bursts of activity."""
+        width = {"minute": 16, "hour": 13, "day": 10}.get(bucket)
+        if not width:
+            raise ValueError("bucket must be minute, hour or day.")
+        start, end = normalize_bound(start), normalize_bound(end)
+        where, params = [], []
+        if start:
+            where.append("t.timestamp_utc >= ?")
+            params.append(start)
+        if end:
+            where.append("t.timestamp_utc <= ?")
+            params.append(end)
+        rec_where, rec_params = _record_filters(event_type, source)
+        where += rec_where
+        params += rec_params
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        cur = self.conn.cursor()
+        cur.execute(f"SELECT substr(t.timestamp_utc, 1, {width}) AS bucket, r.event_type, COUNT(*) AS events "
+                    f"FROM timeline t JOIN records r ON r.evidence_id = t.evidence_id {clause} "
+                    f"GROUP BY bucket, r.event_type ORDER BY bucket LIMIT ?", params + [limit])
+        return [dict(r) for r in cur.fetchall()]
 
     def search_events(self, keyword: str, limit: int = 100) -> dict:
         """Case-insensitive substring search across descriptions, entities and raw data."""
@@ -318,6 +347,25 @@ _COLLECTION_FIELDS = {"client_id", "artifact", "parameters", "state", "error",
 def _evidence_id(client_id: str, source: str, raw_row: str) -> str:
     """Deterministic ID: the same row from the same artifact always gets the same ID."""
     return hashlib.sha256(f"{client_id}|{source}|{raw_row}".encode("utf-8")).hexdigest()[:16]
+
+
+def _search_text(row, description: str, entities: dict) -> str:
+    """Description, extracted fields, then short string values from the row, capped."""
+    parts = [description, *entities.values()]
+    for _, value in flatten(row if isinstance(row, dict) else {"value": row}):
+        if isinstance(value, str) and value:
+            parts.append(value[:FTS_VALUE_CHARS])
+    text, seen = [], set()
+    size = 0
+    for part in parts:
+        if part in seen:
+            continue
+        seen.add(part)
+        size += len(part) + 1
+        if size > FTS_RECORD_CHARS:
+            break
+        text.append(part)
+    return " ".join(text)
 
 
 def _escape_like(text: str) -> str:

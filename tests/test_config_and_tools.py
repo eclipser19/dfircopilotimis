@@ -71,3 +71,14 @@ def test_linux_artifacts_allowed_but_shell_refused(monkeypatch):
 def test_report_refused_on_empty_database(case):
     out = tools.generate_report.invoke({"executive_summary": "x", "recommendations": "y"})
     assert out.startswith("Report not generated")
+
+
+def test_context_window_tool(case):
+    case.ingest_artifact_results([
+        {"EventTime": "2020-09-19T02:35:54Z", "Message": "RDP logon"},
+        {"EventTime": "2020-09-19T02:38:00Z", "Message": "download"},
+        {"EventTime": "2020-09-19T03:30:00Z", "Message": "later"},
+    ], "S", client_id="C.1")
+    out = tools.context_window.invoke({"timestamp": "2020-09-19T02:35:54Z", "minutes": 5})
+    assert "RDP logon" in out and "download" in out and "later" not in out
+    assert "Unrecognized" in tools.context_window.invoke({"timestamp": "soon"})

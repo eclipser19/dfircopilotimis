@@ -50,6 +50,21 @@ ARTIFACT_DENYLIST = [
     "Admin.*",
 ]
 
+# Artifacts that can return millions of rows. When the agent asks for one, it must
+# pass at least one filter parameter beyond the time window.
+HEAVY_ARTIFACTS = [
+    "Windows.NTFS.MFT*",
+    "Windows.Timeline.MFT*",
+    "Windows.NTFS.Usn*",
+    "Windows.Forensics.Usn*",
+    "Windows.EventLogs.EvtxHunter*",
+    "Windows.Search.*",
+    "Windows.KapeFiles.*",
+    "Generic.Forensic.Timeline*",
+]
+
+AGENT_COLLECTION_MODES = ("confirm", "auto", "off")
+
 CLIENT_ID_RE = re.compile(r"^C\.[0-9a-fA-F]{8,32}$")
 
 
@@ -134,6 +149,30 @@ class CaseConfig:
     @property
     def collection_wait_seconds(self) -> int:
         return int(self.data.get("velociraptor", {}).get("collection_wait_seconds", 120))
+
+    # --- Collection limits ---
+    def _collection(self) -> dict:
+        return self.data.get("collection", {}) or {}
+
+    @property
+    def max_rows(self) -> int:
+        """Most rows any single collection may return / ingest."""
+        return int(self._collection().get("max_rows", 50000))
+
+    @property
+    def apply_time_window(self) -> bool:
+        """Pass the case scope into artifacts' own date filters (DateAfter/DateBefore...)."""
+        return bool(self._collection().get("apply_time_window", True))
+
+    @property
+    def agent_collections(self) -> str:
+        """confirm: investigator approves each agent collection; auto: no prompt; off: agent can't collect."""
+        mode = str(self._collection().get("agent_collections", "confirm")).lower()
+        return mode if mode in AGENT_COLLECTION_MODES else "confirm"
+
+    @staticmethod
+    def is_heavy(name: str) -> bool:
+        return any(fnmatch.fnmatchcase(name, pat) for pat in HEAVY_ARTIFACTS)
 
     @property
     def artifact_allowlist(self) -> list:
