@@ -32,6 +32,11 @@ SOURCE_VQL = "SELECT * FROM source(client_id=DfirClientId, flow_id=DfirFlowId, a
 SOURCE_NAMED_VQL = ("SELECT * FROM source(client_id=DfirClientId, flow_id=DfirFlowId, "
                     "artifact=DfirArtifact, source=DfirSource)")
 HOSTNAME_VQL = "SELECT os_info.hostname AS hostname FROM clients(client_id=DfirClientId)"
+FLOW_LOGS_VQL = "SELECT * FROM flow_logs(client_id=DfirClientId, flow_id=DfirFlowId)"
+
+# Flow log lines worth showing when a collection is empty or failed.
+_LOG_PROBLEM = re.compile(r"(?i)(warn|error|denied|fail|not found|cannot|unable|no such|invalid|disabled)")
+MAX_LOG_LINES = 15
 
 POLL_INTERVAL = 2
 
@@ -207,6 +212,33 @@ def ingest(flow_id: str, status: dict, vql=None) -> dict:
     return {"rows_read": read, "new_rows": new}
 
 
+def flow_log_problems(client_id: str, flow_id: str, vql) -> list:
+    """Warning/error lines from the flow's own log on the Velociraptor side ([] if unavailable)."""
+    try:
+        rows, _ = _run(vql, FLOW_LOGS_VQL, {"DfirClientId": client_id, "DfirFlowId": flow_id})
+    except CollectionError:
+        return []
+    lines = []
+    for row in rows:
+        level = str(row.get("level") or row.get("Level") or "")
+        message = str(row.get("message") or row.get("Message") or "")
+        if _LOG_PROBLEM.search(f"{level} {message}"):
+            lines.append(f"{level}: {message}".strip(": ")[:500])
+    return lines[-MAX_LOG_LINES:]
+
+
+def _finish(flow_id: str, status: dict, vql) -> dict:
+    """Ingests if finished, and attaches Velociraptor's log when the result needs explaining."""
+    result = ingest(flow_id, status, vql) if status["state"] == "FINISHED" else None
+    summary = _summary(flow_id, status, result)
+    empty = status["state"] == "FINISHED" and not status["total_collected_rows"]
+    if empty or status["state"] in ("ERROR", "CANCELLED"):
+        problems = flow_log_problems(case_db.get_collection(flow_id)["client_id"], flow_id, vql)
+        if problems:
+            summary["velociraptor_log"] = problems
+    return summary
+
+
 def _summary(flow_id: str, status: dict, result: dict = None) -> dict:
     known = case_db.get_collection(flow_id)
     summary = {
@@ -245,9 +277,7 @@ def _summary(flow_id: str, status: dict, result: dict = None) -> dict:
 def check(flow_id: str, vql=None) -> dict:
     """Polls once; ingests if the flow has finished."""
     vql = vql or get_vql()
-    status = poll(flow_id, vql)
-    result = ingest(flow_id, status, vql) if status["state"] == "FINISHED" else None
-    return _summary(flow_id, status, result)
+    return _finish(flow_id, poll(flow_id, vql), vql)
 
 
 def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=None,
@@ -264,5 +294,4 @@ def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=No
             break
         sleep(POLL_INTERVAL)
 
-    result = ingest(flow_id, status, vql) if status["state"] == "FINISHED" else None
-    return _summary(flow_id, status, result)
+    return _finish(flow_id, status, vql)

@@ -20,7 +20,7 @@ class FakeVQL:
     """Answers the collection queries; records every (query, env) it receives."""
 
     def __init__(self, states=("FINISHED",), rows=None, flow_error="", schedule_fails=False,
-                 reported_rows=None, listed=None):
+                 reported_rows=None, listed=None, flow_logs=None):
         self.states = list(states)
         self.rows = rows if rows is not None else {"Generic.Client.Info/BasicInformation": [{"Hostname": "WS01"}]}
         self.flow_error = flow_error
@@ -28,6 +28,7 @@ class FakeVQL:
         # What flows() claims, which can differ from what source() returns.
         self.reported_rows = reported_rows
         self.listed = listed
+        self.flow_logs = flow_logs or []
         self.calls = []
 
     def run_vql(self, query, env=None, timeout=None):
@@ -45,6 +46,8 @@ class FakeVQL:
                                  "total_collected_rows": total if finished else 0,
                                  "artifacts_with_results": listed if finished else []}],
                     "log": ""}
+        if "FROM flow_logs(" in query:
+            return {"results": self.flow_logs, "log": ""}
         if "FROM clients(" in query:
             return {"results": [{"hostname": "WS01"}], "log": ""}
         return {"results": [], "log": ""}

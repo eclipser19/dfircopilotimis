@@ -41,6 +41,14 @@ def inspect_flow(flow_id: str):
         print(f"  error/log: {res.get('error') or ''} {collection._clean_log(res.get('log', ''))}")
     if not res.get("results"):
         return
+
+    logs = get_vql().run_vql(collection.FLOW_LOGS_VQL, env=env)
+    print("\nflow log:")
+    for row in logs.get("results", [])[-40:]:
+        print(f"  {row.get('level', '')}: {row.get('message', '')}")
+    if logs.get("error"):
+        print(f"  (could not read flow log: {logs['error']})")
+
     flow = res["results"][0]
     names = list(flow.get("artifacts_with_results") or [])
     artifact = case_db.get_collection(flow_id).get("artifact")

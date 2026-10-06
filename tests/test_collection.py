@@ -182,3 +182,18 @@ def test_rows_but_no_listed_sources_falls_back_to_artifact(case):
     vql = FakeVQL(rows={"Windows.System.TaskScheduler": [{"Name": "t"}]}, listed=[])
     summary = collection.collect("Windows.System.TaskScheduler", vql=vql, sleep=lambda s: None)
     assert summary["rows_read"] == 1
+
+
+def test_empty_collection_shows_velociraptor_warnings(case):
+    logs = [{"level": "INFO", "message": "Starting collection"},
+            {"level": "DEFAULT", "message": "glob: Access is denied: C:\\Windows\\Prefetch"},
+            {"level": "INFO", "message": "Collection is done"}]
+    summary = collection.collect("Windows.Timeline.Prefetch", vql=FakeVQL(rows={}, reported_rows=0, flow_logs=logs),
+                                 sleep=lambda s: None)
+    assert summary["velociraptor_log"] == ["DEFAULT: glob: Access is denied: C:\\Windows\\Prefetch"]
+
+
+def test_successful_collection_does_not_fetch_logs(case):
+    vql = FakeVQL()
+    collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None)
+    assert not any("flow_logs" in q for q, _ in vql.calls)

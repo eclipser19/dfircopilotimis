@@ -48,6 +48,8 @@ def auto_collect(case_config, collect=None) -> list:
         print(line)
         if summary.get("note"):
             print(f"       {summary['note']}")
+        for line in summary.get("velociraptor_log", []):
+            print(f"       log | {line}")
         summaries.append(summary)
     return summaries
 
