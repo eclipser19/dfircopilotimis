@@ -7,8 +7,11 @@ are shown as text) and the page carries a Content-Security-Policy that blocks sc
 external loads and forms even if something slipped through.
 """
 import html
+import re
 
 from markdown_it import MarkdownIt
+
+from copilot.charts import CHART_CSS
 
 _MD = MarkdownIt("commonmark", {"html": False, "linkify": False, "typographer": False}).enable("table")
 
@@ -47,8 +50,11 @@ pre code { background: none; padding: 0; }
 CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"
 
 
-def to_html(markdown_text: str, title: str) -> str:
+def to_html(markdown_text: str, title: str, charts: dict = None) -> str:
+    """charts: name -> SVG figure built by copilot.charts (trusted code, all text escaped)."""
     body = _MD.render(markdown_text)
+    # Chart slots: only exact "[[chart:name]]" paragraphs produced by the template are replaced.
+    body = re.sub(r"<p>\[\[chart:([a-z_]+)\]\]</p>", lambda m: (charts or {}).get(m.group(1), ""), body)
     body = body.replace("<table>", '<div class="table-wrap"><table>').replace("</table>", "</table></div>")
     return f"""<!doctype html>
 <html lang="en">
@@ -57,7 +63,7 @@ def to_html(markdown_text: str, title: str) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="{CSP}">
 <title>{html.escape(title)}</title>
-<style>{CSS}</style>
+<style>{CSS}{CHART_CSS}</style>
 </head>
 <body>
 <main>

@@ -247,6 +247,24 @@ class CaseDatabase:
                     f"GROUP BY bucket, r.event_type ORDER BY bucket LIMIT ?", params + [limit])
         return [dict(r) for r in cur.fetchall()]
 
+    def activity_counts(self, start: str, end: str, bucket_seconds: int) -> dict:
+        """
+        Timeline events per time bucket and artifact source between two recorded times:
+        {bucket_index: {source: count}}, bucket 0 starting at `start`.
+        """
+        start_n, end_n = normalize_bound(start), normalize_bound(end)
+        start_epoch = int(datetime.strptime(start_n[:19], "%Y-%m-%dT%H:%M:%S")
+                          .replace(tzinfo=timezone.utc).timestamp())
+        cur = self.conn.execute(
+            "SELECT CAST((CAST(strftime('%s', substr(t.timestamp_utc, 1, 19)) AS INTEGER) - ?) / ? AS INTEGER) AS b, "
+            "r.source, COUNT(*) FROM timeline t JOIN records r ON r.evidence_id = t.evidence_id "
+            "WHERE t.timestamp_utc >= ? AND t.timestamp_utc <= ? GROUP BY b, r.source",
+            (start_epoch, int(bucket_seconds), start_n, end_n))
+        counts = {}
+        for bucket, source, n in cur.fetchall():
+            counts.setdefault(int(bucket), {})[source] = n
+        return counts
+
     def search_events(self, keyword: str, limit: int = 100) -> dict:
         """Case-insensitive substring search across descriptions, entities and raw data."""
         cur = self.conn.cursor()

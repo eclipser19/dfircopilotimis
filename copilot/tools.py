@@ -733,14 +733,17 @@ def generate_report(executive_summary: str, recommendations: str, correlations: 
                 "Collect artifacts successfully first (see list_collections).")
     from copilot import outputs
     from copilot.report_html import to_html
-    report_md = build_report(case_db, case_config, executive_summary, recommendations, correlations)
+    import re
+    report_with_slots, charts = build_report(case_db, case_config, executive_summary, recommendations,
+                                             correlations, with_charts=True)
+    report_md = re.sub(r"\n\[\[chart:[a-z_]+\]\]\n", "\n", report_with_slots)  # charts are HTML-only
     wanted = [f for f in (REPORT_FORMATS or []) if f in ("html", "md")] or case_config.report_formats
     stem = f"dfir_report_{case_config.case_name}"
     written = []
     base = outputs.new_path(stem, "md")[:-3]
     if "html" in wanted:
         with open(base + ".html", "w", encoding="utf-8") as f:
-            f.write(to_html(report_md, f"DFIR Report - {case_config.case_name}"))
+            f.write(to_html(report_with_slots, f"DFIR Report - {case_config.case_name}", charts))
         outputs.register(base + ".html", "report", "DFIR report (HTML)")
         written.append(base + ".html")
     if "md" in wanted:

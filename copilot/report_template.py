@@ -51,6 +51,10 @@ REPORT_TEMPLATE = """# Digital Forensics & Incident Response Report
 {% endfor %}
 
 A finding's time is the earliest timestamp of the first (primary) record it cites.
+{% if charts.sequence %}
+
+[[chart:sequence]]
+{% endif %}
 {% else %}
 *No findings were recorded.*
 {% endif %}
@@ -58,6 +62,14 @@ A finding's time is the earliest timestamp of the first (primary) record it cite
 ---
 
 ## 4. Evidence Timeline
+{% if charts.activity %}
+
+[[chart:activity]]
+{% endif %}
+{% if charts.focus %}
+
+[[chart:focus]]
+{% endif %}
 
 {% if timeline %}
 Every timestamp of the records cited by findings{% if has_scope %}, inside the incident window{% endif %}.
@@ -107,6 +119,10 @@ Every timestamp of the records cited by findings{% if has_scope %}, inside the i
 ---
 
 ## 6. Correlations
+{% if charts.connections %}
+
+[[chart:connections]]
+{% endif %}
 
 {% if correlations %}
 {{ correlations }}

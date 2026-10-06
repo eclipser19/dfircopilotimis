@@ -106,7 +106,11 @@ def _in_window(ts: str, window: tuple) -> bool:
 
 
 def build_report(db, config, executive_summary: str, recommendations: str, correlations: str = None,
-                 now: datetime = None) -> str:
+                 now: datetime = None, with_charts: bool = False):
+    """
+    The report as Markdown. With with_charts=True returns (markdown, charts): the Markdown
+    then holds [[chart:name]] lines where report_html.to_html inserts the SVG charts.
+    """
     from copilot.normalize import normalize_bound
     now = now or datetime.now(timezone.utc)
     clock = Clock(config.clock_offset_minutes)
@@ -218,12 +222,14 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
         res = db.query_timeline(window[0], window[1], limit=1)
         in_window = res["total"]
 
+    charts = _charts(db, config, findings, indicators, window) if with_charts else {}
+
     env = Environment(trim_blocks=True, lstrip_blocks=True, autoescape=False)
     env.filters["md"] = md
     env.filters["fenced"] = fenced
     env.filters["rec"] = clock.recorded
     env.filters["utc"] = clock.corrected
-    return env.from_string(REPORT_TEMPLATE).render(
+    text = env.from_string(REPORT_TEMPLATE).render(
         case_name=config.case_name, analyst=config.analyst,
         generated_at=now.strftime("%Y-%m-%d %H:%M:%S UTC"),
         executive_summary=executive_summary, recommendations=recommendations,
@@ -236,8 +242,79 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
         max_timeline=MAX_TIMELINE_ROWS, related=related, related_minutes=RELATED_WITHIN_MINUTES,
         indicators=indicators, iocs_searched=iocs_searched, artifacts=artifacts,
         collections=collections, audit_log=audit_log, retracted=retracted, cited=cited,
-        events_referenced=events_referenced,
+        events_referenced=events_referenced, charts=charts,
     )
+    return (text, charts) if with_charts else text
+
+
+def _charts(db, config, findings: list, indicators: list, window: tuple) -> dict:
+    """SVG charts keyed by name; a chart is left out when there is nothing to draw."""
+    from copilot import charts
+    offset = timedelta(minutes=config.clock_offset_minutes)
+    out = {}
+    times = sorted(t for t in (parse_timestamp(f["time"], "t") for f in findings if f.get("time")) if t)
+    markers = [(parse_timestamp(f["time"], "t"), f["number"], f["title"]) for f in findings if f.get("time")]
+
+    def by_type(counts):
+        merged = {}
+        for b, sources in counts.items():
+            for source, n in sources.items():
+                t = event_type_for(source)
+                merged.setdefault(b, {})[t] = merged.setdefault(b, {}).get(t, 0) + n
+        return merged
+
+    def floor(dt, bucket):
+        return datetime.fromtimestamp(int(dt.timestamp()) // bucket * bucket, timezone.utc)
+
+    if window[0] and window[1]:
+        start, end = parse_timestamp(window[0], "t"), parse_timestamp(window[1], "t")
+    elif times:
+        start, end = times[0] - timedelta(hours=12), times[-1] + timedelta(hours=12)
+    else:
+        start = end = None
+    if start and end and end > start:
+        bucket = charts.pick_bucket((end - start).total_seconds())
+        start = floor(start, bucket)
+        counts = by_type(db.activity_counts(start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                            end.strftime("%Y-%m-%dT%H:%M:%SZ"), bucket))
+        svg = charts.activity_chart(
+            "Activity over the incident window", counts, start, end, bucket, offset, markers,
+            f"Timeline events per {_bucket_name(bucket)} by type, UTC{' (corrected)' if offset else ''}. "
+            f"Numbered markers are findings.")
+        if svg:
+            out["activity"] = svg
+
+    if len(times) >= 2 and (times[-1] - times[0]) <= timedelta(days=2):
+        f_start, f_end = times[0] - timedelta(minutes=30), times[-1] + timedelta(minutes=30)
+        bucket = charts.pick_bucket((f_end - f_start).total_seconds())
+        f_start = floor(f_start, bucket)
+        counts = by_type(db.activity_counts(f_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                                            f_end.strftime("%Y-%m-%dT%H:%M:%SZ"), bucket))
+        svg = charts.activity_chart(
+            "Close-up: first to last finding", counts, f_start, f_end, bucket, offset, markers,
+            f"Timeline events per {_bucket_name(bucket)}, 30 minutes either side of the findings.")
+        if svg:
+            out["focus"] = svg
+
+    seq = charts.sequence_chart(findings, offset)
+    if seq:
+        out["sequence"] = seq
+
+    label_to_field = {label: field for field, label in INDICATOR_FIELDS}
+    flat = [{"field": label_to_field.get(g["label"], ""), "label": g["label"], "value": v["value"],
+             "findings": v["findings"]} for g in indicators for v in g["values"]]
+    graph = charts.connections_chart(findings, flat)
+    if graph:
+        out["connections"] = graph
+    return out
+
+
+def _bucket_name(seconds: int) -> str:
+    if seconds % 86400 == 0:
+        return "day" if seconds == 86400 else f"{seconds // 86400} days"
+    if seconds % 3600 == 0:
+        return "hour" if seconds == 3600 else f"{seconds // 3600} hours"
+    return "minute" if seconds == 60 else f"{seconds // 60} minutes"
 
 
 def finding_time(db, evidence_ids: list, window: tuple):

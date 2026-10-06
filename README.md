@@ -127,7 +127,9 @@ In the Streamlit app:
   lists recent files. Ask e.g. "export the timeline 02:30-03:00 as a file" or "give me the
   full records of the evidence for finding 3".
 
-The HTML report is self-contained and safe to open: evidence text is shown as text (never
+The HTML report includes charts (activity over the incident window and around the
+findings, the findings in sequence, and which indicators connect which findings), drawn as
+static SVG with a "Show data" table under each. It is self-contained and safe to open: evidence text is shown as text (never
 interpreted as HTML) and the page blocks scripts and external content.
 
 ## Tests
