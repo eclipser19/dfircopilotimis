@@ -149,7 +149,7 @@ def test_new_case_form_extracts_iocs_and_creates(app_env, tmp_path, monkeypatch)
     next(b for b in at.button if b.label == "Create and open").click().run()
     assert not at.exception
     assert case_config.case_name == "Guided Szechuan" and case_config.iocs["ips"] == ["194.61.24.102"]
-    assert "Created and opened case `szechuan-guided`" in _texts(at)
+    assert "Now in case `szechuan-guided`" in _texts(at)
     cases.consume_switch()
 
 
@@ -168,3 +168,65 @@ def test_case_settings_panel_saves(app_env, tmp_path, monkeypatch):
     assert not at.exception
     assert case_config.iocs["ips"] == ["10.0.0.5"] and case_config.clock_offset_minutes == 60
     assert "10.0.0.5" in at.session_state["chat_history"][0].content     # the agent sees the new settings
+
+
+@pytest.fixture
+def two_app_cases(app_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("DFIR_CASES_DIR", str(tmp_path / "cases"))
+    monkeypatch.setenv("DFIR_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("DFIR_CASE_DIR", raising=False)
+    monkeypatch.setattr(case_config, "path", case_config.path)
+    cases.create("alpha", "Alpha")
+    cases.create("beta", "Beta")
+    cases.switch("alpha")
+    cases.consume_switch()
+    yield
+    cases.consume_switch()
+
+
+def _ask(at, text, *replies):
+    llm = ScriptedLLM(*replies)
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.chat_input[0].set_value(text).run()
+
+
+def test_switching_cases_saves_and_restores_each_chat(two_app_cases):
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    _ask(at, "alpha question", AIMessage(content="alpha answer"))
+    at.chat_input[0].set_value("/case beta").run()
+    assert "alpha answer" not in _texts(at) and "New conversation" in _texts(at)
+    _ask(at, "beta question", AIMessage(content="beta answer"))
+    at.chat_input[0].set_value("/case alpha").run()
+    texts = _texts(at)
+    assert "alpha answer" in texts and "beta answer" not in texts and "Conversation restored" in texts
+    agent_memory = [m.content for m in at.session_state["chat_history"]]
+    assert "alpha question" in agent_memory and "beta question" not in agent_memory
+
+
+def test_chat_survives_an_app_restart(two_app_cases):
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    _ask(at, "remember me", AIMessage(content="noted"))
+    fresh = AppTest.from_file(APP, default_timeout=30).run()      # new browser session / restarted app
+    assert "noted" in _texts(fresh)
+    assert "remember me" in [m.content for m in fresh.session_state["chat_history"]]
+
+
+def test_agent_switching_mid_answer_keeps_that_answer_in_the_old_case(two_app_cases):
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    _ask(at, "please switch to beta",
+         AIMessage(content="", tool_calls=[{"name": "switch_case", "id": "1", "args": {"case_id": "beta"}}]),
+         AIMessage(content="Switching to beta now."))
+    assert case_config.case_name == "Beta"
+    assert "Switching to beta now." not in _texts(at)             # beta starts clean
+    at.chat_input[0].set_value("/case alpha").run()
+    assert "Switching to beta now." in _texts(at)                 # the answer was saved with alpha
+
+
+def test_new_conversation_button(two_app_cases):
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    _ask(at, "old topic", AIMessage(content="old answer"))
+    next(b for b in at.button if "New conversation" in b.label).click().run()
+    assert "old answer" not in _texts(at)
+    assert len(at.session_state["chat_history"]) == 1
+    assert "old answer" not in _texts(AppTest.from_file(APP, default_timeout=30).run())

@@ -151,3 +151,32 @@ def test_copy_refused_across_different_evidence(two_cases):
         cases.create("other", "Other image", client_id="C.2222222222222222", copy_from="alpha")
     with pytest.raises(cases.CaseError, match="no data"):
         cases.create("empty-copy", "x", copy_from="beta")
+
+
+def test_cli_keeps_a_chat_per_case(two_cases, monkeypatch, capsys):
+    import builtins
+    import copilot.llm
+    from copilot import agent, conversation
+
+    class FakeLLM:
+        def bind_tools(self, tools, **kw):
+            return self
+
+        def invoke(self, history):
+            return AIMessage(content=f"answer to: {history[-1].content}")
+
+    monkeypatch.setattr(copilot.llm, "make_llm", lambda key=None: FakeLLM())
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    cases.switch("beta")                      # no client ID: the auto-collect question is skipped
+    cases.consume_switch()
+    inputs = iter(["first beta question", "/case alpha", "alpha question", "/case beta", "exit"])
+    monkeypatch.setattr(builtins, "input", lambda prompt="": next(inputs))
+    agent.run_agent_loop()
+    out = capsys.readouterr().out
+    assert "answer to: first beta question" in out
+    assert "Restored the conversation of case 'beta'" in out          # coming back to beta
+    beta_ui, beta_history = conversation.load("beta", "sys")
+    alpha_ui, _ = conversation.load("alpha", "sys")
+    assert [m["content"] for m in beta_ui][:2] == ["first beta question", "answer to: first beta question"]
+    assert "first beta question" in [m.content for m in beta_history]
+    assert [m["content"] for m in alpha_ui] == ["alpha question", "answer to: alpha question"]

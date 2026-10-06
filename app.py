@@ -4,7 +4,7 @@ import os
 import streamlit as st
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from copilot import cases, collection, commands, outputs, tools as copilot_tools
+from copilot import cases, collection, commands, conversation, outputs, tools as copilot_tools
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
 from copilot.database import case_db
@@ -21,13 +21,46 @@ MIME = {"html": "text/html", "md": "text/markdown", "csv": "text/csv", "json": "
 # ==========================================
 # Session state
 # ==========================================
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = [SystemMessage(content=build_system_prompt(case_config))]
-    st.session_state.messages = []      # [{role, content, log: [str], files: [output rows]}]
+if "usage" not in st.session_state:
     st.session_state.usage = TokenUsage()
     st.session_state.pending = []       # agent collection requests awaiting approval
     st.session_state.next_request = 1
     st.session_state.triage_dismissed = False
+
+
+def open_case_chat(note: str = ""):
+    """Shows the active case's saved conversation (or a new one) and gives the agent its memory back."""
+    case_id = cases.current_id()
+    messages, history = conversation.load(case_id, build_system_prompt(case_config))
+    st.session_state.case_id = case_id
+    st.session_state.messages = messages      # [{role, content, log: [str], files: [output rows]}]
+    st.session_state.chat_history = history
+    st.session_state.pending = []
+    st.session_state.triage_dismissed = False
+    if note:
+        st.session_state.messages.append({"role": "assistant", "content": note})
+
+
+def persist():
+    """Saves this session's conversation to the case it belongs to."""
+    if "case_id" in st.session_state:
+        conversation.save(st.session_state.case_id, st.session_state.messages, st.session_state.chat_history)
+
+
+# Every run: save the conversation to its own case, then follow the active case if it changed
+# (sidebar, /case, the agent, the New case form, or another tab).
+if "case_id" not in st.session_state:
+    open_case_chat()
+else:
+    persist()
+    if st.session_state.case_id != cases.current_id():
+        previous = st.session_state.case_id
+        restored = bool(conversation.load(cases.current_id(), "")[0])
+        open_case_chat((f"📁 **Back in case `{cases.current_id()}` — {case_config.case_name}.** Conversation restored."
+                        if restored else
+                        f"📁 **Now in case `{cases.current_id()}` — {case_config.case_name}.** New conversation.")
+                       + f" (`{previous}` was saved.)" + st.session_state.pop("case_note", ""))
+cases.consume_switch()
 
 
 def queue_request(artifact: str, params: dict):
@@ -37,20 +70,11 @@ def queue_request(artifact: str, params: dict):
     return "queued"
 
 
-def restart_conversation(note: str):
-    """After a case switch: new system prompt for the new case, fresh agent context."""
-    st.session_state.chat_history = [SystemMessage(content=build_system_prompt(case_config))]
-    st.session_state.pending = []
-    st.session_state.triage_dismissed = False
-    st.session_state.messages.append({"role": "assistant", "content": note})
-
-
 def after_possible_switch():
+    """Rerun when the active case or its settings changed (the top of the script does the rest)."""
     if cases.consume_settings_change():
         st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
-    if cases.consume_switch():
-        restart_conversation(f"📁 **Now in case `{cases.current_id()}` — {case_config.case_name}.** "
-                             f"Fresh conversation; earlier messages belong to the previous case.")
+    if cases.consume_switch() or st.session_state.case_id != cases.current_id():
         st.rerun()
 
 
@@ -106,9 +130,8 @@ def create_case_cb():
         return
     for key in [k for k in st.session_state if str(k).startswith("nc_")]:
         del st.session_state[key]
-    cases.consume_switch()
-    restart_conversation(f"📁 **Created and opened case `{case_id}` — {case_config.case_name}.**"
-                         + (f" Collected data copied from `{copy_from}`." if copy_from not in (None, "(none)") else ""))
+    if copy_from not in (None, "(none)"):
+        st.session_state.case_note = f" Collected data copied from `{copy_from}`."
 
 
 def save_settings_cb(case_id: str):
@@ -317,6 +340,11 @@ with st.sidebar:
             st.button("Save settings", on_click=save_settings_cb, args=(cid,))
             if st.session_state.get("cs_message"):
                 st.caption(st.session_state.cs_message)
+    if st.button("🧹 New conversation", help="Clears this case's chat and the agent's memory of it. "
+                                          "Collected data and findings stay."):
+        conversation.clear(cases.current_id())
+        open_case_chat()
+        st.rerun()
     st.text(f"{case_config.case_name}\nAnalyst: {case_config.analyst}")
     if case_config.client_id_error:
         st.warning(case_config.client_id_error)
@@ -427,3 +455,5 @@ if prompt := st.chat_input("Ask the copilot to investigate... (/help for command
     after_possible_switch()
     if st.session_state.pending:
         st.rerun()  # show the new approval requests in the sidebar
+
+persist()  # runs that end normally save here; runs ending in st.rerun() are saved at the top of the next run

@@ -6,7 +6,8 @@ Chat commands handled locally, without the LLM (they cost no tokens):
 """
 from copilot import cases
 
-HELP = ("Commands (no LLM, free): `/cases` list cases · `/case <id>` switch case · `/help`. "
+HELP = ("Commands (no LLM, free): `/cases` list cases · `/case <id>` switch case (each case keeps its own "
+        "chat) · `/help`. CLI: `/new` starts a fresh conversation (Streamlit: sidebar button). "
         "You can also just ask in words, e.g. \"switch to the szechuan case\" or \"create a case for host X\".")
 
 

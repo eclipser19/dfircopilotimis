@@ -121,6 +121,8 @@ class CaseDatabase:
                 size        INTEGER
             );
 
+            CREATE TABLE IF NOT EXISTS conversation (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
+
             CREATE TABLE IF NOT EXISTS audit_log (
                 log_id        TEXT PRIMARY KEY,
                 timestamp_utc TEXT,

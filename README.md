@@ -63,7 +63,10 @@ case_data/<case-id>/outputs/     reports and exports (unless output.dir is set)
 - Switch in the chat with free commands (no LLM): `/cases`, `/case <id>`, `/help`. Or ask in
   words ("switch to the szechuan case", "create a case for host X"). In Streamlit there is
   also a case picker and a "New case" form in the sidebar.
-- Switching starts a fresh conversation, so nothing from one case leaks into another.
+- Each case keeps its own chat (what you see and what the agent remembers, tool results
+  included), saved in its database after every exchange. Switching away saves it; switching
+  back restores it, also after an app restart. Nothing leaks between cases. "🧹 New
+  conversation" in the sidebar (CLI: `/new`) clears a case's chat; data and findings stay.
 - Everything is editable from the app (no file access needed): the sidebar's **New case** form
   (Case ID and Name required; the client ID is needed before collecting) and **Case settings**
   for the active case (client, window, clock offset, description, IOCs). IOCs can be pulled from

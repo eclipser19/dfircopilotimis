@@ -83,27 +83,54 @@ def run_agent_loop():
     # Same model, but not allowed to call tools: used to wrap up before the budget runs out.
     finalizer = llm.bind_tools(tools, tool_choice="none")
 
-    from copilot import cases, commands
-    chat_history = [SystemMessage(content=build_system_prompt(case_config))]
+    from copilot import cases, commands, conversation
+    from copilot.database import case_db
+    chat_history = []
+    state = {"case": None, "ui": []}
 
-    def restart_if_switched():
-        if cases.consume_settings_change():
-            chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
-            print("\n[*] Case settings updated.")
-        if cases.consume_switch():
-            chat_history[:] = [SystemMessage(content=build_system_prompt(case_config))]
+    def open_chat():
+        """Loads the active case's saved conversation (the agent gets its memory back)."""
+        state["case"] = cases.current_id()
+        state["ui"], history = conversation.load(state["case"], build_system_prompt(case_config))
+        chat_history[:] = history
+        if len(history) > 1:
+            print(f"[*] Restored the conversation of case '{state['case']}' ({len(state['ui'])} messages). "
+                  f"Type /new to start over.")
+
+    def save():
+        conversation.save(state["case"], state["ui"], chat_history)
+
+    def follow_case():
+        """Keeps the conversation with its case when the active case or its settings change."""
+        cases.consume_switch()
+        if state["case"] != cases.current_id():
+            save()
             print(f"\n=== Now in case '{cases.current_id()}': {case_config.case_name} "
-                  f"(client {case_config.client_id or 'not set'}) ===")
+                  f"(client {case_config.client_id or 'not set'}); '{state['case']}' was saved ===")
+            open_chat()
             hint = cases.legacy_data_hint()
             if hint:
                 print(f"[!] {hint}")
+        if cases.consume_settings_change():
+            chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
+            print("\n[*] Case settings updated.")
+
+    def turn(text: str, show_user: bool = True):
+        chat_history.append(HumanMessage(content=text))
+        answer = run_turn(llm_with_tools, chat_history, MAX_STEPS, usage, case_config.max_tokens_per_turn, finalizer)
+        if show_user:
+            state["ui"].append({"role": "user", "content": text})
+        state["ui"].append({"role": "assistant", "content": answer or "No answer."})
+        save()            # saved with the case it was asked in, even if the agent switched cases
+        follow_case()
+
     collection.CONFIRM = _confirm_collection
     MAX_STEPS = case_config.max_steps
     usage = TokenUsage()
 
     print("=" * 60)
     print("  DFIR Copilot v2 — Database-Backed Analysis")
-    print("  Case database: case_data/case.db")
+    print(f"  Case database: {case_db.db_path}")
     print(f"  Scope file: {case_config.path} {'(Loaded)' if case_config.data else '(Not Found/Empty)'}")
     print(f"  Evidence client: {case_config.client_id or '(not set)'}")
     print(f"  Case: {cases.current_id()}  ·  /cases to list, /case <id> to switch")
@@ -113,6 +140,7 @@ def run_agent_loop():
     hint = cases.legacy_data_hint()
     if hint:
         print(f"\n[!] {hint}")
+    open_chat()
 
     summaries = None
     if case_config.client_id_error:
@@ -133,18 +161,23 @@ def run_agent_loop():
             "If IOCs are defined in the case, search for them. "
             "If an incident time window is defined, query the timeline for that window."
         )
-        chat_history.append(HumanMessage(content=auto_prompt))
-        _process_turn(llm_with_tools, chat_history, MAX_STEPS, usage, case_config.max_tokens_per_turn, finalizer)
+        turn(auto_prompt, show_user=False)
 
     while True:
         user_input = input("\nInvestigator> ")
         if user_input.lower() in ['quit', 'exit']:
             break
 
+        if user_input.strip().lower() == "/new":
+            conversation.clear(state["case"])
+            open_chat()
+            print("[*] New conversation for this case (data and findings are kept).")
+            continue
+
         reply = commands.handle(user_input)
         if reply is not None:
             print(f"\n{reply}")
-            restart_if_switched()
+            follow_case()
             continue
 
         if user_input.lower().startswith('retract '):
@@ -173,9 +206,7 @@ def run_agent_loop():
                     print(f"  MITRE: {f['mitre_technique']}")
             continue
 
-        chat_history.append(HumanMessage(content=user_input))
-        _process_turn(llm_with_tools, chat_history, MAX_STEPS, usage, case_config.max_tokens_per_turn, finalizer)
-        restart_if_switched()
+        turn(user_input)
 
 
 class TokenUsage:
