@@ -38,6 +38,8 @@ def app_env(tmp_path, monkeypatch):
         "collect": ["Generic.Client.Info"],
         "collection": {"agent_collections": "confirm"}})
     monkeypatch.setattr(collection, "get_vql", lambda: FakeVQL())
+    monkeypatch.setattr(tools, "REPORT_FORMATS", None)      # the app sets it process-wide
+    monkeypatch.setattr(collection, "CONFIRM", None)
     monkeypatch.setattr(collection, "time", __import__("types").SimpleNamespace(
         monotonic=lambda: 0, sleep=lambda s: None))
     return db
@@ -95,3 +97,21 @@ def test_agent_collection_waits_for_approval(app_env):
     assert [c["artifact"] for c in app_env.get_collections()] == ["Windows.System.TaskScheduler"]
     assert "Approved" in _texts(at)
     assert not [b for b in at.button if b.label == "Approve"]
+
+
+def test_retract_finding_from_the_sidebar(app_env):
+    app_env.ingest_artifact_results([{"Message": "x"}], "S", "D", "C.1")
+    eid = app_env.search_events("x")["records"][0]["evidence_id"]
+    app_env.record_finding("No ZIP archive found", "wrong", [eid], "medium")
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.text_input(key="retract_reason").input("USN shows loot.zip").run()
+    next(b for b in at.button if b.label == "Retract").click().run()
+    assert not at.exception
+    assert app_env.get_findings() == []
+    assert app_env.get_findings(include_retracted=True)[0]["status_reason"] == "USN shows loot.zip"
+
+
+def test_sidebar_report_format_reaches_the_tool(app_env):
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.multiselect(key="report_formats").select("md").run()
+    assert tools.REPORT_FORMATS == ["html", "md"]

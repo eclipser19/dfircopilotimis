@@ -612,9 +612,12 @@ def export_case(include_csv: bool = True) -> str:
     )
 
 
+# Set by the Streamlit sidebar for the session; otherwise the case file decides.
+REPORT_FORMATS = None
+
+
 @tool
-def generate_report(executive_summary: str, recommendations: str, correlations: Optional[str] = None,
-                    formats: Optional[list] = None) -> str:
+def generate_report(executive_summary: str, recommendations: str, correlations: Optional[str] = None) -> str:
     """
     Generates the final DFIR report (Markdown) from the recorded findings and the case
     database. Call this at the END of an investigation, when the investigator asks.
@@ -628,8 +631,7 @@ def generate_report(executive_summary: str, recommendations: str, correlations: 
         recommendations: Bullet-point remediation and follow-up recommendations.
         correlations: How the findings connect (e.g. logon -> execution -> persistence), citing finding
                       titles and evidence IDs; state which links are proven and which are inferred.
-        formats: Only if the investigator asked for specific formats: ['html'], ['md'] or both.
-                 Otherwise omit it; the case setting decides. Do not ask the investigator about it.
+    The file format is set by the investigator, not by you.
     """
     from copilot.report import build_report
 
@@ -639,9 +641,7 @@ def generate_report(executive_summary: str, recommendations: str, correlations: 
     from copilot import outputs
     from copilot.report_html import to_html
     report_md = build_report(case_db, case_config, executive_summary, recommendations, correlations)
-    requested = [str(f).lower().lstrip(".") for f in (formats or [])]
-    requested = ["md" if f in ("markdown", "md") else f for f in requested]
-    wanted = [f for f in requested if f in ("html", "md")] or case_config.report_formats
+    wanted = [f for f in (REPORT_FORMATS or []) if f in ("html", "md")] or case_config.report_formats
     stem = f"dfir_report_{case_config.case_name}"
     written = []
     base = outputs.new_path(stem, "md")[:-3]

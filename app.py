@@ -4,7 +4,7 @@ import os
 import streamlit as st
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from copilot import collection, outputs
+from copilot import collection, outputs, tools as copilot_tools
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
 from copilot.database import case_db
@@ -222,8 +222,24 @@ with st.sidebar:
         st.caption(f"- {src['source']} ({src['records']})")
 
     st.subheader("🚩 Findings")
-    for f in case_db.get_findings():
+    active = case_db.get_findings()
+    for f in active:
         st.caption(f"[{(f['confidence'] or 'unknown').upper()}] {f['title']}")
+    if active:
+        with st.expander("Retract a finding", expanded=False):
+            labels = {f"{f['title']} ({f['finding_id']})": f["finding_id"] for f in active}
+            choice = st.selectbox("Finding", list(labels), key="retract_choice")
+            reason = st.text_input("Reason (e.g. the contradicting evidence)", key="retract_reason")
+            if st.button("Retract", disabled=not reason.strip()):
+                case_db.retract_finding(labels[choice], reason.strip())
+                st.session_state.chat_history.append(HumanMessage(
+                    content=f"[Investigator] Retracted finding '{choice}': {reason.strip()}"))
+                st.rerun()
+
+    st.subheader("📄 Report")
+    chosen = st.multiselect("Report formats", ["html", "md"], default=case_config.report_formats,
+                            key="report_formats", help="Formats cost no extra LLM tokens.")
+    copilot_tools.REPORT_FORMATS = chosen or None
 
     files = outputs.produced_since(0)
     if files:

@@ -39,9 +39,11 @@ def test_report_formats_from_case_file(case, monkeypatch):
     assert _report_exts() == [".html", ".md"]
 
 
-def test_report_format_requested_explicitly(case, monkeypatch):
+def test_report_format_set_by_the_ui_not_the_agent(case, monkeypatch):
     _seed(case, monkeypatch)
-    tools.generate_report.invoke({"executive_summary": "S", "recommendations": "- R", "formats": ["Markdown"]})
+    assert "formats" not in tools.generate_report.args
+    monkeypatch.setattr(tools, "REPORT_FORMATS", ["md"])
+    tools.generate_report.invoke({"executive_summary": "S", "recommendations": "- R"})
     assert _report_exts() == [".md"]
 
 

@@ -82,7 +82,8 @@ streamlit run app.py    # web chat
 
 The case database lives in `case_data/` (or `DFIR_CASE_DIR`). Reports are written as HTML
 by default; set `output.report_formats: [html, md]` in the case file for Markdown too (the
-second format costs no LLM tokens), or just ask for "the report in Markdown". Files the
+second format costs no LLM tokens), or pick formats in the Streamlit sidebar. The agent
+cannot choose the format. Files the
 copilot produces (reports, case exports, CSV exports of query results, JSON evidence
 extracts) go to the output directory: `DFIR_OUTPUT_DIR`, else `output.dir` in the case
 file (e.g. `/uploads` on a server), else `case_data/outputs/`.
