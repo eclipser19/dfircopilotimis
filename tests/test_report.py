@@ -78,7 +78,7 @@ def test_report_sections_and_escaping(skewed_case):
 
 def test_md_helper():
     assert md("a|b\nc") == "a\\|b c"
-    assert md("x" * 10, 5) == "xxxx…"
+    assert md("x" * 5000) == "x" * 5000  # never shortened
 
 
 def test_retracted_findings_leave_the_report_body(skewed_case):
@@ -88,7 +88,7 @@ def test_retracted_findings_leave_the_report_body(skewed_case):
     out = tools.retract_finding.invoke({"finding_id": wrong[:6], "reason": "USN shows loot.zip (finding 2)"})
     assert out.startswith("Retracted finding")
     report = build_report(skewed_case, case_config, "ES", "- R")
-    body, appendix = report.split("## Appendix B: Retracted Findings")
+    body, appendix = report.split("## Appendix C: Retracted Findings")
     assert "No archive found" not in body
     assert "No archive found" in appendix and "USN shows loot.zip" in appendix
     assert "Retracted findings" not in tools.case_summary.invoke({}) or True
@@ -136,3 +136,22 @@ def test_old_findings_table_is_upgraded(tmp_path):
     assert [f["title"] for f in upgraded.get_findings()] == ["old"]
     assert upgraded.retract_finding("abc123", "wrong")["title"] == "old"
     assert upgraded.get_findings() == []
+
+
+def test_report_never_shortens_records_queries_or_parameters(case, monkeypatch):
+    monkeypatch.setattr(case_config, "data", {"velociraptor": {"client_id": CLIENT}})
+    long_cmd = "powershell -nop -w hidden -c " + "A" * 3000 + " END_OF_COMMAND"
+    case.ingest_artifact_results([{"EventTime": "2020-09-19T03:40:00Z", "EventID": 4104, "CommandLine": long_cmd,
+                                   "Note": "contains ``` backticks"}], "Windows.EventLogs.EvtxHunter", "D", "C.1")
+    long_query = "SELECT * FROM source() WHERE x =~ '" + "B" * 2000 + "END_OF_QUERY'"
+    case.log_query("ingest", long_query, 1, "X")
+    case.upsert_collection("F.1", artifact="Windows.NTFS.MFT", parameters='{"FileRegex": "' + "C" * 1000 + 'END_OF_PARAMS"}')
+    eid = case.query_timeline()["events"][0]["evidence_id"]
+    case.record_finding("Payload", "p", [eid], "high")
+    report = build_report(case, case_config, "ES", "- R")
+    assert "END_OF_QUERY" in report and "END_OF_PARAMS" in report
+    assert report.count("END_OF_COMMAND") >= 4          # timeline, finding table, indicators, raw record
+    assert "…" not in report
+    appendix = report.split("## Appendix B: Cited Evidence Records")[1]
+    assert "````json" in appendix                        # fence longer than the ``` inside the record
+    assert '"Note": "contains ``` backticks"' in appendix

@@ -4,13 +4,14 @@ correlation analysis, recommendations) is computed from the case database, so
 times, evidence and artifact explanations can't be invented by the LLM.
 """
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from itertools import combinations
 
 from jinja2 import Environment
 
 from copilot.knowledge import artifact_info
-from copilot.normalize import event_type_for, normalize_row, parse_timestamp
+from copilot.normalize import describe, event_type_for, extract_entities, parse_timestamp
 from copilot.report_template import REPORT_TEMPLATE
 
 MAX_TIMELINE_ROWS = 200
@@ -19,12 +20,16 @@ INDICATOR_FIELDS = [("ip", "IP addresses"), ("user", "Accounts"), ("process", "P
                     ("path", "Files / paths"), ("hash", "Hashes"), ("command_line", "Command lines")]
 
 
-def md(value, limit: int = None) -> str:
-    """Safe for a Markdown table cell: no pipes or line breaks."""
-    text = " ".join(str(value if value is not None else "").split()).replace("|", "\\|")
-    if limit and len(text) > limit:
-        text = text[:limit - 1] + "…"
-    return text
+def md(value) -> str:
+    """Safe for a Markdown table cell: pipes escaped, line breaks become spaces. Never shortened."""
+    return " ".join(str(value if value is not None else "").split()).replace("|", "\\|")
+
+
+def fenced(text: str, lang: str = "json") -> str:
+    """Code block whose fence is longer than any backtick run inside the text."""
+    longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{lang}\n{text}\n{fence}"
 
 
 class Clock:
@@ -50,13 +55,20 @@ def _evidence(db, evidence_id: str, window: tuple) -> dict:
     rec = db.get_event_detail(evidence_id)
     if not rec:
         return {}
-    # Re-describe from the raw row so records ingested by older versions read well too.
+    # Re-describe from the raw row, in full: the database copy is capped for the LLM, the
+    # report must not be. This also upgrades records ingested by older versions.
+    raw = {}
     try:
-        rec["description"] = normalize_row(json.loads(rec["raw_data"]), rec["source"])["description"]
+        raw = json.loads(rec["raw_data"])
     except (ValueError, TypeError):
         pass
+    if isinstance(raw, dict) and raw:
+        full_entities = extract_entities(raw, cap=None)
+        rec["description"] = describe(raw, full_entities, limit=None)
+        rec.update(full_entities)
     stamps = [t for t in rec["timestamps"] if _in_window(t["timestamp_utc"], window)] or rec["timestamps"]
     return {"evidence_id": evidence_id, "source": rec["source"], "description": rec["description"],
+            "raw": raw, "all_timestamps": rec["timestamps"],
             "timestamps": stamps, "first": stamps[0]["timestamp_utc"] if stamps else None,
             "entities": {f: rec.get(f) for f, _ in INDICATOR_FIELDS if rec.get(f)}}
 
@@ -155,6 +167,14 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
         src["event_type"] = event_type_for(src["source"])  # current mapping, not the one stored at ingest
         info = artifact_info(src["source"])
         artifacts.append({**src, **info})
+    cited = {}
+    for f in findings:
+        for e in f["evidence"]:
+            entry = cited.setdefault(e["evidence_id"], {**e, "findings": []})
+            entry["findings"].append(f["number"])
+    cited = sorted(cited.values(), key=lambda e: (e["first"] is None, e["first"] or "", e["evidence_id"]))
+    for e in cited:
+        e["raw_json"] = json.dumps(e["raw"], indent=2, ensure_ascii=False, default=str)
     retracted = [f for f in db.get_findings(include_retracted=True) if (f.get("status") or "active") != "active"]
 
     cur = db.conn.cursor()
@@ -167,6 +187,7 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
 
     env = Environment(trim_blocks=True, lstrip_blocks=True, autoescape=False)
     env.filters["md"] = md
+    env.filters["fenced"] = fenced
     env.filters["rec"] = clock.recorded
     env.filters["utc"] = clock.corrected
     return env.from_string(REPORT_TEMPLATE).render(
@@ -181,7 +202,7 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
         findings=findings, timeline=timeline, timeline_truncated=timeline_truncated,
         max_timeline=MAX_TIMELINE_ROWS, related=related, related_minutes=RELATED_WITHIN_MINUTES,
         indicators=indicators, iocs_searched=iocs_searched, artifacts=artifacts,
-        collections=collections, audit_log=audit_log, retracted=retracted,
+        collections=collections, audit_log=audit_log, retracted=retracted, cited=cited,
     )
 
 

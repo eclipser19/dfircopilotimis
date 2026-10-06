@@ -200,14 +200,15 @@ def extract_timestamps(row: dict, now: datetime = None) -> list:
     return sorted((ts, ", ".join(fields)) for ts, fields in found.items())
 
 
-def extract_entities(row: dict) -> dict:
+def extract_entities(row: dict, cap: int = 1000) -> dict:
+    """Entity values are capped for the database/LLM; pass cap=None for full values (reports)."""
     entities = {}
     for key, value in flatten(row):
         if value in (None, "") or isinstance(value, (bool, dict, list)):
             continue
         entity = _ENTITY_LOOKUP.get(_last_segment(key).lower())
         if entity and entity not in entities:
-            entities[entity] = str(value)[:1000]
+            entities[entity] = str(value) if cap is None else str(value)[:cap]
     return entities
 
 
@@ -217,7 +218,7 @@ KEY_FIELDS = ["LogonType", "Reason", "ServiceName", "TaskName", "Channel"]
 DESCRIPTION_ENTITIES = ["event_id", "user", "ip", "process", "command_line", "hash"]
 
 
-def describe(row: dict, entities: dict, limit: int = 500) -> str:
+def describe(row: dict, entities: dict, limit: int = 500) -> str:  # limit=None: no cap (reports)
     """
     One line per record: identifying facts first (event ID, key fields, user, IP...),
     then the message, then the path, so truncated text still says what happened.
@@ -243,7 +244,7 @@ def describe(row: dict, entities: dict, limit: int = 500) -> str:
     if not text:
         text = json.dumps({k: v for k, v in row.items() if not isinstance(v, (dict, list))}, default=str)
     text = " ".join(text.split())
-    return text[:limit]
+    return text if limit is None else text[:limit]
 
 
 # Sources whose timestamps describe the collection, not the evidence.

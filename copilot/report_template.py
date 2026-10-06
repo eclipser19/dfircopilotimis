@@ -65,7 +65,7 @@ Every timestamp of the records cited by findings{% if has_scope %}, inside the i
 | UTC | Recorded | Source | Time field | Event | Evidence | Finding |
 |---|---|---|---|---|---|---|
 {% for r in timeline %}
-| {{ r.ts | utc }} | {{ r.ts | rec }} | {{ r.source | md }} | {{ r.field | md(60) }} | {{ r.description | md(160) }} | `{{ r.evidence_id }}` | {{ r.findings | sort | join(", ") }} |
+| {{ r.ts | utc }} | {{ r.ts | rec }} | {{ r.source | md }} | {{ r.field | md }} | {{ r.description | md }} | `{{ r.evidence_id }}` | {{ r.findings | sort | join(", ") }} |
 {% endfor %}
 {% if timeline_truncated %}
 
@@ -98,7 +98,7 @@ Every timestamp of the records cited by findings{% if has_scope %}, inside the i
 | Evidence | Source | UTC | Record |
 |---|---|---|---|
 {% for e in f.evidence %}
-| `{{ e.evidence_id }}` | {{ e.source | md }} | {{ e.first | utc }} | {{ e.description | md(200) }} |
+| `{{ e.evidence_id }}` | {{ e.source | md }} | {{ e.first | utc }} | {{ e.description | md }} |
 {% endfor %}
 
 {% else %}
@@ -135,7 +135,7 @@ Values extracted from the evidence cited by findings.
 **{{ group.label }}**
 
 {% for v in group["values"] %}
-- `{{ v.value | md(200) }}` (findings {{ v.findings | join(", ") }})
+- `{{ v.value | md }}` (findings {{ v.findings | join(", ") }})
 {% endfor %}
 
 {% endfor %}
@@ -176,31 +176,52 @@ Values extracted from the evidence cited by findings.
 | Artifact | Parameters | State | Rows ingested | Error |
 |---|---|---|---|---|
 {% for c in collections %}
-| {{ c.artifact | md }} | {{ c.parameters | md(160) }} | {{ c.state }} | {{ c.rows_ingested }} | {{ c.error | md(120) }} |
+| {{ c.artifact | md }} | {{ c.parameters | md }} | {{ c.state }} | {{ c.rows_ingested }} | {{ c.error | md }} |
 {% endfor %}
 {% else %}
 *No collections recorded.*
 {% endif %}
 
-## Appendix B: Retracted Findings
+## Appendix B: Cited Evidence Records
+
+The complete original record of every evidence ID cited above, as collected from the image.
+
+{% for e in cited %}
+### `{{ e.evidence_id }}` — {{ e.source }}
+
+- **Cited by findings:** {{ e.findings | join(", ") }}
+{% if e.all_timestamps %}
+- **Timestamps (UTC / recorded):** {% for t in e.all_timestamps %}{{ t.timestamp_utc | utc }} / {{ t.timestamp_utc | rec }} ({{ t.timestamp_desc }}){% if not loop.last %}; {% endif %}{% endfor %}
+
+{% else %}
+- **Timestamps:** none in this record
+{% endif %}
+
+{{ e.raw_json | fenced }}
+
+{% else %}
+*No evidence cited.*
+{% endfor %}
+
+## Appendix C: Retracted Findings
 
 {% if retracted %}
 | Finding | Reason |
 |---|---|
 {% for r in retracted %}
-| {{ r.title | md }} | {{ r.status_reason | md(300) }} |
+| {{ r.title | md }} | {{ r.status_reason | md }} |
 {% endfor %}
 {% else %}
 *None.*
 {% endif %}
 
-## Appendix C: Query Audit Log
+## Appendix D: Query Audit Log
 
 {% if audit_log %}
 | Time (analysis) | Tool | Query | Rows |
 |---|---|---|---|
 {% for log in audit_log %}
-| {{ log.timestamp_utc[:19] }} | {{ log.tool_name }} | {{ log.query | md(160) }} | {{ log.row_count }} |
+| {{ log.timestamp_utc[:19] }} | {{ log.tool_name }} | {{ log.query | md }} | {{ log.row_count }} |
 {% endfor %}
 {% else %}
 *No queries recorded.*
