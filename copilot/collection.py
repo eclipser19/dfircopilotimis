@@ -6,6 +6,7 @@ is passed to Velociraptor as a VQLEnv variable and referenced by name in the
 query. Nothing is ever formatted into the VQL text.
 """
 import json
+import re
 import time
 from datetime import datetime, timezone
 
@@ -13,9 +14,11 @@ from copilot.case_config import case_config
 from copilot.database import case_db
 from copilot.vql_client import get_vql, VQLError
 
+# Parameters go in `spec` ({"Artifact.Name": {"Param": "value"}}): the form current
+# Velociraptor versions require. The older `env=` form is rejected by them.
 SCHEDULE_VQL = (
     "SELECT collect_client(client_id=ClientId, artifacts=Artifact, "
-    "env=parse_json(data=Params)) AS flow FROM scope()"
+    "spec=parse_json(data=Spec)) AS flow FROM scope()"
 )
 POLL_VQL = (
     "SELECT state, status, total_collected_rows, artifacts_with_results "
@@ -71,11 +74,21 @@ def _check_artifact(artifact: str):
         )
 
 
+# Progress chatter in the query log that isn't useful to the agent or investigator.
+_LOG_NOISE = re.compile(r"^(Starting query execution\.?|Time \d+: .*Sending response part.*)$")
+
+
+def _clean_log(log: str) -> str:
+    lines = [l for l in (log or "").splitlines() if l.strip() and not _LOG_NOISE.match(l.strip())]
+    return "\n".join(lines)
+
+
 def _run(vql, query: str, env: dict) -> tuple:
     res = vql.run_vql(query, env=env)
+    log = _clean_log(res.get("log", ""))
     if res.get("error"):
-        raise CollectionError(f"Velociraptor call failed: {res['error']}\n{res.get('log', '')}".strip())
-    return res.get("results", []), res.get("log", "")
+        raise CollectionError(f"Velociraptor call failed: {res['error']}\n{log}".strip())
+    return res.get("results", []), log
 
 
 def schedule(artifact: str, params: dict = None, vql=None) -> str:
@@ -85,7 +98,7 @@ def schedule(artifact: str, params: dict = None, vql=None) -> str:
     _check_artifact(artifact)
     encoded = encode_params(params)
 
-    env = {"ClientId": client_id, "Artifact": artifact, "Params": json.dumps(encoded)}
+    env = {"ClientId": client_id, "Artifact": artifact, "Spec": json.dumps({artifact: encoded})}
     rows, log = _run(vql, SCHEDULE_VQL, env)
     case_db.log_query("collect_artifact", f"{SCHEDULE_VQL} -- env={json.dumps(env)}", len(rows), artifact)
 

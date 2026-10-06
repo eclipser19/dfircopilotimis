@@ -17,7 +17,24 @@ def test_params_go_through_env_never_into_vql_text(case):
     assert nasty not in query
     assert env["ClientId"] == CLIENT
     assert env["Artifact"] == "Generic.Client.Info"
-    assert json.loads(env["Params"]) == {"Path": nasty, "Recurse": "Y"}
+    assert json.loads(env["Spec"]) == {"Generic.Client.Info": {"Path": nasty, "Recurse": "Y"}}
+
+
+def test_no_params_still_sends_spec_for_the_artifact(case):
+    vql = FakeVQL()
+    collection.schedule("Generic.Client.Info", vql=vql)
+    assert json.loads(vql.calls[0][1]["Spec"]) == {"Generic.Client.Info": {}}
+
+
+def test_progress_noise_stripped_from_errors(case):
+    vql = FakeVQL(schedule_fails=True)
+    vql_log = ("Starting query execution.\ncollect_client: Parameter refers to an unknown artifact\n"
+               "Time 0: AgentQuery: Sending response part 0 15 B (1 rows).")
+    vql.run_vql = lambda q, env=None, timeout=None: {"results": [], "log": vql_log}
+    with pytest.raises(CollectionError) as e:
+        collection.schedule("Generic.Client.Info", vql=vql)
+    assert "unknown artifact" in str(e.value)
+    assert "Starting query" not in str(e.value) and "Sending response" not in str(e.value)
 
 
 def test_encode_params_types():

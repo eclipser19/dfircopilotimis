@@ -352,6 +352,9 @@ def generate_report(executive_summary: str, recommendations: str) -> str:
     from copilot.report_template import REPORT_TEMPLATE
 
     stats = case_db.get_stats()
+    if not stats.get("total_events"):
+        return ("Report not generated: the case database is empty, so there is no evidence to report on. "
+                "Collect artifacts successfully first (see list_collections).")
     findings = case_db.get_findings()
 
     # Get audit log

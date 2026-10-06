@@ -65,6 +65,7 @@ def run_agent_loop():
     print("  Type 'exit' to quit, 'report' for findings summary")
     print("=" * 60)
 
+    summaries = None
     if case_config.client_id_error:
         print(f"\n[!] {case_config.client_id_error}")
 
@@ -72,6 +73,10 @@ def run_agent_loop():
     elif input("\nDo you want to run the initial auto-collection based on case.yaml? (y/n) [y]: ").lower() in ['', 'y', 'yes']:
         print("\n[*] Starting automatic collection...")
         summaries = auto_collect(case_config)
+    if summaries and all(s.get("state") == "NOT_STARTED" for s in summaries):
+        print("\n[!] No collection could be started, so the agent was not run on them. "
+              "Fix the error above (Velociraptor connection, client ID, artifact names), then retry.")
+    elif summaries:
         auto_prompt = (
             "The initial collection has been run for you. Results per artifact:\n"
             f"{json.dumps(summaries, indent=2)}\n"

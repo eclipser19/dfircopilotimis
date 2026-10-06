@@ -66,3 +66,8 @@ def test_linux_artifacts_allowed_but_shell_refused(monkeypatch):
     assert case_config.is_artifact_allowed("Linux.Forensics.Journal")
     assert case_config.is_artifact_allowed("Linux.Sys.Users")
     assert not case_config.is_artifact_allowed("Linux.Sys.BashShell")
+
+
+def test_report_refused_on_empty_database(case):
+    out = tools.generate_report.invoke({"executive_summary": "x", "recommendations": "y"})
+    assert out.startswith("Report not generated")
