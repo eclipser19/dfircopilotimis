@@ -44,6 +44,8 @@ FLOW_LOGS_VQL = "SELECT * FROM flow_logs(client_id=DfirClientId, flow_id=DfirFlo
 # Flow log lines worth showing when a collection is empty or failed.
 _LOG_PROBLEM = re.compile(r"(?i)(warn|error|denied|fail|not found|cannot|unable|no such|invalid|disabled)")
 MAX_LOG_LINES = 15
+# "Call to plugin wmi disabled": the dead-disk remapping disables live-only plugins.
+_DISABLED_RE = re.compile(r"(?i)(?:plugin|function)\s+(\w+)\s+disabled")
 
 POLL_INTERVAL = 2
 
@@ -296,6 +298,12 @@ def _finish(flow_id: str, status: dict, vql) -> dict:
         problems = flow_log_problems(case_db.get_collection(flow_id)["client_id"], flow_id, vql)
         if problems:
             summary["velociraptor_log"] = problems
+            disabled = sorted({m.group(1) for line in problems for m in _DISABLED_RE.finditer(line)})
+            if disabled:
+                summary["note"] = (
+                    f"This artifact relies on {', '.join(disabled)}, which only works on a running system "
+                    f"and is disabled for disk images. It cannot produce results here; use an artifact "
+                    f"based on files, registry or event logs instead.")
     return summary
 
 

@@ -36,14 +36,20 @@ iocs:
   filenames: []
   users: []
 
-# Auto-collected before the agent starts (costs no LLM tokens).
+# Auto-collected before the agent starts (costs no LLM tokens). Entries are an artifact
+# name, or {artifact, parameters}. The scope window is added to date parameters automatically.
+# Avoid live-only artifacts (WMI/process based, e.g. Windows.System.Services): they return
+# nothing from a disk image.
 collect:
   - Generic.Client.Info
   - Windows.EventLogs.RDPAuth          # RDP / logon activity
-  - Windows.System.Services            # installed services
   - Windows.Sys.StartupItems           # Run keys / startup folders
   - Windows.Timeline.Prefetch          # program execution
   - Windows.System.TaskScheduler       # scheduled tasks
+  - artifact: Windows.EventLogs.EvtxHunter   # key event IDs only: logons, service installs,
+    parameters:                              # process creation, tasks, log clearing
+      IocRegex: "."
+      IdRegex: "^(4624|4625|4634|4647|4648|4688|4697|4698|4720|7045|1102|104|1149|21|22|23|24|25)$"
 
 # Collection limits (apply to every collection, investigator's or agent's).
 collection:

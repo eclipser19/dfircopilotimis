@@ -82,3 +82,19 @@ def test_context_window_tool(case):
     out = tools.context_window.invoke({"timestamp": "2020-09-19T02:35:54Z", "minutes": 5})
     assert "RDP logon" in out and "download" in out and "later" not in out
     assert "Unrecognized" in tools.context_window.invoke({"timestamp": "soon"})
+
+
+def test_tool_output_is_compact_and_not_duplicated(case):
+    case.ingest_artifact_results([{"EventTime": "2020-09-19T02:35:54Z", "Message": "logon",
+                                   "EventData": {"TargetUserName": "Administrator", "IpAddress": "10.42.85.10"}}],
+                                 "Windows.EventLogs.RDPAuth", "DESKTOP-SDN1RPT", "C.1")
+    out = tools.query_timeline.invoke({})
+    assert "\n" not in out                    # compact JSON
+    assert '"ip"' not in out and '"hostname"' not in out
+    assert out.count("10.42.85.10") == 1      # only inside the description
+
+
+def test_event_detail_is_capped(case):
+    case.ingest_artifact_results([{"EventTime": "2020-09-19T02:35:54Z", "Blob": "x" * 50000}], "S", client_id="C.1")
+    eid = case.query_timeline()["events"][0]["evidence_id"]
+    assert len(tools.get_event_detail.invoke({"evidence_id": eid})) < 7000

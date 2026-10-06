@@ -37,3 +37,39 @@ def test_usage_accumulates_across_turns(case, capsys):
     out = capsys.readouterr().out
     assert "maximum tool steps" not in out
     assert "session: 1,500" in out
+
+
+class FakeFinalizer:
+    def __init__(self):
+        self.calls = 0
+        self.last_prompt = None
+
+    def invoke(self, history):
+        self.calls += 1
+        self.last_prompt = history[-1].content
+        return AIMessage(content="Summary of findings so far", usage_metadata={"input_tokens": 100, "output_tokens": 50,
+                                                                               "total_tokens": 150})
+
+
+def test_agent_wraps_up_before_budget_instead_of_stopping_silently(case, capsys):
+    llm, fin = FakeLLM(tokens_per_call=1000), FakeFinalizer()
+    _process_turn(llm, [HumanMessage(content="go")], max_steps=50, max_tokens=5000, finalizer=fin)
+    assert llm.calls == 4          # 4,000 >= 80% of 5,000
+    assert fin.calls == 1
+    assert "Do not call any tools" in fin.last_prompt
+    out = capsys.readouterr().out
+    assert "Summary of findings so far" in out
+    assert "Token budget for this turn reached" not in out
+
+
+def test_collection_plan_accepts_names_and_parameters(monkeypatch):
+    from copilot.case_config import case_config
+    monkeypatch.setattr(case_config, "data", {"collect": [
+        "Generic.Client.Info",
+        {"artifact": "Windows.EventLogs.EvtxHunter", "parameters": {"IdRegex": "7045"}},
+        {"parameters": {"no": "artifact"}},
+    ]})
+    assert case_config.collection_plan == [
+        {"artifact": "Generic.Client.Info", "parameters": {}},
+        {"artifact": "Windows.EventLogs.EvtxHunter", "parameters": {"IdRegex": "7045"}},
+    ]

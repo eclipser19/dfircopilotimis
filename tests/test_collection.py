@@ -124,7 +124,7 @@ def test_auto_collect_reports_each_artifact_without_llm(case, monkeypatch):
     from copilot.case_config import case_config
     monkeypatch.setattr(case_config, "data", {"velociraptor": {"client_id": CLIENT},
                                               "collect": ["Generic.Client.Info", "Windows.System.CmdShell"]})
-    summaries = auto_collect(case_config, collect=lambda a: collection.collect(
+    summaries = auto_collect(case_config, collect=lambda a, p=None: collection.collect(
         a, vql=FakeVQL(), sleep=lambda s: None))
     assert [s["state"] for s in summaries] == ["FINISHED", "NOT_STARTED"]
     assert "not allowed" in summaries[1]["error"]
@@ -197,3 +197,10 @@ def test_successful_collection_does_not_fetch_logs(case):
     vql = FakeVQL()
     collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None)
     assert not any("flow_logs" in q for q, _ in vql.calls)
+
+
+def test_live_only_artifact_is_explained(case):
+    logs = [{"level": "DEFAULT", "message": "Call to plugin wmi disabled"}]
+    summary = collection.collect("Windows.System.Services",
+                                 vql=FakeVQL(rows={}, reported_rows=0, flow_logs=logs), sleep=lambda s: None)
+    assert "wmi" in summary["note"] and "running system" in summary["note"]

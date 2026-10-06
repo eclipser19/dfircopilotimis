@@ -25,33 +25,39 @@ def trim_chat_history(chat_history: list, keep_last_turns: int = 3) -> list:
                 )
     return chat_history
 
+def status_line(summary: dict) -> str:
+    """One-line, human readable result of a collection."""
+    line = f"{summary.get('artifact')} -> {summary.get('state')}"
+    if summary.get("time_window_applied"):
+        line += f" (time window: {', '.join(summary['time_window_applied'])})"
+    if summary.get("state") == "FINISHED":
+        line += (f": Velociraptor rows {summary.get('rows_collected_by_velociraptor')}, "
+                 f"read {summary.get('rows_read')}, new {summary.get('new_rows_ingested')}")
+    if summary.get("error"):
+        line += f": {summary['error']}"
+    if summary.get("note"):
+        line += f"\n       {summary['note']}"
+    for log in summary.get("velociraptor_log", []):
+        line += f"\n       log | {log}"
+    return line
+
+
 def auto_collect(case_config, collect=None) -> list:
     """
-    Runs the case's initial collections directly (no LLM involved) and returns
+    Runs the case's triage collections directly (no LLM involved) and returns
     one summary per artifact. Failures are reported, not raised.
     """
     from copilot import collection
     collect = collect or collection.collect
     summaries = []
-    for artifact in case_config.artifacts_to_collect:
-        print(f"[*] Collecting {artifact} ...")
+    for step in case_config.collection_plan:
+        artifact, params = step["artifact"], step["parameters"]
+        print(f"[*] Collecting {artifact}" + (f" {json.dumps(params)}" if params else "") + " ...")
         try:
-            summary = collect(artifact)
+            summary = collect(artifact, params)
         except collection.CollectionError as e:
             summary = {"artifact": artifact, "state": "NOT_STARTED", "error": str(e)}
-        line = f"    -> {summary.get('state')}"
-        if summary.get("time_window_applied"):
-            line += f" (time window: {', '.join(summary['time_window_applied'])})"
-        if summary.get("state") == "FINISHED":
-            line += (f": Velociraptor rows {summary.get('rows_collected_by_velociraptor')}, "
-                     f"read {summary.get('rows_read')}, new {summary.get('new_rows_ingested')}")
-        if summary.get("error"):
-            line += f": {summary['error']}"
-        print(line)
-        if summary.get("note"):
-            print(f"       {summary['note']}")
-        for line in summary.get("velociraptor_log", []):
-            print(f"       log | {line}")
+        print(f"    {status_line(summary)}")
         summaries.append(summary)
     return summaries
 
@@ -72,7 +78,10 @@ def run_agent_loop():
     from copilot.prompts import build_system_prompt
 
     api_key = os.environ.get("OPENAI_API_KEY") or getpass.getpass("Please enter your OpenAI API Key: ")
-    llm_with_tools = make_llm(api_key).bind_tools(tools)
+    llm = make_llm(api_key)
+    llm_with_tools = llm.bind_tools(tools)
+    # Same model, but not allowed to call tools: used to wrap up before the budget runs out.
+    finalizer = llm.bind_tools(tools, tool_choice="none")
 
     chat_history = [SystemMessage(content=build_system_prompt(case_config))]
     collection.CONFIRM = _confirm_collection
@@ -107,7 +116,7 @@ def run_agent_loop():
             "If an incident time window is defined, query the timeline for that window."
         )
         chat_history.append(HumanMessage(content=auto_prompt))
-        _process_turn(llm_with_tools, chat_history, MAX_STEPS, usage, case_config.max_tokens_per_turn)
+        _process_turn(llm_with_tools, chat_history, MAX_STEPS, usage, case_config.max_tokens_per_turn, finalizer)
 
     while True:
         user_input = input("\nInvestigator> ")
@@ -133,7 +142,7 @@ def run_agent_loop():
             continue
 
         chat_history.append(HumanMessage(content=user_input))
-        _process_turn(llm_with_tools, chat_history, MAX_STEPS, usage, case_config.max_tokens_per_turn)
+        _process_turn(llm_with_tools, chat_history, MAX_STEPS, usage, case_config.max_tokens_per_turn, finalizer)
 
 
 class TokenUsage:
@@ -162,14 +171,49 @@ class TokenUsage:
                 f" | session: {self.session_input + self.session_output:,}")
 
 
-def _process_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, max_tokens: int = None):
-    """Processes a single conversational turn with tool calling loop, within step and token limits."""
+WRAP_UP_AT = 0.8  # share of the token budget after which the agent must answer
+WRAP_UP_PROMPT = (
+    "[Copilot] The token budget for this question is nearly used. Do not call any tools. "
+    "Answer now with what you have: findings so far (with evidence IDs and UTC times), "
+    "what is still unverified, and the next steps you recommend."
+)
+
+
+def _print_answer(response):
+    print("\n### Agent Response ###\n")
+    if isinstance(response.content, list):
+        for block in response.content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                print(block["text"])
+            elif isinstance(block, str):
+                print(block)
+    else:
+        print(response.content)
+
+
+def _process_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, max_tokens: int = None,
+                  finalizer=None):
+    """
+    Processes a single conversational turn with tool calling loop, within step and token
+    limits. With a `finalizer` (the model without tools), the agent is made to answer
+    once 80% of the token budget is used, instead of stopping with nothing.
+    """
     usage = usage or TokenUsage()
     usage.start_turn()
     answered = False
     try:
         step_count = 0
         while step_count < max_steps:
+            if max_tokens and finalizer is not None and usage.turn_total >= WRAP_UP_AT * max_tokens:
+                print(f"\n[!] {usage.turn_total:,} of {max_tokens:,} tokens used: asking the agent to wrap up.")
+                chat_history.append(HumanMessage(content=WRAP_UP_PROMPT))
+                trim_chat_history(chat_history)
+                response = finalizer.invoke(chat_history)
+                usage.add(response)
+                chat_history.append(response)
+                _print_answer(response)
+                answered = True
+                break
             if max_tokens and usage.turn_total >= max_tokens:
                 print(f"\n[!] Token budget for this turn reached ({usage.turn_total:,} >= {max_tokens:,}). "
                       f"Halting; ask a narrower question or raise agent.max_tokens_per_turn.")
@@ -183,15 +227,7 @@ def _process_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = N
 
             if not response.tool_calls:
                 answered = True
-                print("\n### Agent Response ###\n")
-                if isinstance(response.content, list):
-                    for block in response.content:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            print(block["text"])
-                        elif isinstance(block, str):
-                            print(block)
-                else:
-                    print(response.content)
+                _print_answer(response)
                 break
 
             for tool_call in response.tool_calls:
@@ -201,6 +237,11 @@ def _process_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = N
                     tool_output = tool_fn.invoke(tool_call["args"])
                 except Exception as e:
                     tool_output = f"Tool execution failed: {e}"
+                if tool_call["name"] in ("collect_artifact", "check_collection"):
+                    try:
+                        print(f"    {status_line(json.loads(tool_output))}")
+                    except (ValueError, TypeError):
+                        print(f"    {str(tool_output)[:300]}")
 
                 chat_history.append(ToolMessage(
                     content=str(tool_output),

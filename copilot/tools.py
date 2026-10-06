@@ -10,6 +10,34 @@ from copilot.case_config import case_config
 from copilot.normalize import EVENT_TYPE_NAMES
 
 
+def _dump(obj, **_) -> str:
+    """Compact JSON for tool output: every character here is paid for in tokens."""
+    return json.dumps(obj, separators=(",", ":"), default=str, ensure_ascii=False)
+
+
+# Extracted fields are already folded into each row's description; repeating them
+# as separate keys doubled the size of every result.
+_SLIM_DROP = {"hostname", "client_id", "user", "process", "command_line", "path", "hash", "ip", "event_id"}
+PAGE_EVENTS = 50
+PAGE_RECORDS = 30
+DETAIL_VALUE_CHARS = 1000
+DETAIL_TOTAL_CHARS = 6000
+
+
+def _slim(rows: list) -> list:
+    return [{k: v for k, v in row.items() if k not in _SLIM_DROP} for row in rows]
+
+
+def _cap_values(obj):
+    if isinstance(obj, dict):
+        return {k: _cap_values(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_cap_values(v) for v in obj[:50]]
+    if isinstance(obj, str) and len(obj) > DETAIL_VALUE_CHARS:
+        return obj[:DETAIL_VALUE_CHARS] + f"...[{len(obj) - DETAIL_VALUE_CHARS} more chars]"
+    return obj
+
+
 def safe_json_truncate(res_dict: dict, max_records: int = 50) -> str:
     """Safely truncates the results to avoid blowing up the LLM context."""
     results = res_dict.get("results", [])
@@ -22,7 +50,7 @@ def safe_json_truncate(res_dict: dict, max_records: int = 50) -> str:
         output += f"--- VELOCIRAPTOR LOG / ERRORS ---\n{log.strip()}\n\n"
 
     truncated = results[:max_records]
-    output += json.dumps(truncated, indent=2, default=str)
+    output += _dump(truncated)
 
     if len(results) > max_records:
         output += f"\n\n... [System Note: Truncated {len(results) - max_records} records. Try narrowing the timeframe or parameters.]"
@@ -65,7 +93,7 @@ def collect_artifact(artifact_name: str, parameters: Optional[dict] = None) -> s
         parameters: Artifact parameters (e.g., {'FileRegex': 'coreupdater'}). Use `describe_artifact` for valid names.
     """
     try:
-        return json.dumps(collection.collect(artifact_name, parameters, requested_by="agent"), indent=2)
+        return _dump(collection.collect(artifact_name, parameters, requested_by="agent"))
     except CollectionError as e:
         return f"Collection not started or failed: {e}"
 
@@ -79,7 +107,7 @@ def check_collection(flow_id: str) -> str:
         flow_id: The flow ID returned by `collect_artifact` (e.g., 'F.CN3ABC...').
     """
     try:
-        return json.dumps(collection.check(flow_id), indent=2)
+        return _dump(collection.check(flow_id))
     except CollectionError as e:
         return f"Could not check collection: {e}"
 
@@ -90,7 +118,7 @@ def list_collections() -> str:
     rows = case_db.get_collections()
     if not rows:
         return "No collections have been started in this case yet."
-    return json.dumps(rows, indent=2)
+    return _dump(rows)
 
 
 @tool
@@ -139,7 +167,7 @@ def describe_artifact(artifact_name: str) -> str:
             for p in (row.get("parameters") or [])
         ],
     }
-    return json.dumps(info, indent=2)
+    return _dump(info)
 
 
 # ========================================================================
@@ -169,17 +197,17 @@ def query_timeline(start_time: Optional[str] = None, end_time: Optional[str] = N
         source: Filter by artifact source name (partial match). Optional.
     """
     try:
-        res = case_db.query_timeline(start_time, end_time, event_type, source)
+        res = case_db.query_timeline(start_time, end_time, event_type, source, limit=PAGE_EVENTS)
     except ValueError as e:
         return str(e)
     case_db.log_query("query_timeline", f"start={start_time} end={end_time} type={event_type} source={source}",
                       res["total"])
-    out = {"summary": _shown(res["total"], len(res["events"])), "events": res["events"]}
+    out = {"summary": _shown(res["total"], len(res["events"])), "events": _slim(res["events"])}
     if res["undated"]:
         out["records_without_timestamps"] = res["undated"]
     if not res["total"] and not res["undated"]:
         return "No events found matching the criteria. Try broadening the time range or collecting more artifacts first."
-    return json.dumps(out, indent=2, default=str)
+    return _dump(out)
 
 
 query_timeline.description = query_timeline.description.replace("{types}", ", ".join(EVENT_TYPE_NAMES))
@@ -204,7 +232,7 @@ def activity_histogram(start_time: Optional[str] = None, end_time: Optional[str]
         return str(e)
     case_db.log_query("activity_histogram", f"start={start_time} end={end_time} bucket={bucket} "
                       f"type={event_type} source={source}", len(rows))
-    return json.dumps(rows, indent=2) if rows else "No timeline events in that range."
+    return _dump(rows) if rows else "No timeline events in that range."
 
 
 @tool
@@ -237,12 +265,11 @@ def search_iocs(keyword: str) -> str:
     Args:
         keyword: The IOC or search term to look for.
     """
-    res = case_db.search_events(keyword)
+    res = case_db.search_events(keyword, limit=PAGE_RECORDS)
     case_db.log_query("search_iocs", f"keyword={keyword}", res["total"])
     if not res["total"]:
         return f"No records found matching '{keyword}'. Try collecting more artifacts or using a different search term."
-    return json.dumps({"summary": _shown(res["total"], len(res["records"])), "records": res["records"]},
-                      indent=2, default=str)
+    return _dump({"summary": _shown(res["total"], len(res["records"])), "records": _slim(res["records"])})
 
 
 @tool
@@ -256,14 +283,13 @@ def pivot_entity(entity: str, field: Optional[str] = None) -> str:
         field: Optional: user, process, command_line, path, hash, ip or event_id.
     """
     try:
-        res = case_db.pivot_entity(entity, field)
+        res = case_db.pivot_entity(entity, field, limit=PAGE_RECORDS)
     except ValueError as e:
         return str(e)
     case_db.log_query("pivot_entity", f"entity={entity} field={field}", res["total"])
     if not res["total"]:
         return f"No records found for '{entity}'" + (f" in field '{field}'." if field else ".")
-    return json.dumps({"summary": _shown(res["total"], len(res["records"])), "records": res["records"]},
-                      indent=2, default=str)
+    return _dump({"summary": _shown(res["total"], len(res["records"])), "records": _slim(res["records"])})
 
 
 @tool
@@ -277,8 +303,11 @@ def get_event_detail(evidence_id: str) -> str:
     if not result:
         return f"No record found with evidence_id '{evidence_id}'."
     if result.get("raw_data"):
-        result["raw_data"] = json.loads(result["raw_data"])
-    return json.dumps({k: v for k, v in result.items() if v not in (None, "")}, indent=2, default=str)
+        result["raw_data"] = _cap_values(json.loads(result["raw_data"]))
+    out = _dump({k: v for k, v in result.items() if v not in (None, "") and k != "ingested_at"})
+    if len(out) > DETAIL_TOTAL_CHARS:
+        out = out[:DETAIL_TOTAL_CHARS] + "...[truncated; ask for specific fields if needed]"
+    return out
 
 
 @tool
@@ -292,7 +321,7 @@ def case_summary() -> str:
     stats["recorded_findings"] = len(findings)
     if findings:
         stats["findings"] = findings
-    return json.dumps(stats, indent=2)
+    return _dump(stats)
 
 
 @tool

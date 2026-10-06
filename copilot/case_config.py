@@ -124,11 +124,24 @@ class CaseConfig:
         return bool(self.all_ioc_values)
 
     @property
-    def artifacts_to_collect(self) -> list:
+    def collection_plan(self) -> list:
+        """
+        Triage collections as [{"artifact": name, "parameters": {...}}]. `collect:` entries
+        are either a bare artifact name or {artifact: ..., parameters: {...}}.
+        """
         explicit = self.data.get("collect", None)
-        if explicit and isinstance(explicit, list) and len(explicit) > 0:
-            return explicit
-        return DEFAULT_TRIAGE_ARTIFACTS
+        entries = explicit if isinstance(explicit, list) and explicit else DEFAULT_TRIAGE_ARTIFACTS
+        plan = []
+        for entry in entries:
+            if isinstance(entry, str):
+                plan.append({"artifact": entry, "parameters": {}})
+            elif isinstance(entry, dict) and entry.get("artifact"):
+                plan.append({"artifact": str(entry["artifact"]), "parameters": dict(entry.get("parameters") or {})})
+        return plan
+
+    @property
+    def artifacts_to_collect(self) -> list:
+        return [step["artifact"] for step in self.collection_plan]
 
     # --- Velociraptor target & guardrails ---
     @property
