@@ -39,9 +39,15 @@ def auto_collect(case_config, collect=None) -> list:
             summary = collect(artifact)
         except collection.CollectionError as e:
             summary = {"artifact": artifact, "state": "NOT_STARTED", "error": str(e)}
-        print(f"    -> {summary.get('state')}"
-              + (f", {summary['new_rows_ingested']} new rows" if summary.get("new_rows_ingested") is not None else "")
-              + (f": {summary['error']}" if summary.get("error") else ""))
+        line = f"    -> {summary.get('state')}"
+        if summary.get("state") == "FINISHED":
+            line += (f": Velociraptor rows {summary.get('rows_collected_by_velociraptor')}, "
+                     f"read {summary.get('rows_read')}, new {summary.get('new_rows_ingested')}")
+        if summary.get("error"):
+            line += f": {summary['error']}"
+        print(line)
+        if summary.get("note"):
+            print(f"       {summary['note']}")
         summaries.append(summary)
     return summaries
 

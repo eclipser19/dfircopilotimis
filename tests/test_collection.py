@@ -139,3 +139,46 @@ def test_vql_variables_cannot_shadow_builtins(case):
         for key in env:
             assert key.startswith("Dfir"), (key, query)
             assert key in query, (key, query)
+
+
+def test_waiting_and_in_progress_keep_waiting(case):
+    vql = FakeVQL(states=("WAITING", "IN_PROGRESS", "IN_PROGRESS", "FINISHED"))
+    summary = collection.collect("Generic.Client.Info", vql=vql, wait_seconds=60, sleep=lambda s: None)
+    assert summary["state"] == "FINISHED"
+    assert summary["new_rows_ingested"] == 1
+
+
+def test_named_source_read_with_separate_source_argument(case):
+    vql = FakeVQL()
+    collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None)
+    source_calls = [env for q, env in vql.calls if "FROM source(" in q]
+    assert source_calls == [{"DfirClientId": CLIENT, "DfirFlowId": "F.TEST1",
+                             "DfirArtifact": "Generic.Client.Info", "DfirSource": "BasicInformation"}]
+
+
+def test_reported_rows_that_cannot_be_read_are_not_marked_done(case):
+    # flows() says 5 rows, source() returns none: must not be remembered as an empty result.
+    vql = FakeVQL(rows={"Generic.Client.Info/BasicInformation": []}, reported_rows=5)
+    summary = collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None)
+    assert summary["rows_collected_by_velociraptor"] == 5
+    assert summary["rows_read"] == 0
+    assert "copilot problem" in summary["note"]
+    assert not case.get_collection("F.TEST1")["ingested"]
+
+    # Once the rows are readable, the next check ingests them.
+    retry = collection.check("F.TEST1", vql=FakeVQL())
+    assert retry["new_rows_ingested"] == 1
+
+
+def test_zero_rows_from_velociraptor_is_explained(case):
+    vql = FakeVQL(rows={}, reported_rows=0)
+    summary = collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None)
+    assert summary["rows_collected_by_velociraptor"] == 0
+    assert "remapping" in summary["note"]
+    assert case.get_collection("F.TEST1")["ingested"]
+
+
+def test_rows_but_no_listed_sources_falls_back_to_artifact(case):
+    vql = FakeVQL(rows={"Windows.System.TaskScheduler": [{"Name": "t"}]}, listed=[])
+    summary = collection.collect("Windows.System.TaskScheduler", vql=vql, sleep=lambda s: None)
+    assert summary["rows_read"] == 1

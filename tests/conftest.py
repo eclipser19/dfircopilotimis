@@ -19,11 +19,15 @@ CLIENT = "C.1a2b3c4d5e6f7a8b"
 class FakeVQL:
     """Answers the collection queries; records every (query, env) it receives."""
 
-    def __init__(self, states=("FINISHED",), rows=None, flow_error="", schedule_fails=False):
+    def __init__(self, states=("FINISHED",), rows=None, flow_error="", schedule_fails=False,
+                 reported_rows=None, listed=None):
         self.states = list(states)
         self.rows = rows if rows is not None else {"Generic.Client.Info/BasicInformation": [{"Hostname": "WS01"}]}
         self.flow_error = flow_error
         self.schedule_fails = schedule_fails
+        # What flows() claims, which can differ from what source() returns.
+        self.reported_rows = reported_rows
+        self.listed = listed
         self.calls = []
 
     def run_vql(self, query, env=None, timeout=None):
@@ -34,8 +38,12 @@ class FakeVQL:
             return {"results": [{"flow": {"flow_id": "F.TEST1"}}], "log": ""}
         if "FROM flows(" in query:
             state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+            finished = state == "FINISHED"
+            listed = self.listed if self.listed is not None else list(self.rows)
+            total = self.reported_rows if self.reported_rows is not None else sum(map(len, self.rows.values()))
             return {"results": [{"state": state, "status": self.flow_error,
-                                 "artifacts_with_results": list(self.rows) if state == "FINISHED" else []}],
+                                 "total_collected_rows": total if finished else 0,
+                                 "artifacts_with_results": listed if finished else []}],
                     "log": ""}
         if "FROM clients(" in query:
             return {"results": [{"hostname": "WS01"}], "log": ""}
@@ -43,7 +51,10 @@ class FakeVQL:
 
     def iter_rows(self, query, env=None, logs=None, timeout=None):
         self.calls.append((query, dict(env or {})))
-        yield from self.rows.get(env["DfirArtifact"], [])
+        name = env["DfirArtifact"] + ("/" + env["DfirSource"] if "DfirSource" in env else "")
+        if "DfirSource" in env:
+            assert "source=DfirSource" in query
+        yield from self.rows.get(name, [])
 
 
 @pytest.fixture

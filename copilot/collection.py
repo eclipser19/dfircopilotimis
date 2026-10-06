@@ -28,9 +28,17 @@ POLL_VQL = (
     "FROM flows(client_id=DfirClientId, flow_id=DfirFlowId)"
 )
 SOURCE_VQL = "SELECT * FROM source(client_id=DfirClientId, flow_id=DfirFlowId, artifact=DfirArtifact)"
+# Named sources ("Artifact/Source") are addressed with a separate `source` argument.
+SOURCE_NAMED_VQL = ("SELECT * FROM source(client_id=DfirClientId, flow_id=DfirFlowId, "
+                    "artifact=DfirArtifact, source=DfirSource)")
 HOSTNAME_VQL = "SELECT os_info.hostname AS hostname FROM clients(client_id=DfirClientId)"
 
 POLL_INTERVAL = 2
+
+# Flow states after which nothing more will happen. Everything else (RUNNING,
+# WAITING, IN_PROGRESS, UNRESPONSIVE... depending on the Velociraptor version)
+# means "not done yet".
+TERMINAL_STATES = {"FINISHED", "ERROR", "CANCELLED"}
 
 
 class CollectionError(Exception):
@@ -136,12 +144,25 @@ def poll(flow_id: str, vql=None) -> dict:
             "total_collected_rows": row.get("total_collected_rows") or 0}
 
 
-def ingest(flow_id: str, artifacts_with_results: list, vql=None) -> int:
-    """Streams a finished flow's results into the case database (once per flow)."""
+def _source_query(client_id: str, flow_id: str, sub_artifact: str) -> tuple:
+    if "/" in sub_artifact:
+        artifact, source = sub_artifact.split("/", 1)
+        return SOURCE_NAMED_VQL, {"DfirClientId": client_id, "DfirFlowId": flow_id,
+                                  "DfirArtifact": artifact, "DfirSource": source}
+    return SOURCE_VQL, {"DfirClientId": client_id, "DfirFlowId": flow_id, "DfirArtifact": sub_artifact}
+
+
+def ingest(flow_id: str, status: dict, vql=None) -> dict:
+    """
+    Streams a finished flow's results into the case database. Returns
+    {"rows_read": n, "new_rows": m}. The flow is only marked ingested when the
+    rows Velociraptor reports could actually be read, so a failed read is retried
+    by the next check_collection instead of being remembered as "0 rows".
+    """
     vql = vql or get_vql()
     known = case_db.get_collection(flow_id)
     if known.get("ingested"):
-        return known.get("rows_ingested") or 0
+        return {"rows_read": None, "new_rows": known.get("rows_ingested") or 0, "already_ingested": True}
 
     client_id = known["client_id"]
     hostname = "Unknown"
@@ -152,23 +173,41 @@ def ingest(flow_id: str, artifacts_with_results: list, vql=None) -> int:
     except CollectionError:
         pass
 
-    total = 0
-    for sub_artifact in artifacts_with_results:
+    sub_artifacts = list(status["artifacts_with_results"])
+    if not sub_artifacts and status["total_collected_rows"]:
+        # Rows exist but the flow didn't list where; try the artifact itself.
+        sub_artifacts = [known["artifact"]]
+
+    read = 0
+    new = 0
+    for sub_artifact in sub_artifacts:
+        query, env = _source_query(client_id, flow_id, sub_artifact)
         logs = []
-        env = {"DfirClientId": client_id, "DfirFlowId": flow_id, "DfirArtifact": sub_artifact}
+        counted = [0]
+
+        def counting(rows):
+            for row in rows:
+                counted[0] += 1
+                yield row
+
         try:
-            rows = vql.iter_rows(SOURCE_VQL, env=env, logs=logs)
-            added = case_db.ingest_artifact_results(rows, sub_artifact, hostname, client_id)
+            added = case_db.ingest_artifact_results(
+                counting(vql.iter_rows(query, env=env, logs=logs)), sub_artifact, hostname, client_id)
         except VQLError as e:
             raise CollectionError(f"Reading results of {sub_artifact} failed: {e}") from e
-        total += added
-        case_db.log_query("ingest", f"{SOURCE_VQL} -- env={json.dumps(env)}", added, sub_artifact)
+        read += counted[0]
+        new += added
+        case_db.log_query("ingest", f"{query} -- env={json.dumps(env)}", counted[0], sub_artifact)
+        if not counted[0] and _clean_log("\n".join(logs)):
+            case_db.upsert_collection(flow_id, error=_clean_log("\n".join(logs))[:2000])
 
-    case_db.upsert_collection(flow_id, ingested=1, rows_ingested=total, finished_at=_now())
-    return total
+    complete = read > 0 or not status["total_collected_rows"]
+    if complete:
+        case_db.upsert_collection(flow_id, ingested=1, rows_ingested=new, finished_at=_now())
+    return {"rows_read": read, "new_rows": new}
 
 
-def _summary(flow_id: str, status: dict, rows_ingested: int = None) -> dict:
+def _summary(flow_id: str, status: dict, result: dict = None) -> dict:
     known = case_db.get_collection(flow_id)
     summary = {
         "flow_id": flow_id,
@@ -176,13 +215,27 @@ def _summary(flow_id: str, status: dict, rows_ingested: int = None) -> dict:
         "state": status["state"],
     }
     if status["state"] == "FINISHED":
+        total = status["total_collected_rows"]
+        summary["rows_collected_by_velociraptor"] = total
         summary["sub_artifacts_with_results"] = status["artifacts_with_results"]
-        summary["new_rows_ingested"] = rows_ingested
-        if not status["artifacts_with_results"]:
-            summary["note"] = "Collection finished but returned no rows."
-    elif status["state"] == "ERROR":
+        summary["rows_read"] = result.get("rows_read")
+        summary["new_rows_ingested"] = result.get("new_rows")
+        if result.get("already_ingested"):
+            summary["note"] = "Already ingested earlier."
+        elif not total:
+            summary["note"] = ("Velociraptor collected 0 rows. The artifact found nothing on the image; on a "
+                               "dead disk this can also mean its paths did not resolve through the remapping.")
+        elif not result.get("rows_read"):
+            summary["note"] = ("Velociraptor reports rows but none could be read back, so nothing was "
+                               "ingested. This is a copilot problem, not an empty result; check_collection "
+                               "will retry.")
+            if known.get("error"):
+                summary["read_log"] = known["error"]
+        elif not result.get("new_rows"):
+            summary["note"] = "All rows were already in the case database (collected before)."
+    elif status["state"] in ("ERROR", "CANCELLED"):
         summary["error"] = status["error"]
-        summary["note"] = "Collection failed on the client. Nothing was ingested."
+        summary["note"] = f"Collection {status['state'].lower()}. Nothing was ingested."
     else:
         summary["note"] = (f"Still {status['state']}. Nothing has been ingested yet. "
                            f"Call check_collection('{flow_id}') later; do not treat this as 'no results'.")
@@ -193,10 +246,8 @@ def check(flow_id: str, vql=None) -> dict:
     """Polls once; ingests if the flow has finished."""
     vql = vql or get_vql()
     status = poll(flow_id, vql)
-    rows = None
-    if status["state"] == "FINISHED":
-        rows = ingest(flow_id, status["artifacts_with_results"], vql)
-    return _summary(flow_id, status, rows)
+    result = ingest(flow_id, status, vql) if status["state"] == "FINISHED" else None
+    return _summary(flow_id, status, result)
 
 
 def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=None,
@@ -209,11 +260,9 @@ def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=No
     deadline = time.monotonic() + wait
     while True:
         status = poll(flow_id, vql)
-        if status["state"] != "RUNNING" or time.monotonic() >= deadline:
+        if status["state"] in TERMINAL_STATES or time.monotonic() >= deadline:
             break
         sleep(POLL_INTERVAL)
 
-    rows = None
-    if status["state"] == "FINISHED":
-        rows = ingest(flow_id, status["artifacts_with_results"], vql)
-    return _summary(flow_id, status, rows)
+    result = ingest(flow_id, status, vql) if status["state"] == "FINISHED" else None
+    return _summary(flow_id, status, result)

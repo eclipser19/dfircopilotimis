@@ -1,12 +1,15 @@
 """
 Checks the Velociraptor setup end to end without the LLM:
     python -m copilot.selftest
+Inspects one flow (what Velociraptor holds vs. what can be read back):
+    python -m copilot.selftest --flow F.XXXX
 """
 import json
 import sys
 
 from copilot import collection
 from copilot.case_config import case_config
+from copilot.database import case_db
 from copilot.vql_client import get_vql
 
 
@@ -30,10 +33,44 @@ def _query(vql_text, env=None):
     return res["results"]
 
 
+def inspect_flow(flow_id: str):
+    env = {"DfirClientId": case_config.client_id, "DfirFlowId": flow_id}
+    res = get_vql().run_vql(collection.POLL_VQL, env=env)
+    print(f"flows(): {json.dumps(res.get('results'), indent=2, default=str)}")
+    if res.get("error") or collection._clean_log(res.get("log", "")):
+        print(f"  error/log: {res.get('error') or ''} {collection._clean_log(res.get('log', ''))}")
+    if not res.get("results"):
+        return
+    flow = res["results"][0]
+    names = list(flow.get("artifacts_with_results") or [])
+    artifact = case_db.get_collection(flow_id).get("artifact")
+    if artifact and artifact not in names:
+        names.append(artifact)
+
+    for name in names:
+        query, qenv = collection._source_query(case_config.client_id, flow_id, name)
+        variants = [(query, qenv)]
+        if "/" in name:  # also try the combined "Artifact/Source" form
+            variants.append((collection.SOURCE_VQL, {**env, "DfirArtifact": name}))
+        for q, e in variants:
+            r = get_vql().run_vql(q, env=e)
+            rows = r.get("results", [])
+            print(f"\nsource {json.dumps({k: v for k, v in e.items() if k != 'DfirClientId'})}: {len(rows)} rows")
+            log = collection._clean_log(r.get("log", ""))
+            if r.get("error") or log:
+                print(f"  error/log: {r.get('error') or ''} {log}")
+            if rows:
+                print(f"  first row: {json.dumps(rows[0], default=str)[:1500]}")
+
+
 def main():
     if case_config.client_id_error:
         print(f"[!] {case_config.client_id_error}")
         sys.exit(1)
+
+    if len(sys.argv) == 3 and sys.argv[1] == "--flow":
+        inspect_flow(sys.argv[2])
+        return
 
     # Needs no special permission (info() would need MACHINE_STATE, which an
     # investigator-role API user rightly doesn't have).
