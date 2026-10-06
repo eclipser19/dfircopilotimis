@@ -32,7 +32,7 @@ def _report_html():
 def test_html_report_has_the_four_charts_with_data_tables(case, monkeypatch):
     _seed(case, monkeypatch)
     page = _report_html()
-    titles = re.findall(r'<figure class="viz" aria-label="([^"]+)"', page)
+    titles = re.findall(r'<figure class="viz[^"]*" aria-label="([^"]+)"', page)
     assert titles == ["Findings in sequence", "Activity over the incident window",
                       "Close-up: first to last finding", "Connections between findings and indicators"]
     assert page.count("<details><summary>Show data") == 4
@@ -69,3 +69,30 @@ def test_charts_skip_when_nothing_to_draw():
     assert charts.activity_chart("t", {}, start, start + timedelta(hours=1), 300, timedelta(0), [], "s") == ""
     assert charts.sequence_chart([], timedelta(0)) == ""
     assert charts.connections_chart([], []) == ""
+
+
+def test_table_cells_are_sized_by_content():
+    from copilot.report_html import to_html
+    long_text = "word " * 40
+    page = to_html(f"| UTC | Event |\n|---|---|\n| 2020-09-19 02:36:22 | {long_text} |", "t")
+    assert '<td class="nw">2020-09-19 02:36:22</td>' in page
+    assert '<td class="long">' in page
+
+
+def test_connections_graph_highlights_without_scripts(case, monkeypatch):
+    _seed(case, monkeypatch)
+    page = _report_html()
+    graph = page[page.index('<figure class="viz conn"'):]
+    graph = graph[:graph.index("</figure>")]
+    assert 'tabindex="0"' in graph                                  # clickable / keyboard focusable
+    assert ":has(.fn1:is(:hover,:focus))" in graph                   # pure CSS, no <script>
+    assert "<script" not in graph.replace("&lt;script", "")
+
+
+def test_placeholder_and_source_values_are_not_indicators():
+    from copilot.report import is_noise
+    assert is_noise("ip", "-") and is_noise("ip", "LOCAL") and is_noise("ip", "null")
+    assert not is_noise("ip", "10.42.85.10")
+    assert is_noise("path", r"C:\Windows\System32\winevt\Logs\Security.evtx")
+    assert not is_noise("path", r"C:\Users\mortysmith\Documents\loot.zip")
+    assert not is_noise("user", "Administrator")

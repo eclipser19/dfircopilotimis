@@ -32,7 +32,10 @@ a { color: var(--accent); }
 .table-wrap { overflow-x: auto; margin: 12px 0; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th, td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top;
-         overflow-wrap: anywhere; }
+         overflow-wrap: break-word; }
+th, td.nw { white-space: nowrap; }
+td.long { min-width: 28em; overflow-wrap: anywhere; }
+td.long code, td.nw code { overflow-wrap: normal; }
 th { background: var(--head); position: sticky; top: 0; }
 tr:nth-child(even) td { background: color-mix(in srgb, var(--head) 50%, transparent); }
 code { font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; background: var(--head);
@@ -50,9 +53,27 @@ pre code { background: none; padding: 0; }
 CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"
 
 
+SHORT_CELL = 32   # characters: times, IDs, sources, counts never wrap
+LONG_CELL = 120   # characters: descriptions get a wide column instead of squeezing the others
+
+
+def _size_cells(body: str) -> str:
+    """Short cells keep their width (no 'U/T/C' letter stacks); long cells get room to wrap."""
+    def classify(match):
+        inner = match.group(1)
+        text = html.unescape(re.sub(r"<[^>]+>", "", inner))
+        longest_word = max((len(w) for w in text.split()), default=0)
+        if len(text) <= SHORT_CELL:
+            return f'<td class="nw">{inner}</td>'
+        if len(text) >= LONG_CELL or longest_word > 40:
+            return f'<td class="long">{inner}</td>'
+        return match.group(0)
+    return re.sub(r"<td>(.*?)</td>", classify, body, flags=re.S)
+
+
 def to_html(markdown_text: str, title: str, charts: dict = None) -> str:
     """charts: name -> SVG figure built by copilot.charts (trusted code, all text escaped)."""
-    body = _MD.render(markdown_text)
+    body = _size_cells(_MD.render(markdown_text))
     # Chart slots: only exact "[[chart:name]]" paragraphs produced by the template are replaced.
     body = re.sub(r"<p>\[\[chart:([a-z_]+)\]\]</p>", lambda m: (charts or {}).get(m.group(1), ""), body)
     body = body.replace("<table>", '<div class="table-wrap"><table>').replace("</table>", "</table></div>")

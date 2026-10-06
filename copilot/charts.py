@@ -72,12 +72,13 @@ def _color(event_type: str) -> str:
     return f"var(--s{TYPE_SLOTS.index(event_type) + 1})" if event_type in TYPE_SLOTS else "var(--other)"
 
 
-def _figure(svg: str, table_head: list, table_rows: list, label: str) -> str:
+def _figure(svg: str, table_head: list, table_rows: list, label: str, extra_class: str = "") -> str:
     head = "".join(f"<th>{esc(h)}</th>" for h in table_head)
     rows = "".join("<tr>" + "".join(f"<td>{esc(c)}</td>" for c in row) + "</tr>" for row in table_rows)
     table = (f'<details><summary>Show data ({len(table_rows)} rows)</summary><div class="table-wrap">'
              f"<table><thead><tr>{head}</tr></thead><tbody>{rows}</tbody></table></div></details>")
-    return f'<figure class="viz" aria-label="{esc(label)}">{svg}{table}</figure>'
+    cls = f"viz {extra_class}".strip()
+    return f'<figure class="{cls}" aria-label="{esc(label)}">{svg}{table}</figure>'
 
 
 def nice_axis(peak: float, ticks: int = 4) -> tuple:
@@ -369,7 +370,7 @@ def connections_chart(findings: list, indicators: list) -> str:
     parts = [f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="{title}">',
              f'<text class="title" x="16" y="22">{title}</text>',
              f'<text class="t2" x="16" y="40">Lines link a finding to indicators found in the evidence it cites; '
-             f'darker lines mark indicators shared by several findings.</text>']
+             f'darker lines mark indicators shared by several findings. Hover or click a dot to focus it.</text>']
     parts.append('<circle cx="21" cy="55" r="5" fill="var(--s1)"/><text class="t2" x="30" y="59">Findings</text>')
     lx = 30 + 8 * FONT_W + 14
     for field, label in INDICATOR_SLOTS:
@@ -378,6 +379,12 @@ def connections_chart(findings: list, indicators: list) -> str:
             parts.append(f'<rect x="{lx}" y="50" width="10" height="10" rx="5" fill="var(--s{slot})"/>'
                          f'<text class="t2" x="{lx + 14}" y="59">{esc(label)}</text>')
             lx += 24 + len(label) * FONT_W
+    # Classes tie every edge and node to its finding (f<n>) and indicator (i<k>), so pure CSS
+    # (no scripts) can fade everything unrelated to the hovered or clicked node.
+    links_of_finding = {}
+    for k, v in enumerate(chosen):
+        for n in v["findings"]:
+            links_of_finding.setdefault(n, []).append(k)
     # Edges first (under the nodes)
     for k, v in enumerate(chosen):
         shared = len(v["findings"]) > 1
@@ -385,12 +392,15 @@ def connections_chart(findings: list, indicators: list) -> str:
             if n in fy:
                 y1, y2 = fy[n], iy[k]
                 mx = (fx + ix) / 2
-                parts.append(f'<path class="{"edge-hi" if shared else "edge"}" '
+                parts.append(f'<path class="e f{n} i{k} {"edge-hi" if shared else "edge"}" '
                              f'd="M{fx + 7},{y1:.1f} C{mx},{y1:.1f} {mx},{y2:.1f} {ix - 7},{y2:.1f}"/>')
     for f in shown:
-        y0 = fy[f["number"]]
-        label = f"{f['number']}. {f['title']}"
-        parts.append(f'<g><rect class="hit" x="8" y="{y0 - 12:.1f}" width="{fx + 8}" height="24"/>'
+        n = f["number"]
+        y0 = fy[n]
+        label = f"{n}. {f['title']}"
+        related = " ".join(f"i{k}" for k in links_of_finding.get(n, []))
+        parts.append(f'<g class="n f{n} fn{n} {related}" tabindex="0">'
+                     f'<rect class="hit" x="8" y="{y0 - 12:.1f}" width="{fx + 8}" height="24"/>'
                      f'<text class="t" x="{fx - 14}" y="{y0 + 4:.1f}" text-anchor="end">'
                      f'{esc(_fit(label, fx - 30))}</text>'
                      f'<circle class="ring" cx="{fx}" cy="{y0:.1f}" r="7" fill="var(--s1)"/>'
@@ -402,14 +412,25 @@ def connections_chart(findings: list, indicators: list) -> str:
         label = _fit(v["value"], W - ix - 40) + (f"  ×{shared}" if shared > 1 else "")
         weight = ' style="font-weight:600"' if shared > 1 else ""
         tip = esc(v["label"] + ": " + v["value"] + "\nFindings: " + ", ".join(map(str, v["findings"])))
-        parts.append(f'<g><rect class="hit" x="{ix - 12}" y="{y0 - 12:.1f}" width="{W - ix}" height="24"/>'
+        related = " ".join(f"f{n}" for n in v["findings"])
+        parts.append(f'<g class="n i{k} in{k} {related}" tabindex="0">'
+                     f'<rect class="hit" x="{ix - 12}" y="{y0 - 12:.1f}" width="{W - ix}" height="24"/>'
                      f'<circle class="ring" cx="{ix}" cy="{y0:.1f}" r="{7 if shared > 1 else 6}" '
                      f'fill="var(--s{slot})"/>'
                      f'<text class="t" x="{ix + 14}" y="{y0 + 4:.1f}"{weight}>{esc(label)}</text>'
                      f'<title>{tip}</title></g>')
+    rules = [".conn .e, .conn .n { transition: opacity .15s; } .conn .n { cursor: pointer; outline: none; }",
+             ".conn .n:focus .ring { stroke: var(--ink); stroke-width: 2.5; }"]
+    for n in links_of_finding:
+        rules.append(f".conn svg:has(.fn{n}:is(:hover,:focus)) :is(.e,.n):not(.f{n}) {{ opacity: .1; }}"
+                     f".conn svg:has(.fn{n}:is(:hover,:focus)) .e.f{n} {{ stroke: var(--ink); stroke-width: 2.5; }}")
+    for k in range(len(chosen)):
+        rules.append(f".conn svg:has(.in{k}:is(:hover,:focus)) :is(.e,.n):not(.i{k}) {{ opacity: .1; }}"
+                     f".conn svg:has(.in{k}:is(:hover,:focus)) .e.i{k} {{ stroke: var(--ink); stroke-width: 2.5; }}")
+    parts.insert(1, "<style>" + "".join(rules) + "</style>")
     parts.append("</svg>")
     more = len(indicators) - len(chosen)
     if more > 0:
         parts.insert(-1, f'<text class="t2" x="{ix}" y="{H - 6}">+ {more} more indicators (see Indicators Observed)</text>')
     table = [[v["label"], v["value"], ", ".join(map(str, v["findings"]))] for v in indicators]
-    return _figure("".join(parts), ["Type", "Indicator", "Findings"], table, title)
+    return _figure("".join(parts), ["Type", "Indicator", "Findings"], table, title, "conn")

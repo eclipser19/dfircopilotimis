@@ -100,6 +100,30 @@ def _event_meaning(raw) -> dict:
     return {"event": info, "meaning": meaning}
 
 
+# Placeholder values Windows writes when a field doesn't apply; never indicators.
+_PLACEHOLDERS = {"-", "--", "null", "none", "n/a", "na", "local", "localhost", "unknown", "%%2313", "0", "::",
+                 "::1", "127.0.0.1", "0.0.0.0", "system", "nt authority", "s-1-0-0"}
+
+
+def is_noise(field: str, value: str) -> bool:
+    """Values that are where evidence came from or placeholders, not indicators."""
+    import ipaddress
+    v = str(value).strip()
+    if v.lower() in _PLACEHOLDERS:
+        return True
+    if field == "ip":
+        try:
+            ipaddress.ip_address(v.split("%")[0])
+        except ValueError:
+            return True
+    if field == "path":
+        low = v.lower().replace("/", "\\")
+        # The log file an event came from, or the image's own device path, is the source, not an IOC.
+        if low.endswith(".evtx") and "\\winevt\\logs\\" in low:
+            return True
+    return False
+
+
 def _in_window(ts: str, window: tuple) -> bool:
     start, end = window
     return (not start or ts >= start) and (not end or ts <= end)
@@ -180,7 +204,7 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
         for f in findings:
             for e in f["evidence"]:
                 value = e["entities"].get(field)
-                if value:
+                if value and not is_noise(field, value):
                     values.setdefault(value, set()).add(f["number"])
         if values:
             indicators.append({"label": label, "values": [{"value": v, "findings": sorted(n)}
