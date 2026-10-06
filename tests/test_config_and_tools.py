@@ -59,3 +59,10 @@ def test_evidence_ids_are_stable(case):
     assert case.ingest_artifact_results(rows, "S", client_id="C.1") == 2
     assert case.ingest_artifact_results(iter(rows), "S", client_id="C.1") == 0
     assert case.get_stats()["total_events"] == 2
+
+
+def test_linux_artifacts_allowed_but_shell_refused(monkeypatch):
+    monkeypatch.setattr(case_config, "data", {})
+    assert case_config.is_artifact_allowed("Linux.Forensics.Journal")
+    assert case_config.is_artifact_allowed("Linux.Sys.Users")
+    assert not case_config.is_artifact_allowed("Linux.Sys.BashShell")

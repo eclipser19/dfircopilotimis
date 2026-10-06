@@ -19,15 +19,17 @@ pip install -r requirements.txt
    artifacts but has no server command execution or filesystem write permission,
    which is the real safety net behind the agent's own allowlists.
 
-2. **Present the image as a virtual client.** Mount the image read-only, then
-   generate a remapping and run a client with it (check the exact flags for your
-   Velociraptor version):
-   ```bash
-   velociraptor deaddisk --add_windows_disk /evidence/image.vhdx remapping.yaml
-   velociraptor --config client.config.yaml --remap remapping.yaml client -v
+2. **Present the image as a virtual client.** Mount the image read-only and
+   generate a remapping for it with `velociraptor deaddisk` (check its flags with
+   `velociraptor deaddisk --help` on your version). Then run the server and a client
+   that uses the remapping (this is the local Windows test setup):
+   ```powershell
+   .\velociraptor.exe --config server.config.yaml frontend
+   .\velociraptor.exe --config deaddisk_client.config.yaml --remap deaddisk.yaml client
    ```
    The image then appears as a client. Put its client ID in `case.yaml` under
-   `velociraptor.client_id`.
+   `velociraptor.client_id`. Windows and Linux images are both supported by the
+   default artifact allowlist.
 
 3. **Case file.** Edit `case.yaml`: incident window, IOCs, artifacts to
    auto-collect, and optionally which artifacts the agent may collect.

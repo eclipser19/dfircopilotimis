@@ -29,6 +29,13 @@ DEFAULT_ARTIFACT_ALLOWLIST = [
     "Windows.System.Powershell.PSReadline",
     "Windows.System.TaskScheduler",
     "Windows.System.Services",
+    "Generic.Forensic.*",
+    "Linux.Forensics.*",
+    "Linux.Syslog.*",
+    "Linux.Ssh.*",
+    "Linux.Sys.Users",
+    "Linux.Sys.LastUserLogin",
+    "Linux.Sys.Crontab",
 ]
 
 # Never collectable, whatever the allowlist says: these run commands,
