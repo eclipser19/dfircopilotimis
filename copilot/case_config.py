@@ -25,6 +25,7 @@ DEFAULT_ARTIFACT_ALLOWLIST = [
     "Windows.Persistence.*",
     "Windows.Applications.*",
     "Windows.Sys.Users",
+    "Windows.Sys.StartupItems",
     "Windows.System.Amcache*",
     "Windows.System.Powershell.PSReadline",
     "Windows.System.TaskScheduler",
