@@ -20,15 +20,29 @@ def _seed(case, monkeypatch):
     case.ingest_artifact_results(rows, "Windows.EventLogs.EvtxHunter", "DESKTOP", "C.1")
 
 
-def test_report_is_written_as_html_and_markdown_and_registered(case, monkeypatch):
+def _report_exts(out=None):
+    return [os.path.splitext(f["path"])[1] for f in outputs.produced_since(0)]
+
+
+def test_report_defaults_to_html_only(case, monkeypatch):
     _seed(case, monkeypatch)
-    eid = case.search_events("pwned")["records"][0]["evidence_id"]
-    case.record_finding("Script in log", "d", [eid], "high")
     out = tools.generate_report.invoke({"executive_summary": "S", "recommendations": "- R"})
     files = outputs.produced_since(0)
-    assert [os.path.splitext(f["path"])[1] for f in files] == [".html", ".md"]
-    assert all(f["path"] in out for f in files)
-    assert all(f["path"].startswith(os.environ["DFIR_OUTPUT_DIR"]) for f in files)
+    assert _report_exts() == [".html"]
+    assert files[0]["path"] in out and files[0]["path"].startswith(os.environ["DFIR_OUTPUT_DIR"])
+
+
+def test_report_formats_from_case_file(case, monkeypatch):
+    _seed(case, monkeypatch)
+    case_config.data["output"] = {"report_formats": ["html", "md"]}
+    tools.generate_report.invoke({"executive_summary": "S", "recommendations": "- R"})
+    assert _report_exts() == [".html", ".md"]
+
+
+def test_report_format_requested_explicitly(case, monkeypatch):
+    _seed(case, monkeypatch)
+    tools.generate_report.invoke({"executive_summary": "S", "recommendations": "- R", "formats": ["Markdown"]})
+    assert _report_exts() == [".md"]
 
 
 def test_html_report_neutralizes_evidence_html(case, monkeypatch):

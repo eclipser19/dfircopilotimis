@@ -613,7 +613,8 @@ def export_case(include_csv: bool = True) -> str:
 
 
 @tool
-def generate_report(executive_summary: str, recommendations: str, correlations: Optional[str] = None) -> str:
+def generate_report(executive_summary: str, recommendations: str, correlations: Optional[str] = None,
+                    formats: Optional[list] = None) -> str:
     """
     Generates the final DFIR report (Markdown) from the recorded findings and the case
     database. Call this at the END of an investigation, when the investigator asks.
@@ -627,6 +628,8 @@ def generate_report(executive_summary: str, recommendations: str, correlations: 
         recommendations: Bullet-point remediation and follow-up recommendations.
         correlations: How the findings connect (e.g. logon -> execution -> persistence), citing finding
                       titles and evidence IDs; state which links are proven and which are inferred.
+        formats: Only if the investigator asked for specific formats: ['html'], ['md'] or both.
+                 Otherwise omit it; the case setting decides. Do not ask the investigator about it.
     """
     from copilot.report import build_report
 
@@ -636,18 +639,25 @@ def generate_report(executive_summary: str, recommendations: str, correlations: 
     from copilot import outputs
     from copilot.report_html import to_html
     report_md = build_report(case_db, case_config, executive_summary, recommendations, correlations)
+    requested = [str(f).lower().lstrip(".") for f in (formats or [])]
+    requested = ["md" if f in ("markdown", "md") else f for f in requested]
+    wanted = [f for f in requested if f in ("html", "md")] or case_config.report_formats
     stem = f"dfir_report_{case_config.case_name}"
-    md_path = outputs.new_path(stem, "md")
-    with open(md_path, "w", encoding="utf-8") as f:
-        f.write(report_md)
-    html_path = md_path[:-3] + ".html"
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write(to_html(report_md, f"DFIR Report - {case_config.case_name}"))
-    outputs.register(html_path, "report", "DFIR report (HTML)")
-    outputs.register(md_path, "report", "DFIR report (Markdown)")
+    written = []
+    base = outputs.new_path(stem, "md")[:-3]
+    if "html" in wanted:
+        with open(base + ".html", "w", encoding="utf-8") as f:
+            f.write(to_html(report_md, f"DFIR Report - {case_config.case_name}"))
+        outputs.register(base + ".html", "report", "DFIR report (HTML)")
+        written.append(base + ".html")
+    if "md" in wanted:
+        with open(base + ".md", "w", encoding="utf-8") as f:
+            f.write(report_md)
+        outputs.register(base + ".md", "report", "DFIR report (Markdown)")
+        written.append(base + ".md")
     findings = case_db.get_findings()
     return (
-        f"Report generated:\n- {html_path}\n- {md_path}\n"
+        f"Report generated:\n" + "".join(f"- {p}\n" for p in written) +
         f"Sections: Executive Summary, Scope & Evidence, Findings Overview ({len(findings)}), Evidence Timeline, "
         f"Detailed Findings, Correlations, Indicators, Artifacts/Locations/Meanings, Recommendations, "
         f"appendices (collections, cited evidence records, retracted findings, audit log)."

@@ -59,9 +59,11 @@ collection:
   apply_time_window: true    # pass scope start/end into artifacts' own date filters (DateAfter/DateBefore...)
   agent_collections: confirm # confirm: you approve each agent request (y/n) | auto | off
 
-# Where reports and exports are written (default: case_data/outputs). On a server, e.g.:
-# output:
-#   dir: /uploads
+# Report files and where outputs go. Formats cost no extra LLM tokens (one narrative,
+# converted locally); list only what you want to keep.
+output:
+  report_formats: [html]   # html, md, or both: [html, md]
+  # dir: /uploads          # default: case_data/outputs
 
 agent:
   allow_raw_vql: false

@@ -213,6 +213,14 @@ class CaseConfig:
         return int((self.data.get("agent", {}) or {}).get("max_tokens_per_turn", 300000))
 
     @property
+    def report_formats(self) -> list:
+        """Report files to write: any of html, md. Default: html only."""
+        raw = (self.data.get("output", {}) or {}).get("report_formats", ["html"])
+        formats = [str(f).lower().lstrip(".") for f in (raw if isinstance(raw, list) else [raw])]
+        formats = [f for f in formats if f in ("html", "md")]
+        return formats or ["html"]
+
+    @property
     def allow_raw_vql(self) -> bool:
         return bool((self.data.get("agent", {}) or {}).get("allow_raw_vql", False))
 

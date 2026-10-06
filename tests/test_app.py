@@ -72,7 +72,7 @@ def test_agent_report_appears_as_downloads(app_env):
     at.chat_input[0].set_value("Generate the report").run()
     assert not at.exception
     labels = [b.proto.label for b in at.get("download_button")]
-    assert any(".html" in l for l in labels) and any(".md" in l for l in labels)
+    assert any(".html" in l for l in labels)
     assert "The report is ready." in _texts(at)
 
 
