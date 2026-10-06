@@ -167,3 +167,19 @@ def test_report_explains_event_ids_and_logon_types(case, monkeypatch):
     report = build_report(case, case_config, "ES", "- R")
     assert "**4624: Successful logon (LogonType 10: RemoteInteractive (RDP))**" in report
     assert "| 4624 | Security | Successful logon |" in report
+
+
+def test_markdown_report_carries_no_live_html(skewed_case):
+    logon, _ = _ids(skewed_case)
+    skewed_case.ingest_artifact_results([{"EventTime": "2020-09-19T03:40:00Z",
+                                          "Message": "<img src=x onerror=alert(1)> & <script>x</script>"}],
+                                        "S", "D", "C.1")
+    evil = skewed_case.search_events("onerror")["records"][0]["evidence_id"]
+    skewed_case.record_finding("<b>title</b>", "desc <svg onload=alert(1)>", [evil, logon], "high",
+                               "<i>T1</i>")
+    report = build_report(skewed_case, case_config, "<script>summary</script>", "- <img src=y>",
+                          "<iframe src=z>")
+    body = report.split("## Appendix B")[0]                  # appendix B is fenced code, inert by design
+    for tag in ("<img", "<script", "<svg", "<iframe", "<b>", "<i>"):
+        assert tag not in body, tag
+    assert "&lt;img src=x onerror=alert(1)&gt;" in body or "&lt;img src=x onerror=alert(1)>" in body

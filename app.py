@@ -287,8 +287,14 @@ action = None
 with st.sidebar:
     st.title("🕵️ DFIR Copilot")
 
-    api_key_input = st.text_input("Azure OpenAI API Key", type="password",
-                                  value=os.environ.get("OPENAI_API_KEY", ""))
+    # A server-side key is used directly and never sent to the browser (a pre-filled password
+    # field is readable by every visitor). Without one, each investigator enters their own.
+    server_key = os.environ.get("OPENAI_API_KEY", "")
+    if server_key:
+        api_key_input = server_key
+        st.caption("🔑 Using the server's API key.")
+    else:
+        api_key_input = st.text_input("Azure OpenAI API Key", type="password")
     if api_key_input and ("llm_with_tools" not in st.session_state
                           or st.session_state.get("current_api_key") != api_key_input):
         # Kept in this browser session only; never written to os.environ.

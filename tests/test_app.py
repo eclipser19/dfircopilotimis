@@ -243,3 +243,17 @@ def test_fake_file_links_in_answers_become_plain_text(app_env):
     at.chat_input[0].set_value("report please").run()
     text = _texts(at)
     assert "Done: Download the report and [MITRE](https://attack.mitre.org)." in text
+
+
+def test_server_api_key_never_reaches_the_browser(app_env, monkeypatch):
+    class Bindable(ScriptedLLM):
+        def bind_tools(self, *a, **k):
+            return self
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-SECRET-123")
+    monkeypatch.setattr("copilot.llm.make_llm", lambda key=None: Bindable())
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert not at.exception
+    assert not [w for w in at.text_input if w.value == "sk-SECRET-123"]       # no pre-filled field
+    assert "Using the server's API key" in _texts(at)
+    assert "llm_with_tools" in at.session_state                              # and it is used

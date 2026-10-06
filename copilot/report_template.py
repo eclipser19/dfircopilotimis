@@ -4,15 +4,15 @@
 
 REPORT_TEMPLATE = """# Digital Forensics & Incident Response Report
 
-**Case:** {{ case_name }}
-**Analyst:** {{ analyst }}
+**Case:** {{ case_name | md }}
+**Analyst:** {{ analyst | md }}
 **Generated:** {{ generated_at }}
 
 ---
 
 ## 1. Executive Summary
 
-{{ executive_summary }}
+{{ executive_summary | text }}
 
 ---
 
@@ -47,7 +47,7 @@ REPORT_TEMPLATE = """# Digital Forensics & Incident Response Report
 | # | UTC | Recorded | Finding | Confidence | MITRE |
 |---|---|---|---|---|---|
 {% for f in findings %}
-| {{ f.number }} | {{ f.time | utc }} | {{ f.time | rec }} | {{ f.title | md }} | {{ f.confidence or "—" }} | {{ f.mitre_technique or "—" }} |
+| {{ f.number }} | {{ f.time | utc }} | {{ f.time | rec }} | {{ f.title | md }} | {{ (f.confidence or "—") | md }} | {{ (f.mitre_technique or "—") | md }} |
 {% endfor %}
 
 A finding's time is the earliest timestamp of the first (primary) record it cites.
@@ -92,7 +92,7 @@ Every timestamp of the records cited by findings{% if has_scope %}, inside the i
 ## 5. Detailed Findings
 
 {% for f in findings %}
-### 5.{{ f.number }}. {{ f.title }}
+### 5.{{ f.number }}. {{ f.title | md }}
 
 {% if f.time %}
 - **Time:** {{ f.time | utc }} UTC{% if clock_skewed %} (recorded {{ f.time | rec }}){% endif %}
@@ -100,12 +100,12 @@ Every timestamp of the records cited by findings{% if has_scope %}, inside the i
 {% else %}
 - **Time:** no timestamp in the cited evidence
 {% endif %}
-- **Confidence:** {{ f.confidence or "—" }}
+- **Confidence:** {{ (f.confidence or "—") | md }}
 {% if f.mitre_technique %}
-- **MITRE ATT&CK:** {{ f.mitre_technique }}
+- **MITRE ATT&CK:** {{ f.mitre_technique | md }}
 {% endif %}
 
-{{ f.description }}
+{{ f.description | text }}
 
 | Evidence | Source | UTC | Record |
 |---|---|---|---|
@@ -125,7 +125,7 @@ Every timestamp of the records cited by findings{% if has_scope %}, inside the i
 {% endif %}
 
 {% if correlations %}
-{{ correlations }}
+{{ correlations | text }}
 
 {% endif %}
 {% if related %}
@@ -192,7 +192,7 @@ Values extracted from the evidence cited by findings.
 
 ## 9. Recommendations
 
-{{ recommendations }}
+{{ recommendations | text }}
 
 ---
 
@@ -213,7 +213,7 @@ Values extracted from the evidence cited by findings.
 The complete original record of every evidence ID cited above, as collected from the image.
 
 {% for e in cited %}
-### `{{ e.evidence_id }}` — {{ e.source }}
+### `{{ e.evidence_id }}` — {{ e.source | md }}
 
 - **Cited by findings:** {{ e.findings | join(", ") }}
 {% if e.all_timestamps %}

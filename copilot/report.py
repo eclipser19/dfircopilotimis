@@ -21,9 +21,17 @@ INDICATOR_FIELDS = [("ip", "IP addresses"), ("user", "Accounts"), ("process", "P
                     ("path", "Files / paths"), ("hash", "Hashes"), ("command_line", "Command lines")]
 
 
+def no_tags(value) -> str:
+    """
+    Evidence and LLM text must not become HTML in Markdown viewers that render it:
+    '<' becomes the entity, so '<img onerror=...>' shows as text everywhere.
+    """
+    return str(value if value is not None else "").replace("&", "&amp;").replace("<", "&lt;")
+
+
 def md(value) -> str:
-    """Safe for a Markdown table cell: pipes escaped, line breaks become spaces. Never shortened."""
-    return " ".join(str(value if value is not None else "").split()).replace("|", "\\|")
+    """Safe for a Markdown table cell: pipes escaped, line breaks become spaces, no HTML. Never shortened."""
+    return no_tags(" ".join(str(value if value is not None else "").split())).replace("|", "\\|")
 
 
 def fenced(text: str, lang: str = "json") -> str:
@@ -250,6 +258,7 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
 
     env = Environment(trim_blocks=True, lstrip_blocks=True, autoescape=False)
     env.filters["md"] = md
+    env.filters["text"] = no_tags
     env.filters["fenced"] = fenced
     env.filters["rec"] = clock.recorded
     env.filters["utc"] = clock.corrected
