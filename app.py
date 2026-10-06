@@ -1,9 +1,5 @@
 import streamlit as st
 import os
-import json
-import sqlite3
-import pandas as pd
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
 
 # Copilot imports
@@ -11,6 +7,8 @@ from copilot.tools import tools, tool_map
 from copilot.case_config import case_config
 from copilot.database import case_db
 from copilot.agent import trim_chat_history
+from copilot.llm import make_llm
+from copilot.prompts import build_system_prompt
 
 st.set_page_config(page_title="DFIR Copilot", page_icon="🕵️", layout="wide")
 
@@ -18,18 +16,7 @@ st.set_page_config(page_title="DFIR Copilot", page_icon="🕵️", layout="wide"
 # Initialize Agent Session State
 # ==========================================
 if "chat_history" not in st.session_state:
-    case_context = case_config.build_system_context()
-    sys_msg = SystemMessage(content=f'''You are an expert DFIR (Digital Forensics and Incident Response) Copilot.
-You interface with a Velociraptor server and a local case database.
-
-{case_context}
-
-## YOUR WORKFLOW
-**Step 1 — Collect:** Use `search_clients` to find the target client (look for "Virtual Host"). 
-Then use `collect_artifact` to run Velociraptor artifacts on it.
-**Step 2 — Analyze:** Use `query_timeline`, `search_iocs`, and `pivot_entity` to query the database.
-**Step 3 — Record:** Use `record_finding` to log anything suspicious. At the end, use `generate_report`.
-''')
+    sys_msg = SystemMessage(content=build_system_prompt(case_config))
     st.session_state.chat_history = [sys_msg]
     st.session_state.messages = []  # For UI display
 
@@ -45,14 +32,10 @@ with st.sidebar:
     
     # Initialize or update LLM if API key is provided
     if api_key_input and ("llm_with_tools" not in st.session_state or st.session_state.get("current_api_key") != api_key_input):
+        # Kept in this browser session only; never written to os.environ, which
+        # every Streamlit session in the process shares.
         st.session_state.current_api_key = api_key_input
-        os.environ["OPENAI_API_KEY"] = api_key_input
-        st.session_state.llm = ChatOpenAI(
-            model="gpt-5.6-luna",
-            temperature=0,
-            api_key=api_key_input,
-            base_url="https://tag-news-resource.services.ai.azure.com/openai/v1"
-        )
+        st.session_state.llm = make_llm(api_key_input)
         st.session_state.llm_with_tools = st.session_state.llm.bind_tools(tools)
     
     st.divider()
@@ -60,6 +43,10 @@ with st.sidebar:
     st.subheader("📁 Case Scope")
     st.text(f"Name: {case_config.case_name}")
     st.text(f"Analyst: {case_config.analyst}")
+    if case_config.client_id_error:
+        st.warning(case_config.client_id_error)
+    else:
+        st.text(f"Evidence client: {case_config.client_id}")
     if case_config.has_scope:
         st.text(f"Time: {case_config.start_time}\n   to {case_config.end_time}")
     else:
@@ -83,7 +70,7 @@ with st.sidebar:
     findings = case_db.get_findings()
     st.metric("Recorded Findings", len(findings))
     for f in findings:
-        st.caption(f"[{f['confidence'].upper()}] {f['title']}")
+        st.caption(f"[{(f['confidence'] or 'unknown').upper()}] {f['title']}")
 
 # ==========================================
 # UI Layout: Main Chat Interface

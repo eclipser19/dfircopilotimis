@@ -3,6 +3,13 @@ case:
   analyst: "Investigator"
   created: "2026-10-06"
 
+# The ONE Velociraptor client this case may collect from: the dead-disk virtual
+# client for the mounted image. Collections against any other client are refused.
+# Find it with the `search_clients` tool or the Velociraptor GUI.
+velociraptor:
+  client_id: ""                  # e.g. "C.1a2b3c4d5e6f7a8b"
+  collection_wait_seconds: 120   # how long collect_artifact waits before returning RUNNING
+
 # Incident scope — if provided, the agent auto-collects relevant artifacts
 # and focuses its timeline on this window.
 scope:
@@ -22,3 +29,14 @@ iocs:
 collect:
   - Windows.System.Powershell.PSReadline
   - Generic.Client.Info
+
+# Which artifacts the agent may collect (glob patterns). Omit to use the built-in
+# read-only forensic set (see copilot/case_config.py). Command-execution and
+# server artifacts are always refused.
+# artifacts:
+#   allow:
+#     - "Windows.EventLogs.*"
+#     - "Windows.Forensics.*"
+
+agent:
+  allow_raw_vql: false   # enable the server_vql_query fallback tool (read-only, filtered)

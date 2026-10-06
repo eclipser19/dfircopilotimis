@@ -1,5 +1,6 @@
+import getpass
+import json
 import os
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
 from copilot.tools import tools, tool_map
 
@@ -24,83 +25,61 @@ def trim_chat_history(chat_history: list, keep_last_turns: int = 3) -> list:
                 )
     return chat_history
 
+def auto_collect(case_config, collect=None) -> list:
+    """
+    Runs the case's initial collections directly (no LLM involved) and returns
+    one summary per artifact. Failures are reported, not raised.
+    """
+    from copilot import collection
+    collect = collect or collection.collect
+    summaries = []
+    for artifact in case_config.artifacts_to_collect:
+        print(f"[*] Collecting {artifact} ...")
+        try:
+            summary = collect(artifact)
+        except collection.CollectionError as e:
+            summary = {"artifact": artifact, "state": "NOT_STARTED", "error": str(e)}
+        print(f"    -> {summary.get('state')}"
+              + (f", {summary['new_rows_ingested']} new rows" if summary.get("new_rows_ingested") is not None else "")
+              + (f": {summary['error']}" if summary.get("error") else ""))
+        summaries.append(summary)
+    return summaries
+
+
 def run_agent_loop():
-    if "OPENAI_API_KEY" not in os.environ:
-        os.environ["OPENAI_API_KEY"] = input("Please enter your OpenAI API Key: ")
-
-    llm = ChatOpenAI(
-        model="gpt-5.6-luna",
-        temperature=0,
-        base_url="https://tag-news-resource.services.ai.azure.com/openai/v1"
-    )
-    llm_with_tools = llm.bind_tools(tools)
-
     from copilot.case_config import case_config
-    
-    # Prepend the case.yaml context to the system prompt
-    case_context = case_config.build_system_context()
-    
-    system_prompt = SystemMessage(content=f'''You are an expert DFIR (Digital Forensics and Incident Response) Copilot.
-You interface with a Velociraptor server and a local case database.
+    from copilot.llm import make_llm
+    from copilot.prompts import build_system_prompt
 
-{case_context}
+    api_key = os.environ.get("OPENAI_API_KEY") or getpass.getpass("Please enter your OpenAI API Key: ")
+    llm_with_tools = make_llm(api_key).bind_tools(tools)
 
-## YOUR WORKFLOW
-
-**Step 1 — Collect:** Use `search_clients` to find the target client (look for "Virtual Host" for dead-disk analysis). 
-Then use `collect_artifact` to run Velociraptor artifacts on it. Results are automatically stored in the case database.
-
-**Step 2 — Analyze:** Use `query_timeline`, `search_iocs`, and `pivot_entity` to query the database. 
-These tools let you correlate across ALL collected artifacts, filter by time windows, and trace entities.
-Use `get_event_detail` to inspect specific events in full.
-Use `case_summary` to see what data has been collected so far.
-
-**Step 3 — Record:** When you discover something suspicious, use `record_finding` to log it with evidence IDs, 
-confidence level, and MITRE ATT&CK technique. Findings are saved permanently for the final report.
-
-## KEY ARTIFACTS TO KNOW
-- `Windows.EventLogs.EvtxHunter` — Search Windows event logs (params: EvtxGlob, SearchRegex, etc.)
-- `Windows.Timeline.Prefetch` — Prefetch execution history
-- `Windows.System.Amcache.InventoryApplicationFile` — Amcache execution evidence
-- `Windows.System.Powershell.PSReadline` — PowerShell command history
-- `Windows.Forensics.NTFS.MFT` — MFT filesystem timeline
-- `Windows.Network.Netstat` — Active network connections
-- `Windows.Persistence.PermanentWMIEvents` — WMI persistence
-- `Windows.System.TaskScheduler` — Scheduled tasks
-- `Generic.Client.Info` — Basic system info
-Use `server_vql_query` with `SELECT name FROM artifact_definitions() WHERE name =~ 'keyword'` to discover more artifacts.
-
-## RULES
-1. ALWAYS collect artifacts before trying to query the timeline. The database starts empty.
-2. When the investigator gives a timeframe, collect relevant artifacts first, then use `query_timeline` to filter.
-3. When correlating, collect MULTIPLE artifacts, then use `search_iocs` or `pivot_entity` to cross-reference.
-4. Keep your analysis structured: state what you collected, what you found, and what it means.
-5. Use `record_finding` for anything suspicious — these become the report.
-''')
-
-    chat_history = [system_prompt]
+    chat_history = [SystemMessage(content=build_system_prompt(case_config))]
     MAX_STEPS = 15
 
     print("=" * 60)
     print("  DFIR Copilot v2 — Database-Backed Analysis")
     print("  Case database: case_data/case.db")
     print(f"  Scope file: {case_config.path} {'(Loaded)' if case_config.data else '(Not Found/Empty)'}")
+    print(f"  Evidence client: {case_config.client_id or '(not set)'}")
     print("  Type 'exit' to quit, 'report' for findings summary")
     print("=" * 60)
-    
+
+    if case_config.client_id_error:
+        print(f"\n[!] {case_config.client_id_error}")
+
     # Prompt user for auto-collection
-    if input("\nDo you want to run the initial auto-collection based on case.yaml? (y/n) [y]: ").lower() in ['', 'y', 'yes']:
-        print("\n[*] Starting automatic background collection...")
+    elif input("\nDo you want to run the initial auto-collection based on case.yaml? (y/n) [y]: ").lower() in ['', 'y', 'yes']:
+        print("\n[*] Starting automatic collection...")
+        summaries = auto_collect(case_config)
         auto_prompt = (
-            f"Please begin the investigation by collecting the following artifacts on the virtual dead-disk client: "
-            f"{', '.join(case_config.artifacts_to_collect)}. "
-            f"If IOCs are defined in the case, run a search for them after collection. "
-            f"If an incident time window is defined, query the timeline for that window."
+            "The initial collection has been run for you. Results per artifact:\n"
+            f"{json.dumps(summaries, indent=2)}\n"
+            "Follow up on any collection that is still RUNNING with check_collection. "
+            "If IOCs are defined in the case, search for them. "
+            "If an incident time window is defined, query the timeline for that window."
         )
         chat_history.append(HumanMessage(content=auto_prompt))
-        
-        # We process this first message immediately
-        # (Using a helper function to avoid duplicating the while True loop)
         _process_turn(llm_with_tools, chat_history, MAX_STEPS)
 
     while True:
@@ -119,7 +98,7 @@ Use `server_vql_query` with `SELECT name FROM artifact_definitions() WHERE name 
             print(f"  Findings: {len(findings)}")
             print(f"{'='*60}")
             for f in findings:
-                print(f"\n  [{f['confidence'].upper()}] {f['title']}")
+                print(f"\n  [{(f['confidence'] or 'unknown').upper()}] {f['title']}")
                 print(f"  {f['description']}")
                 if f['mitre_technique']:
                     print(f"  MITRE: {f['mitre_technique']}")

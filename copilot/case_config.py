@@ -1,4 +1,6 @@
+import fnmatch
 import os
+import re
 import yaml
 
 
@@ -11,11 +13,43 @@ DEFAULT_TRIAGE_ARTIFACTS = [
 ]
 
 
+# Artifacts the agent may collect when case.yaml doesn't set `artifacts.allow`.
+# Read-only parsers that make sense against a dead disk.
+DEFAULT_ARTIFACT_ALLOWLIST = [
+    "Generic.Client.Info",
+    "Windows.EventLogs.*",
+    "Windows.Forensics.*",
+    "Windows.Timeline.*",
+    "Windows.NTFS.*",
+    "Windows.Registry.*",
+    "Windows.Persistence.*",
+    "Windows.Applications.*",
+    "Windows.Sys.Users",
+    "Windows.System.Amcache*",
+    "Windows.System.Powershell.PSReadline",
+    "Windows.System.TaskScheduler",
+    "Windows.System.Services",
+]
+
+# Never collectable, whatever the allowlist says: these run commands,
+# change the endpoint, or act on the server.
+ARTIFACT_DENYLIST = [
+    "Windows.System.PowerShell",
+    "Windows.System.CmdShell",
+    "Linux.Sys.BashShell",
+    "*.Remediation.*",
+    "Server.*",
+    "Admin.*",
+]
+
+CLIENT_ID_RE = re.compile(r"^C\.[0-9a-fA-F]{8,32}$")
+
+
 class CaseConfig:
     """Loads and provides access to the case.yaml scope file."""
 
-    def __init__(self, path="case.yaml"):
-        self.path = path
+    def __init__(self, path=None):
+        self.path = path or os.environ.get("DFIR_CASE_FILE", "case.yaml")
         self.data = {}
         self._load()
 
@@ -73,9 +107,45 @@ class CaseConfig:
             return explicit
         return DEFAULT_TRIAGE_ARTIFACTS
 
+    # --- Velociraptor target & guardrails ---
+    @property
+    def client_id(self) -> str:
+        """The single Velociraptor client (the dead-disk virtual client) this case may touch."""
+        return str(self.data.get("velociraptor", {}).get("client_id", "") or "").strip()
+
+    @property
+    def client_id_error(self) -> str:
+        """Empty when client_id is usable, otherwise a message for the investigator."""
+        if not self.client_id:
+            return (f"No velociraptor.client_id set in {self.path}. Find the dead-disk "
+                    f"virtual client with `search_clients` and add its ID to the case file.")
+        if not CLIENT_ID_RE.match(self.client_id):
+            return f"velociraptor.client_id '{self.client_id}' is not a valid client ID (expected C.<hex>)."
+        return ""
+
+    @property
+    def collection_wait_seconds(self) -> int:
+        return int(self.data.get("velociraptor", {}).get("collection_wait_seconds", 120))
+
+    @property
+    def artifact_allowlist(self) -> list:
+        allow = (self.data.get("artifacts", {}) or {}).get("allow")
+        return allow if isinstance(allow, list) and allow else DEFAULT_ARTIFACT_ALLOWLIST
+
+    def is_artifact_allowed(self, name: str) -> bool:
+        if any(fnmatch.fnmatchcase(name, pat) for pat in ARTIFACT_DENYLIST):
+            return False
+        return any(fnmatch.fnmatchcase(name, pat) for pat in self.artifact_allowlist)
+
+    @property
+    def allow_raw_vql(self) -> bool:
+        return bool((self.data.get("agent", {}) or {}).get("allow_raw_vql", False))
+
     def build_system_context(self) -> str:
         """Build a context block to inject into the LLM system prompt."""
         lines = [f"Case: {self.case_name}", f"Analyst: {self.analyst}"]
+        if self.client_id and not self.client_id_error:
+            lines.append(f"Evidence client (dead-disk image): {self.client_id}")
 
         if self.has_scope:
             lines.append(f"\nINCIDENT SCOPE:")

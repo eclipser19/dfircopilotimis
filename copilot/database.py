@@ -1,3 +1,4 @@
+import hashlib
 import sqlite3
 import json
 import uuid
@@ -43,6 +44,19 @@ class CaseDatabase:
                 created_at    TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS collections (
+                flow_id       TEXT PRIMARY KEY,
+                client_id     TEXT,
+                artifact      TEXT,
+                parameters    TEXT,
+                state         TEXT,
+                error         TEXT,
+                requested_at  TEXT,
+                finished_at   TEXT,
+                rows_ingested INTEGER DEFAULT 0,
+                ingested      INTEGER DEFAULT 0
+            );
+
             CREATE TABLE IF NOT EXISTS audit_log (
                 log_id        TEXT PRIMARY KEY,
                 timestamp_utc TEXT,
@@ -55,11 +69,13 @@ class CaseDatabase:
         self.conn.commit()
 
     # --- Event Ingestion ---
-    def ingest_artifact_results(self, results: list, source: str, hostname: str = "Unknown") -> int:
+    def ingest_artifact_results(self, results, source: str, hostname: str = "Unknown",
+                                client_id: str = "") -> int:
         """
-        Ingests raw artifact result rows into the events table.
-        Attempts to extract a timestamp from common Velociraptor fields.
-        Returns the number of rows ingested.
+        Ingests raw artifact result rows (any iterable, so large flows can be
+        streamed) into the events table. Attempts to extract a timestamp from
+        common Velociraptor fields. Returns the number of NEW rows; rows already
+        in the database (e.g. from re-collecting an artifact) are skipped.
         """
         cur = self.conn.cursor()
         count = 0
@@ -78,7 +94,8 @@ class CaseDatabase:
         ]
 
         for row in results:
-            evidence_id = str(uuid.uuid4())[:12]
+            raw = json.dumps(row, sort_keys=True, default=str)
+            evidence_id = _evidence_id(client_id, source, raw)
 
             # Try to find a timestamp
             ts = None
@@ -95,16 +112,18 @@ class CaseDatabase:
                 val = row.get(key)
                 if val:
                     desc_parts.append(f"{key}={val}")
-            description = "; ".join(desc_parts) if desc_parts else json.dumps(row)[:500]
+            description = "; ".join(desc_parts) if desc_parts else raw[:500]
 
             # Guess event type from the source artifact name
             event_type = _guess_event_type(source)
 
             cur.execute(
                 "INSERT OR IGNORE INTO events (evidence_id, timestamp_utc, hostname, source, event_type, description, raw_data, ingested_at) VALUES (?,?,?,?,?,?,?,?)",
-                (evidence_id, ts, hostname, source, event_type, description, json.dumps(row), now)
+                (evidence_id, ts, hostname, source, event_type, description, raw, now)
             )
-            count += 1
+            count += cur.rowcount
+            if count and count % 5000 == 0:
+                self.conn.commit()
 
         self.conn.commit()
         return count
@@ -188,6 +207,28 @@ class CaseDatabase:
         cur.execute("SELECT * FROM findings ORDER BY timestamp_utc ASC")
         return [dict(r) for r in cur.fetchall()]
 
+    # --- Collections ---
+    def upsert_collection(self, flow_id: str, **fields):
+        """Insert or update the tracking row for a Velociraptor flow."""
+        cur = self.conn.cursor()
+        cur.execute("INSERT OR IGNORE INTO collections (flow_id) VALUES (?)", (flow_id,))
+        for key, value in fields.items():
+            if key not in _COLLECTION_FIELDS:
+                raise ValueError(f"Unknown collections field: {key}")
+            cur.execute(f"UPDATE collections SET {key} = ? WHERE flow_id = ?", (value, flow_id))
+        self.conn.commit()
+
+    def get_collection(self, flow_id: str) -> dict:
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM collections WHERE flow_id = ?", (flow_id,))
+        row = cur.fetchone()
+        return dict(row) if row else {}
+
+    def get_collections(self) -> list:
+        cur = self.conn.cursor()
+        cur.execute("SELECT * FROM collections ORDER BY requested_at ASC")
+        return [dict(r) for r in cur.fetchall()]
+
     # --- Audit Log ---
     def log_query(self, tool_name: str, query: str, row_count: int, artifact: str = None):
         log_id = str(uuid.uuid4())[:12]
@@ -198,6 +239,15 @@ class CaseDatabase:
             (log_id, now, tool_name, query, row_count, artifact)
         )
         self.conn.commit()
+
+
+_COLLECTION_FIELDS = {"client_id", "artifact", "parameters", "state", "error",
+                      "requested_at", "finished_at", "rows_ingested", "ingested"}
+
+
+def _evidence_id(client_id: str, source: str, raw_row: str) -> str:
+    """Deterministic ID: the same row from the same artifact always gets the same ID."""
+    return hashlib.sha256(f"{client_id}|{source}|{raw_row}".encode("utf-8")).hexdigest()[:16]
 
 
 def _guess_event_type(source: str) -> str:
@@ -223,4 +273,4 @@ def _guess_event_type(source: str) -> str:
 
 
 # Global instance
-case_db = CaseDatabase()
+case_db = CaseDatabase(os.environ.get("DFIR_CASE_DIR", "case_data"))

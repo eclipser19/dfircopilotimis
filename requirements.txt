@@ -1,0 +1,7 @@
+pyvelociraptor
+grpcio
+langchain-core
+langchain-openai
+pyyaml
+jinja2
+streamlit

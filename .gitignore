@@ -13,6 +13,7 @@ __pycache__/
 .venv/
 venv/
 
-# Generated reports / evidence output
+# Generated reports / evidence output (case database contains evidence)
+case_data/
 reports/
 output/
