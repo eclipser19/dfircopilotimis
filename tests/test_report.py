@@ -155,3 +155,15 @@ def test_report_never_shortens_records_queries_or_parameters(case, monkeypatch):
     appendix = report.split("## Appendix B: Cited Evidence Records")[1]
     assert "````json" in appendix                        # fence longer than the ``` inside the record
     assert '"Note": "contains ``` backticks"' in appendix
+
+
+def test_report_explains_event_ids_and_logon_types(case, monkeypatch):
+    monkeypatch.setattr(case_config, "data", {"velociraptor": {"client_id": CLIENT}})
+    case.ingest_artifact_results([{"EventTime": "2020-09-19T03:36:24Z", "EventID": 4624, "Channel": "Security",
+                                   "EventData": {"LogonType": 10, "TargetUserName": "Administrator"}}],
+                                 "Windows.EventLogs.RDPAuth", "D", "C.1")
+    eid = case.query_timeline()["events"][0]["evidence_id"]
+    case.record_finding("RDP logon", "r", [eid], "high")
+    report = build_report(case, case_config, "ES", "- R")
+    assert "**4624: Successful logon (LogonType 10: RemoteInteractive (RDP))**" in report
+    assert "| 4624 | Security | Successful logon |" in report

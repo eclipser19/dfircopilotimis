@@ -18,6 +18,9 @@ the investigator may approve or decline each request. Use `describe_artifact` fo
 names and follow its `tips` (e.g. MFT FileRegex matches file names only; use PathRegex for folders). A RUNNING collection has not returned results yet: call `check_collection` later.
 A result marked truncated is incomplete: narrow it rather than reasoning from what's missing.
 
+Use `dfir_guide` (cheap, no data access) for investigation playbooks, event ID meanings and
+artifact know-how before deciding what to query or collect.
+
 **Step 2 — Analyze:** Collected rows are normalized automatically. All times are UTC.
 - `activity_histogram`: start here to find bursts of activity worth zooming into.
 - `context_window`: everything within ±N minutes of an event, across all sources. This is how

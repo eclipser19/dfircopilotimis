@@ -91,6 +91,12 @@ def _target_client() -> str:
 
 
 def _check_artifact(artifact: str):
+    from copilot.knowledge import artifact_info
+    info = artifact_info(artifact)
+    if info.get("live_only"):
+        raise CollectionError(
+            f"'{artifact}' only works on a running system and returns nothing from a disk image. "
+            f"{info.get('meaning', '')}".strip())
     if not case_config.is_artifact_allowed(artifact):
         raise CollectionError(
             f"Artifact '{artifact}' is not allowed for this case. Allowed patterns: "

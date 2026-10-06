@@ -65,7 +65,7 @@ Every timestamp of the records cited by findings{% if has_scope %}, inside the i
 | UTC | Recorded | Source | Time field | Event | Evidence | Finding |
 |---|---|---|---|---|---|---|
 {% for r in timeline %}
-| {{ r.ts | utc }} | {{ r.ts | rec }} | {{ r.source | md }} | {{ r.field | md }} | {{ r.description | md }} | `{{ r.evidence_id }}` | {{ r.findings | sort | join(", ") }} |
+| {{ r.ts | utc }} | {{ r.ts | rec }} | {{ r.source | md }} | {{ r.field | md }} | {% if r.meaning %}**{{ r.meaning | md }}** · {% endif %}{{ r.description | md }} | `{{ r.evidence_id }}` | {{ r.findings | sort | join(", ") }} |
 {% endfor %}
 {% if timeline_truncated %}
 
@@ -98,7 +98,7 @@ Every timestamp of the records cited by findings{% if has_scope %}, inside the i
 | Evidence | Source | UTC | Record |
 |---|---|---|---|
 {% for e in f.evidence %}
-| `{{ e.evidence_id }}` | {{ e.source | md }} | {{ e.first | utc }} | {{ e.description | md }} |
+| `{{ e.evidence_id }}` | {{ e.source | md }} | {{ e.first | utc }} | {% if e.meaning %}**{{ e.meaning | md }}** · {% endif %}{{ e.description | md }} |
 {% endfor %}
 
 {% else %}
@@ -161,6 +161,16 @@ Values extracted from the evidence cited by findings.
 {% for a in artifacts %}
 | {{ a.source | md }} | {{ a.what | md }} | {{ a.location | md }} | {{ a.meaning | md }} |
 {% endfor %}
+{% if events_referenced %}
+
+**Event IDs referenced**
+
+| Event ID | Log | Meaning | Notes |
+|---|---|---|---|
+{% for ev in events_referenced %}
+| {{ ev.id }} | {{ ev.channel | md }} | {{ ev.meaning | md }} | {{ (ev.details or "") | md }} |
+{% endfor %}
+{% endif %}
 
 ---
 

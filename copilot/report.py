@@ -10,7 +10,8 @@ from itertools import combinations
 
 from jinja2 import Environment
 
-from copilot.knowledge import artifact_info
+from copilot.knowledge import artifact_info, event_info, logon_type
+from copilot.normalize import flatten
 from copilot.normalize import describe, event_type_for, extract_entities, parse_timestamp
 from copilot.report_template import REPORT_TEMPLATE
 
@@ -68,9 +69,35 @@ def _evidence(db, evidence_id: str, window: tuple) -> dict:
         rec.update(full_entities)
     stamps = [t for t in rec["timestamps"] if _in_window(t["timestamp_utc"], window)] or rec["timestamps"]
     return {"evidence_id": evidence_id, "source": rec["source"], "description": rec["description"],
-            "raw": raw, "all_timestamps": rec["timestamps"],
+            "raw": raw, "all_timestamps": rec["timestamps"], **_event_meaning(raw),
             "timestamps": stamps, "first": stamps[0]["timestamp_utc"] if stamps else None,
             "entities": {f: rec.get(f) for f, _ in INDICATOR_FIELDS if rec.get(f)}}
+
+
+def _event_meaning(raw) -> dict:
+    """Event ID, log channel and their meaning from the knowledge base, for Windows events."""
+    if not isinstance(raw, dict):
+        return {"event": None, "meaning": ""}
+    fields = {}
+    for key, value in flatten(raw):
+        last = key.rsplit(".", 1)[-1].lower()
+        if value in (None, ""):
+            continue
+        if last == "eventid" or key.lower().endswith("eventid.value"):
+            fields.setdefault("id", value)
+        elif last == "channel" or key.lower().endswith("provider.name"):
+            fields.setdefault("channel", str(value))
+        elif last == "logontype":
+            fields.setdefault("logon_type", value)
+    if "id" not in fields:
+        return {"event": None, "meaning": ""}
+    info = event_info(fields["id"], fields.get("channel", ""))
+    if not info:
+        return {"event": None, "meaning": ""}
+    meaning = f"{info['id']}: {info['meaning']}"
+    if fields.get("logon_type") is not None and logon_type(fields["logon_type"]):
+        meaning += f" (LogonType {fields['logon_type']}: {logon_type(fields['logon_type'])})"
+    return {"event": info, "meaning": meaning}
 
 
 def _in_window(ts: str, window: tuple) -> bool:
@@ -115,7 +142,8 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
                 row = rows.get(key)
                 if row is None:
                     row = rows[key] = {"ts": t["timestamp_utc"], "fields": [], "source": e["source"],
-                                       "description": e["description"], "evidence_id": e["evidence_id"],
+                                       "description": e["description"], "meaning": e["meaning"],
+                                       "evidence_id": e["evidence_id"],
                                        "findings": set()}
                 for field in t["timestamp_desc"].split(", "):
                     if field not in row["fields"]:
@@ -173,6 +201,11 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
             entry = cited.setdefault(e["evidence_id"], {**e, "findings": []})
             entry["findings"].append(f["number"])
     cited = sorted(cited.values(), key=lambda e: (e["first"] is None, e["first"] or "", e["evidence_id"]))
+    events_referenced = {}
+    for e in cited:
+        if e["event"]:
+            events_referenced[(e["event"]["id"], e["event"]["channel"])] = e["event"]
+    events_referenced = [events_referenced[k] for k in sorted(events_referenced)]
     for e in cited:
         e["raw_json"] = json.dumps(e["raw"], indent=2, ensure_ascii=False, default=str)
     retracted = [f for f in db.get_findings(include_retracted=True) if (f.get("status") or "active") != "active"]
@@ -203,6 +236,7 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
         max_timeline=MAX_TIMELINE_ROWS, related=related, related_minutes=RELATED_WITHIN_MINUTES,
         indicators=indicators, iocs_searched=iocs_searched, artifacts=artifacts,
         collections=collections, audit_log=audit_log, retracted=retracted, cited=cited,
+        events_referenced=events_referenced,
     )
 
 

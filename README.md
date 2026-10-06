@@ -48,6 +48,22 @@ pip install -r requirements.txt
 4. **LLM.** Set `OPENAI_API_KEY` (or enter it when prompted). Optional:
    `DFIR_LLM_MODEL`, `DFIR_LLM_BASE_URL`.
 
+## Knowledge base
+
+`copilot/knowledge_data/` holds the DFIR reference the copilot relies on, as plain YAML
+you can extend without touching code:
+
+| File | Contents | Used by |
+|---|---|---|
+| `artifacts.yaml` | Where each artifact's data lives, what it proves, verified parameter names, tips, live-only flag | Report "Artifacts, locations & meanings"; `describe_artifact`; live-only artifacts are refused on images |
+| `event_ids.yaml` | Windows event IDs per log channel, with notes | Report annotations and "Event IDs referenced"; `dfir_guide` |
+| `logon_types.yaml` | 4624 LogonType values | Report annotations |
+| `playbooks.yaml` | For each investigation question, which sources to check | `dfir_guide` |
+
+Patterns in `artifacts.yaml` are matched in order (first match wins), so put specific
+entries above general ones. Only list parameter names under `params` once a real
+collection has confirmed them.
+
 ## Run
 
 Check the Velociraptor side first (no LLM involved): connection, the case's

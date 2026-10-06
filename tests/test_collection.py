@@ -199,8 +199,16 @@ def test_successful_collection_does_not_fetch_logs(case):
     assert not any("flow_logs" in q for q, _ in vql.calls)
 
 
-def test_live_only_artifact_is_explained(case):
-    logs = [{"level": "DEFAULT", "message": "Call to plugin wmi disabled"}]
-    summary = collection.collect("Windows.System.Services",
+def test_live_only_artifact_refused_before_collecting(case):
+    vql = FakeVQL()
+    with pytest.raises(CollectionError, match="only works on a running system"):
+        collection.collect("Windows.System.Services", vql=vql, sleep=lambda s: None)
+    assert vql.calls == []
+
+
+def test_disabled_plugin_in_flow_log_is_explained(case):
+    # Artifacts not (yet) marked live-only in the knowledge base are still explained afterwards.
+    logs = [{"level": "DEFAULT", "message": "Call to function lookupSID disabled"}]
+    summary = collection.collect("Windows.System.TaskScheduler",
                                  vql=FakeVQL(rows={}, reported_rows=0, flow_logs=logs), sleep=lambda s: None)
-    assert "wmi" in summary["note"] and "running system" in summary["note"]
+    assert "lookupSID" in summary["note"] and "running system" in summary["note"]

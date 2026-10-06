@@ -41,13 +41,13 @@ def test_time_window_respects_explicit_values_and_param_case(case, monkeypatch):
 def test_no_window_when_artifact_has_no_date_params_or_disabled(case, monkeypatch):
     _config(monkeypatch)
     vql = FakeVQL(artifact_params=["Glob"])
-    collection.collect("Windows.System.Services", vql=vql, sleep=lambda s: None)
-    assert _spec(vql)["Windows.System.Services"] == {}
+    collection.collect("Windows.System.TaskScheduler", vql=vql, sleep=lambda s: None)
+    assert _spec(vql)["Windows.System.TaskScheduler"] == {}
 
     _config(monkeypatch, apply_time_window=False)
     vql = FakeVQL(artifact_params=["DateAfter"])
-    collection.collect("Windows.System.Services", vql=vql, sleep=lambda s: None)
-    assert _spec(vql)["Windows.System.Services"] == {}
+    collection.collect("Windows.System.TaskScheduler", vql=vql, sleep=lambda s: None)
+    assert _spec(vql)["Windows.System.TaskScheduler"] == {}
 
 
 def test_row_limit_sent_to_velociraptor(case, monkeypatch):
@@ -66,8 +66,8 @@ def test_older_velociraptor_without_max_rows_still_collects(case, monkeypatch):
 
 def test_ingest_stops_at_row_limit_and_flags_truncation(case, monkeypatch):
     _config(monkeypatch, max_rows=3)
-    rows = {"Windows.System.Services": [{"Name": f"svc{i}"} for i in range(10)]}
-    summary = collection.collect("Windows.System.Services", vql=FakeVQL(rows=rows), sleep=lambda s: None)
+    rows = {"Windows.System.TaskScheduler": [{"Name": f"svc{i}"} for i in range(10)]}
+    summary = collection.collect("Windows.System.TaskScheduler", vql=FakeVQL(rows=rows), sleep=lambda s: None)
     assert summary["rows_read"] == 3
     assert summary["truncated"] is True
     assert "INCOMPLETE" in summary["note"]
@@ -95,7 +95,7 @@ def test_investigator_collections_skip_agent_rules(case, monkeypatch):
 def test_agent_collections_off(case, monkeypatch):
     _config(monkeypatch, agent_collections="off")
     with pytest.raises(CollectionError, match="disabled agent collections"):
-        collection.collect("Windows.System.Services", vql=FakeVQL(), requested_by="agent", sleep=lambda s: None)
+        collection.collect("Windows.System.TaskScheduler", vql=FakeVQL(), requested_by="agent", sleep=lambda s: None)
 
 
 def test_agent_collections_need_approval(case, monkeypatch):
@@ -104,12 +104,12 @@ def test_agent_collections_need_approval(case, monkeypatch):
     monkeypatch.setattr(collection, "CONFIRM", lambda a, p: asked.append((a, p)) or False)
     vql = FakeVQL()
     with pytest.raises(CollectionError, match="declined"):
-        collection.collect("Windows.System.Services", vql=vql, requested_by="agent", sleep=lambda s: None)
-    assert asked == [("Windows.System.Services", {})]
+        collection.collect("Windows.System.TaskScheduler", vql=vql, requested_by="agent", sleep=lambda s: None)
+    assert asked == [("Windows.System.TaskScheduler", {})]
     assert not any("collect_client" in q for q, _ in vql.calls)
 
     monkeypatch.setattr(collection, "CONFIRM", lambda a, p: True)
-    summary = collection.collect("Windows.System.Services", vql=FakeVQL(), requested_by="agent",
+    summary = collection.collect("Windows.System.TaskScheduler", vql=FakeVQL(), requested_by="agent",
                                  sleep=lambda s: None)
     assert summary["state"] == "FINISHED"
 
@@ -118,4 +118,4 @@ def test_no_approval_channel_refuses(case, monkeypatch):
     _config(monkeypatch)
     monkeypatch.setattr(collection, "CONFIRM", None)
     with pytest.raises(CollectionError, match="approval"):
-        collection.collect("Windows.System.Services", vql=FakeVQL(), requested_by="agent", sleep=lambda s: None)
+        collection.collect("Windows.System.TaskScheduler", vql=FakeVQL(), requested_by="agent", sleep=lambda s: None)

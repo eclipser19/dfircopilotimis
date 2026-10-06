@@ -51,6 +51,7 @@ Legend: [x] done and tested · [~] partially done · [ ] not started
 - [x] Indicators observed (IPs, accounts, processes, paths, hashes, command lines) from cited evidence; case IOC hit counts.
 - [x] "Artifacts, locations & meanings" from a static reference (`copilot/knowledge.py`), also shown to the agent as artifact tips.
 - [x] Markdown-safe cells, contiguous tables; collections and audit appendices.
+- [x] Knowledge base in YAML (`copilot/knowledge_data/`): artifacts (verified params, live-only flag), event IDs, logon types, investigation playbooks; `dfir_guide` tool; event meanings annotated in the report.
 - [ ] HTML/PDF export.
 
 ## Step 5: Agent core & UI

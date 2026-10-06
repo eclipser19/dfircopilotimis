@@ -1,0 +1,67 @@
+# Investigation playbooks: for a question, which sources to check and what to look for.
+# Shown to the agent by the dfir_guide tool. Event IDs refer to event_ids.yaml.
+
+initial_access:
+  question: How did the attacker first get in?
+  check:
+    - 'Security 4625 bursts from one IP followed by 4624 from the same IP: brute force (RDP: LogonType 10, often preceded by 1149).'
+    - 'RDP from external IPs: 4624 type 10, RemoteConnectionManager 1149, LocalSessionManager 21/22.'
+    - 'Downloads: browser history, Zone.Identifier streams (MFT shows ":Zone.Identifier"), files in Downloads.'
+    - Email attachments and Office files opened (LNK, JumpLists) shortly before the first malicious execution.
+    - Exposed services (web servers) with new files in web roots (MFT/USN).
+
+execution:
+  question: What ran?
+  check:
+    - Prefetch (run count, last 8 run times) - strongest single execution source on workstations.
+    - Security 4688 (if enabled), Sysmon 1.
+    - PowerShell 4104 script blocks, 4103, 400; PSReadline history.
+    - 'Amcache and ShimCache: presence of executables (with SHA1 in Amcache); not proof of execution alone on Windows 10.'
+    - BAM and UserAssist for per-user last execution; SRUM for per-app activity.
+
+persistence:
+  question: How does it survive reboot or logon?
+  check:
+    - Run/RunOnce keys and Startup folders (StartupItems).
+    - 'Services: System 7045 / Security 4697, SYSTEM hive Services key.'
+    - 'Scheduled tasks: Tasks folder, Security 4698, TaskScheduler/Operational 106.'
+    - WMI subscriptions (WMI-Activity 5861, repository).
+    - New or modified accounts (4720, 4732 to Administrators).
+
+lateral_movement:
+  question: Did the attacker move between machines?
+  check:
+    - 'Inbound (on the target): 4624 type 3 or 10 with a source IP; 1149; LocalSessionManager 21/22/24/25; 5140 to ADMIN$/C$; 7045 PSEXESVC.'
+    - 'Outbound (on the source): 4648 naming the target; RDPClient 1024; Prefetch/JumpLists for mstsc.exe, psexec.exe; Terminal Server Client registry MRU.'
+    - Match times across both machines (allow for clock skew).
+
+credential_access:
+  question: Were credentials stolen?
+  check:
+    - Tools in Prefetch/Amcache (mimikatz, procdump, comsvcs.dll MiniDump via rundll32).
+    - 'Access to SAM/SECURITY/NTDS.dit copies: USN/MFT for *.dit, *.hive, shadow copy use (vssadmin, ntdsutil in Prefetch/4688).'
+    - 4672 privileged logons and 4648 explicit-credential use afterwards.
+
+collection_exfiltration:
+  question: Was data gathered or taken?
+  check:
+    - 'Archives created then deleted: USN journal (FILE_CREATE, RENAME, FILE_DELETE) for .zip/.7z/.rar; MFT for surviving entries.'
+    - Files opened by the attacker's account (LNK, JumpLists, Shellbags) around the intrusion window.
+    - 'Volume: SRUM bytes sent per application; cloud sync clients (OneDrive) and browser uploads.'
+    - Shares accessed (5140) and Recycle Bin.
+
+anti_forensics:
+  question: Did the attacker cover tracks?
+  check:
+    - Log clearing (Security 1102, System 104), gaps in event logs.
+    - 'Timestomping: MFT $SI (0x10) times earlier than $FN (0x30) times, or round/identical times.'
+    - Deletions in the USN journal; secure-delete tools (sdelete, cipher /w) in Prefetch.
+    - Disabled logging or Defender (Defender 5001).
+
+timeline_basics:
+  question: How to read times correctly?
+  check:
+    - Event logs and NTFS store UTC, but derived from the host clock; a mis-set clock shifts everything (see the case clock offset).
+    - 'MACB: Modified, Accessed, Changed ($MFT record), Born. $SI times are easy to forge; $FN times are harder.'
+    - Prefetch keeps the last 8 run times; earlier runs are only counted.
+    - Registry values have no time; the key LastWrite time is the only date.

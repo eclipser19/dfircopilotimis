@@ -1,0 +1,56 @@
+# Windows event ID reference. `channel` is matched case-insensitively as a substring of
+# the record's Channel/Provider; IDs that repeat across logs are told apart by it.
+# An ID with a single entry is used even when the channel is unknown.
+
+- {id: 4624, channel: Security, meaning: Successful logon, details: 'Check LogonType: 2 interactive, 3 network (SMB, PsExec), 4 batch, 5 service, 7 unlock, 8 network cleartext, 9 new credentials (runas /netonly), 10 RemoteInteractive (RDP), 11 cached interactive. IpAddress/WorkstationName show the source.'}
+- {id: 4625, channel: Security, meaning: Failed logon, details: 'Bursts from one IP indicate brute force; Status/SubStatus give the reason (e.g. 0xC000006A bad password).'}
+- {id: 4634, channel: Security, meaning: Logoff}
+- {id: 4647, channel: Security, meaning: User-initiated logoff}
+- {id: 4648, channel: Security, meaning: Logon with explicit credentials, details: 'Logged on the SOURCE machine (runas, RDP or PsExec to another host): shows outbound lateral movement and the target server.'}
+- {id: 4672, channel: Security, meaning: Special privileges assigned to new logon, details: Admin-equivalent logon; pairs with 4624.}
+- {id: 4688, channel: Security, meaning: Process created, details: 'Command line only if "Include command line in process creation events" is enabled.'}
+- {id: 4697, channel: Security, meaning: Service installed (Security log)}
+- {id: 4698, channel: Security, meaning: Scheduled task created}
+- {id: 4699, channel: Security, meaning: Scheduled task deleted}
+- {id: 4702, channel: Security, meaning: Scheduled task updated}
+- {id: 4720, channel: Security, meaning: User account created}
+- {id: 4724, channel: Security, meaning: Password reset attempted}
+- {id: 4728, channel: Security, meaning: Member added to a security-enabled global group}
+- {id: 4732, channel: Security, meaning: Member added to a security-enabled local group, details: e.g. local Administrators.}
+- {id: 4756, channel: Security, meaning: Member added to a security-enabled universal group}
+- {id: 4768, channel: Security, meaning: Kerberos TGT requested (domain controller)}
+- {id: 4769, channel: Security, meaning: Kerberos service ticket requested (domain controller)}
+- {id: 4776, channel: Security, meaning: NTLM credential validation}
+- {id: 4778, channel: Security, meaning: Session reconnected (RDP/fast user switching)}
+- {id: 4779, channel: Security, meaning: Session disconnected (RDP/fast user switching)}
+- {id: 5140, channel: Security, meaning: Network share accessed, details: 'ADMIN$ or C$ from another host often means remote execution (PsExec) or file staging.'}
+- {id: 5145, channel: Security, meaning: Network share object access checked}
+- {id: 1102, channel: Security, meaning: Security log cleared, details: Anti-forensics.}
+- {id: 7045, channel: System, meaning: Service installed, details: 'ImagePath shows the binary; random names or binaries in Temp/System32 are suspicious (PsExec installs PSEXESVC).'}
+- {id: 7036, channel: System, meaning: Service state changed}
+- {id: 7040, channel: System, meaning: Service start type changed}
+- {id: 104, channel: System, meaning: Event log cleared, details: Anti-forensics.}
+- {id: 6005, channel: System, meaning: Event log service started (boot)}
+- {id: 6006, channel: System, meaning: Event log service stopped (clean shutdown)}
+- {id: 1149, channel: RemoteConnectionManager, meaning: RDP user authentication succeeded, details: 'Recorded when credentials are accepted (before the session); includes the source IP.'}
+- {id: 21, channel: LocalSessionManager, meaning: RDP session logon succeeded}
+- {id: 22, channel: LocalSessionManager, meaning: RDP shell start notification}
+- {id: 23, channel: LocalSessionManager, meaning: RDP session logoff}
+- {id: 24, channel: LocalSessionManager, meaning: RDP session disconnected}
+- {id: 25, channel: LocalSessionManager, meaning: RDP session reconnected}
+- {id: 1024, channel: RDPClient, meaning: Outbound RDP connection attempt, details: 'On the SOURCE machine: which host this machine connected to over RDP.'}
+- {id: 4103, channel: PowerShell, meaning: PowerShell module logging (pipeline execution)}
+- {id: 4104, channel: PowerShell, meaning: PowerShell script block logged, details: 'The code that ran, including decoded stages; long scripts span several 4104 records.'}
+- {id: 400, channel: Windows PowerShell, meaning: PowerShell engine started, details: HostApplication shows the full command line.}
+- {id: 106, channel: TaskScheduler, meaning: Scheduled task registered}
+- {id: 200, channel: TaskScheduler, meaning: Scheduled task action started}
+- {id: 201, channel: TaskScheduler, meaning: Scheduled task action completed}
+- {id: 1116, channel: Defender, meaning: Defender detected malware}
+- {id: 1117, channel: Defender, meaning: Defender took action on malware}
+- {id: 5001, channel: Defender, meaning: Defender real-time protection disabled}
+- {id: 5861, channel: WMI-Activity, meaning: Permanent WMI event subscription registered}
+- {id: 1, channel: Sysmon, meaning: 'Sysmon: process created'}
+- {id: 3, channel: Sysmon, meaning: 'Sysmon: network connection'}
+- {id: 11, channel: Sysmon, meaning: 'Sysmon: file created'}
+- {id: 13, channel: Sysmon, meaning: 'Sysmon: registry value set'}
+- {id: 22, channel: Sysmon, meaning: 'Sysmon: DNS query'}

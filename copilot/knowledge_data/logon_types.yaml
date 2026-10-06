@@ -1,0 +1,10 @@
+# Security 4624/4625/4634 LogonType values.
+2: Interactive (console)
+3: Network (SMB, PsExec, mapped drives)
+4: Batch (scheduled task)
+5: Service
+7: Unlock
+8: NetworkCleartext
+9: NewCredentials (runas /netonly)
+10: RemoteInteractive (RDP)
+11: CachedInteractive

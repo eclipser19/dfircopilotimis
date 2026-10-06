@@ -133,9 +133,11 @@ def list_artifacts(keyword: str) -> str:
         "SELECT name, description FROM artifact_definitions() WHERE name =~ DfirKeyword",
         env={"DfirKeyword": "(?i)" + _re2_escape(keyword)},
     )
+    from copilot.knowledge import is_live_only
     rows = [
         {"name": r.get("name"), "description": (r.get("description") or "").strip()[:300]}
-        for r in res.get("results", []) if case_config.is_artifact_allowed(r.get("name", ""))
+        for r in res.get("results", [])
+        if case_config.is_artifact_allowed(r.get("name", "")) and not is_live_only(r.get("name", ""))
     ]
     res["results"] = rows
     if not rows and not res.get("error"):
@@ -165,6 +167,10 @@ def describe_artifact(artifact_name: str) -> str:
         "allowed_for_this_case": case_config.is_artifact_allowed(row.get("name", "")),
         "heavy_needs_filter": case_config.is_heavy(row.get("name", "")),
         "evidence_location": known.get("location"),
+        "what_it_shows": known.get("meaning"),
+        "live_system_only": bool(known.get("live_only")),
+        "disk_image_note": known.get("dead_disk_note"),
+        "verified_parameters": known.get("params"),
         "tips": known.get("tips", []),
         "description": (row.get("description") or "").strip(),
         "parameters": [
@@ -388,6 +394,20 @@ _RAW_VQL_BLOCKLIST = re.compile(
 
 
 @tool
+def dfir_guide(topic: str) -> str:
+    """
+    DFIR reference (no data access, cheap): what to check for an investigation question,
+    what an event ID means, or what an artifact shows and how to query it.
+    Args:
+        topic: A playbook (initial_access, execution, persistence, lateral_movement,
+               credential_access, collection_exfiltration, anti_forensics, timeline_basics),
+               an event ID (e.g. '4624'), or an artifact name (e.g. 'Windows.NTFS.MFT').
+    """
+    from copilot.knowledge import guide
+    return guide(topic)
+
+
+@tool
 def retract_finding(finding_id: str, reason: str) -> str:
     """
     Retract a finding that later evidence contradicts or that was recorded in error
@@ -538,7 +558,7 @@ tools = [
     search_clients, collect_artifact, check_collection, list_collections,
     list_artifacts, describe_artifact,
     activity_histogram, context_window, query_timeline, search_iocs, pivot_entity, get_event_detail,
-    case_summary, record_finding, retract_finding,
+    case_summary, record_finding, retract_finding, dfir_guide,
     generate_report, export_case,
 ]
 if case_config.allow_raw_vql:
