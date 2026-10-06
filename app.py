@@ -1,5 +1,6 @@
 import json
 import os
+import re
 
 import streamlit as st
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -157,10 +158,11 @@ collection.CONFIRM = queue_request
 # Rendering helpers
 # ==========================================
 def download_button(entry: dict, key: str):
-    path = entry["path"]
-    name = os.path.basename(path)
-    if not os.path.exists(path):
-        st.caption(f"📄 {name} — no longer on disk ({path})")
+    path = outputs.locate(entry)
+    name = os.path.basename(entry["path"].replace("\\", "/"))
+    if not path:
+        st.caption(f"📄 {name} — not found (last known at {entry['path']}; also looked in "
+                   f"{outputs.output_dir()})")
         return
     size_mb = os.path.getsize(path) / (1024 * 1024)
     if size_mb > MAX_DOWNLOAD_MB:
@@ -216,6 +218,8 @@ def agent_turn(text: str, show_user: bool = True):
                           st.session_state.finalizer, emit)
         status.update(label="Done", state="complete", expanded=False)
         content = answer or "\n\n".join(f"⚠️ {n}" for n in notices) or "No answer."
+        # Links to local paths can't work in a browser; files come as download buttons instead.
+        content = re.sub(r"\[([^\]]+)\]\((?!https?://)[^)]*\)", r"\1", content)
         files = outputs.produced_since(before)
         st.markdown(content)
         for entry in files:

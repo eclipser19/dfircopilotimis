@@ -15,12 +15,40 @@ from copilot.case_config import case_config
 from copilot.database import case_db
 
 
+def default_dir() -> str:
+    return os.path.abspath(os.path.join(os.path.dirname(case_db.db_path), "outputs"))
+
+
 def output_dir() -> str:
+    """Absolute path (on Windows '/uploads' means C:\\uploads, so show what it really is)."""
     path = (os.environ.get("DFIR_OUTPUT_DIR")
             or str((case_config.data.get("output", {}) or {}).get("dir", "") or "")
-            or os.path.join(os.path.dirname(case_db.db_path), "outputs"))
+            or default_dir())
+    path = os.path.abspath(path)
     os.makedirs(path, exist_ok=True)
     return path
+
+
+def locate(entry: dict) -> str:
+    """
+    Current location of a registered file. If it was moved (e.g. the output folder changed or
+    the case folder was reorganised), look for the same file name in the case's output folders
+    and remember the new location. Returns "" if it can't be found.
+    """
+    path = entry["path"]
+    if os.path.isfile(path):
+        return path
+    name = os.path.basename(path.replace("\\", "/"))
+    for folder in dict.fromkeys([output_dir(), default_dir()]):
+        candidate = os.path.join(folder, name)
+        if os.path.isfile(candidate):
+            if entry.get("output_id") is not None:
+                case_db.conn.execute("UPDATE outputs SET path = ? WHERE output_id = ?",
+                                     (candidate, entry["output_id"]))
+                case_db.conn.commit()
+            entry["path"] = candidate
+            return candidate
+    return ""
 
 
 def new_path(stem: str, ext: str) -> str:

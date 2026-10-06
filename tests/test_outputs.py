@@ -69,7 +69,7 @@ def test_export_results_has_every_row_and_corrected_times(case, monkeypatch):
     _seed(case, monkeypatch)
     out = tools.export_results.invoke({"query_type": "timeline", "start_time": "2020-09-19T03:00:00Z",
                                        "end_time": "2020-09-19T04:00:00Z"})
-    path = out.rsplit(" to ", 1)[1]
+    path = outputs.produced_since(0)[-1]["path"]
     with open(path, encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     assert len(rows) == 61                          # more than one tool page (50)
@@ -80,7 +80,7 @@ def test_export_results_has_every_row_and_corrected_times(case, monkeypatch):
 def test_export_search_with_raw(case, monkeypatch):
     _seed(case, monkeypatch)
     out = tools.export_results.invoke({"query_type": "search", "keyword": "pwned", "include_raw": True})
-    path = out.rsplit(" to ", 1)[1]
+    path = outputs.produced_since(0)[-1]["path"]
     with open(path, encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     assert len(rows) == 1 and "<script>" in json.loads(rows[0]["raw_data"])["Message"]
@@ -91,7 +91,7 @@ def test_export_evidence(case, monkeypatch):
     _seed(case, monkeypatch)
     eid = case.search_events("pwned")["records"][0]["evidence_id"]
     out = tools.export_evidence.invoke({"evidence_ids": [eid, "nope"]})
-    path = out.split(" to ")[1].split(";")[0]
+    path = outputs.produced_since(0)[-1]["path"]
     data = json.load(open(path, encoding="utf-8"))
     assert data[0]["raw_data"]["CommandLine"] == "<img src=x onerror=alert(1)>"
     assert "not found: ['nope']" in out
@@ -105,3 +105,29 @@ def test_new_paths_are_safe_and_unique(case):
     assert os.path.dirname(a) == outputs.output_dir()
     assert ".." not in os.path.basename(a) and "/" not in os.path.basename(a)
     assert a == b and c != a
+
+
+def test_moved_files_are_found_again(case, monkeypatch, tmp_path):
+    _seed(case, monkeypatch)
+    tools.export_evidence.invoke({"evidence_ids": [case.search_events("pwned")["records"][0]["evidence_id"]]})
+    entry = outputs.produced_since(0)[-1]
+    old = entry["path"]
+    # Simulate the folder being reorganised: the registry still points to the old place.
+    case.conn.execute("UPDATE outputs SET path = ? WHERE output_id = ?",
+                      (str(tmp_path / "gone" / os.path.basename(old)), entry["output_id"]))
+    case.conn.commit()
+    stale = outputs.produced_since(0)[-1]
+    assert outputs.locate(stale) == old
+    assert outputs.produced_since(0)[-1]["path"] == old          # registry updated
+    os.remove(old)
+    assert outputs.locate(outputs.produced_since(0)[-1]) == ""
+
+
+def test_output_dir_is_absolute(case, monkeypatch):
+    monkeypatch.setenv("DFIR_OUTPUT_DIR", "relative/outs")
+    assert os.path.isabs(outputs.output_dir())
+
+
+def test_tool_replies_tell_the_agent_not_to_write_links(case, monkeypatch):
+    _seed(case, monkeypatch)
+    assert "do not write links" in tools.generate_report.invoke({"executive_summary": "S", "recommendations": "- R"})

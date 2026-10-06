@@ -230,3 +230,16 @@ def test_new_conversation_button(two_app_cases):
     assert "old answer" not in _texts(at)
     assert len(at.session_state["chat_history"]) == 1
     assert "old answer" not in _texts(AppTest.from_file(APP, default_timeout=30).run())
+
+
+def test_fake_file_links_in_answers_become_plain_text(app_env):
+    app_env.ingest_artifact_results([{"Message": "x"}], "S", "D", "C.1")
+    at = AppTest.from_file(APP, default_timeout=30)
+    llm = ScriptedLLM(AIMessage(content="Done: [Download the report](case_data/outputs/r.html) and "
+                                        "[MITRE](https://attack.mitre.org)."))
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    at.chat_input[0].set_value("report please").run()
+    text = _texts(at)
+    assert "Done: Download the report and [MITRE](https://attack.mitre.org)." in text

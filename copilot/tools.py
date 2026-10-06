@@ -465,7 +465,7 @@ def export_results(query_type: str, start_time: Optional[str] = None, end_time: 
     outputs.register(path, "results", f"{label}: {len(rows):,} rows{note}")
     case_db.log_query("export_results", f"type={query_type} start={start_time} end={end_time} type={event_type} "
                       f"source={source} keyword={keyword} field={field}", len(rows))
-    return f"Saved {len(rows):,} rows{note} to {path}"
+    return f"Saved {len(rows):,} rows{note} to {path} (offered to the investigator as a download; don't write links)"
 
 
 @tool
@@ -491,7 +491,8 @@ def export_evidence(evidence_ids: list) -> str:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(records, f, indent=2, ensure_ascii=False, default=str)
     outputs.register(path, "evidence", f"{len(records)} evidence record(s): {', '.join(r['evidence_id'] for r in records)}")
-    return f"Saved {len(records)} record(s) to {path}" + (f"; not found: {missing}" if missing else "")
+    return (f"Saved {len(records)} record(s) to {path} (offered to the investigator as a download; don't write links)"
+            + (f"; not found: {missing}" if missing else ""))
 
 
 @tool
@@ -754,6 +755,8 @@ def generate_report(executive_summary: str, recommendations: str, correlations: 
     findings = case_db.get_findings()
     return (
         f"Report generated:\n" + "".join(f"- {p}\n" for p in written) +
+        "The investigator gets these as download buttons automatically: do not write links or file paths "
+        "in your answer.\n" +
         f"Sections: Executive Summary, Scope & Evidence, Findings Overview ({len(findings)}), Evidence Timeline, "
         f"Detailed Findings, Correlations, Indicators, Artifacts/Locations/Meanings, Recommendations, "
         f"appendices (collections, cited evidence records, retracted findings, audit log)."
