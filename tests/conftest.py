@@ -39,7 +39,8 @@ class FakeVQL:
     def run_vql(self, query, env=None, timeout=None):
         self.calls.append((query, dict(env or {})))
         if "FROM artifact_definitions(" in query:
-            return {"results": [{"parameters": [{"name": n} for n in self.artifact_params]}], "log": ""}
+            return {"results": [{"parameters": [p if isinstance(p, dict) else {"name": p}
+                                                for p in self.artifact_params]}], "log": ""}
         if "collect_client" in query:
             if self.rejects_max_rows and "max_rows" in query:
                 return {"results": [], "log": "collect_client: Unexpected arg max_rows"}

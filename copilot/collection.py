@@ -125,16 +125,48 @@ def _run(vql, query: str, env: dict) -> tuple:
     return res.get("results", []), log
 
 
-def artifact_parameters(artifact: str, vql) -> list:
-    """Parameter names the artifact accepts ([] if they can't be looked up)."""
+def parameter_specs(artifact: str, vql) -> list:
+    """The artifact's declared parameters as dicts ([] if they can't be looked up)."""
     try:
         rows, _ = _run(vql, PARAMS_VQL, {"DfirName": artifact})
     except CollectionError:
         return []
-    return [p.get("name") for p in ((rows[0].get("parameters") if rows else None) or []) if p.get("name")]
+    return [p for p in ((rows[0].get("parameters") if rows else None) or []) if p.get("name")]
 
 
-def with_time_window(artifact: str, params: dict, vql) -> tuple:
+def artifact_parameters(artifact: str, vql) -> list:
+    """Parameter names the artifact accepts ([] if they can't be looked up)."""
+    return [p["name"] for p in parameter_specs(artifact, vql)]
+
+
+def _shorten(text, limit: int = 90) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def check_parameter_names(artifact: str, params: dict, specs: list) -> dict:
+    """
+    Velociraptor ignores parameters an artifact doesn't declare and runs with its defaults,
+    so a guessed name looks like "nothing found". Agent requests must use declared names
+    (a different letter case is corrected). Skipped when the declaration can't be looked up.
+    """
+    if not specs or not params:
+        return dict(params or {})
+    declared = {p["name"].lower(): p["name"] for p in specs}
+    unknown = [k for k in params if k.lower() not in declared]
+    if unknown:
+        accepted = "; ".join(
+            p["name"] + (f" (default {_shorten(p['default'], 60)!r})" if p.get("default") not in (None, "") else "")
+            + (f": {_shorten(p['description'])}" if p.get("description") else "")
+            for p in specs[:30])
+        raise CollectionError(
+            f"'{artifact}' has no parameter {', '.join(map(repr, unknown))}. Velociraptor would ignore "
+            f"it and run with the defaults, so an empty result would mean nothing. Accepted parameters: "
+            f"{accepted}. Retry with these names (describe_artifact shows the full description).")
+    return {declared[k.lower()]: v for k, v in params.items()}
+
+
+def with_time_window(artifact: str, params: dict, vql, specs: list = None) -> tuple:
     """
     Fills the artifact's own date-filter parameters from the case scope, so
     Velociraptor drops out-of-window rows before sending them. Parameters the
@@ -145,7 +177,8 @@ def with_time_window(artifact: str, params: dict, vql) -> tuple:
         return params, []
     given = {k.lower() for k in params}
     applied = []
-    for name in artifact_parameters(artifact, vql):
+    names = [p["name"] for p in specs] if specs is not None else artifact_parameters(artifact, vql)
+    for name in names:
         low = name.lower()
         if low in given:
             continue
@@ -426,7 +459,10 @@ def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=No
     vql = vql or get_vql()
     _target_client()
     _check_artifact(artifact)
-    params, window = with_time_window(artifact, params, vql)
+    specs = parameter_specs(artifact, vql)
+    if requested_by == "agent":
+        params = check_parameter_names(artifact, params, specs)
+    params, window = with_time_window(artifact, params, vql, specs)
     if requested_by == "agent":
         # The investigator approves (or the case allows) agent collections before anything runs.
         # Requests approved later (Streamlit) are run by approvals.execute as the investigator's.

@@ -10,7 +10,7 @@ initial_access:
     - 'Security 4625 bursts from one IP followed by 4624 from the same IP: brute force (RDP: LogonType 10, often preceded by 1149).'
     - 'RDP from external IPs: 4624 type 10, RemoteConnectionManager 1149, LocalSessionManager 21/22.'
     - 'Before writing that the delivery method cannot be determined, check the download evidence below and the parent process of the first execution (memory pslist PPID, Prefetch of the parent).'
-    - 'Downloads, in this order: Prefetch shows WHICH browser ran just before the payload (IEXPLORE.EXE, MSEDGE.EXE, CHROME.EXE, FIREFOX.EXE); Windows.NTFS.ADSHunter on the payload''s current path gives its Zone.Identifier (HostUrl = download URL); then the history artifact of that browser if it works on images (see dfir_guide on the artifact). Internet Explorer history has no parser artifact on a standard server.'
+    - 'Downloads, in this order: Prefetch shows WHICH browser ran just before the payload (IEXPLORE.EXE, MSEDGE.EXE, CHROME.EXE, FIREFOX.EXE); Windows.NTFS.ADSHunter on the payload''s current path gives its Zone.Identifier (HostUrl = download URL); then the history artifact of that browser if it works on images (see dfir_guide on the artifact). Internet Explorer and Edge Legacy (MicrosoftEdge.exe, not msedge.exe) keep history in WebCacheV01.dat, which has no parser artifact on a standard server: use Prefetch, Zone.Identifier and the MFT/USN of the Downloads folder.'
     - Email attachments and Office files opened (LNK, JumpLists) shortly before the first malicious execution.
     - Exposed services (web servers) with new files in web roots (MFT/USN).
 
@@ -90,6 +90,7 @@ memory:
     - 'Persistence: svcscan (services with odd binary paths), printkey on Software\Microsoft\Windows\CurrentVersion\Run.'
     - 'Typed commands: consoles / cmdscan; credential theft: handles or dlllist of lsass.exe, processes touching lsass.'
     - 'Correlate with the disk timeline: the process create time (pslist) should match Prefetch/7045/4688 on disk; the C2 IP should appear in the firewall/proxy or other hosts.'
-    - 'Always name the parent: search_iocs "PID <ppid>" finds the parent process in pslist/psscan. explorer.exe means it was started from the desktop (double-click), cmd.exe/powershell.exe a command line, services.exe a service, a browser a download that was opened.'
+    - 'Always name the parent: search_iocs "PID <ppid>" finds it in the pslist/psscan rows already collected. Not there: analyze_memory windows.psscan with pid [<ppid>] (exited processes stay in memory for a while). contains "<ppid>" also matches the children that list it as PPID, so use pid. explorer.exe means it was started from the desktop (double-click), cmd.exe/powershell.exe a command line, services.exe a service, a browser a download that was opened.'
+    - 'A parent found nowhere in memory has exited and been overwritten: write that, then use disk evidence of what ran just before the child (Prefetch, browser artifacts, Zone.Identifier).'
     - 'Narrow heavy plugins (handles, dlllist, filescan, envars) with pid or contains from a lead you already have.'
 

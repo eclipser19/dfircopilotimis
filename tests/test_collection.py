@@ -12,7 +12,7 @@ def test_params_go_through_env_never_into_vql_text(case):
     nasty = "C:/it's ')\" ; SELECT * FROM execve()"
     collection.collect("Generic.Client.Info", {"Path": nasty, "Recurse": True}, vql=vql, sleep=lambda s: None)
 
-    query, env = vql.calls[0]
+    query, env = next(call for call in vql.calls if "collect_client" in call[0])
     assert query == collection.SCHEDULE_VQL.format(limits=", max_rows=50000")
     assert nasty not in query
     assert env["DfirClientId"] == CLIENT

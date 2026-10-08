@@ -86,6 +86,33 @@ def test_agent_heavy_artifact_needs_a_filter(case, monkeypatch):
     assert summary["state"] == "FINISHED"
 
 
+def test_agent_parameter_names_must_be_the_artifacts_own(case, monkeypatch):
+    _config(monkeypatch, agent_collections="auto")
+    declared = [{"name": "PathGlob", "default": "C:/Users/**", "description": "Files to check for streams"},
+                {"name": "DateAfter"}]
+    vql = FakeVQL(artifact_params=declared)
+    guessed = {"TargetGlob": "C:/Windows/System32/x.exe", "AdsNameGlob": "Zone.Identifier"}
+    with pytest.raises(CollectionError) as e:
+        collection.collect("Windows.NTFS.ADSHunter", guessed, vql=vql, requested_by="agent", sleep=lambda s: None)
+    assert "no parameter 'TargetGlob', 'AdsNameGlob'" in str(e.value) and "would ignore" in str(e.value)
+    assert "PathGlob (default 'C:/Users/**'): Files to check for streams; DateAfter" in str(e.value)
+    assert not any("collect_client" in q for q, _ in vql.calls)
+
+    vql = FakeVQL(artifact_params=declared)            # letter case is corrected
+    collection.collect("Windows.NTFS.ADSHunter", {"pathglob": "C:/Windows/System32/x.exe"}, vql=vql,
+                       requested_by="agent", sleep=lambda s: None)
+    assert _spec(vql)["Windows.NTFS.ADSHunter"] == {"PathGlob": "C:/Windows/System32/x.exe",
+                                                    "DateAfter": SCOPE["start_time"]}
+
+
+def test_parameter_names_are_not_checked_when_they_cannot_be_looked_up(case, monkeypatch):
+    _config(monkeypatch, agent_collections="auto")
+    vql = FakeVQL()                                    # artifact_definitions returns no parameters
+    collection.collect("Windows.System.TaskScheduler", {"Anything": "1"}, vql=vql, requested_by="agent",
+                       sleep=lambda s: None)
+    assert _spec(vql)["Windows.System.TaskScheduler"] == {"Anything": "1"}
+
+
 def test_investigator_collections_skip_agent_rules(case, monkeypatch):
     _config(monkeypatch, agent_collections="off")
     summary = collection.collect("Windows.NTFS.MFT", vql=FakeVQL(), sleep=lambda s: None)

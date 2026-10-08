@@ -41,7 +41,8 @@ pip install -r requirements.txt
      into each artifact's own date filters, and each collection is capped at
      `collection.max_rows` rows.
    - The agent then analyzes the case database. If it needs more data it asks for a
-     targeted collection; heavy artifacts (MFT, USN, EvtxHunter) need a filter, and
+     targeted collection; heavy artifacts (MFT, USN, EvtxHunter) need a filter, parameter
+     names must be ones the artifact declares (Velociraptor silently ignores others), and
      with `agent_collections: confirm` you approve each request (y/n).
    See `cases/szechuan/` for a complete example with an answer key.
 

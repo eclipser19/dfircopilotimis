@@ -91,7 +91,8 @@ def collect_artifact(artifact_name: str, parameters: Optional[dict] = None) -> s
     flow_id for `check_collection`.
     Args:
         artifact_name: The artifact name (e.g., 'Windows.NTFS.MFT').
-        parameters: Artifact parameters (e.g., {'FileRegex': 'coreupdater'}). Use `describe_artifact` for valid names.
+        parameters: Artifact parameters (e.g., {'FileRegex': 'updater'}). Use the artifact's own
+            names from `describe_artifact`; unknown names are refused.
     """
     try:
         return _dump(collection.collect(artifact_name, parameters, requested_by="agent"))
@@ -117,7 +118,7 @@ def analyze_memory(plugin: str, pid: Optional[List[int]] = None, contains: Optio
     Args:
         plugin: Plugin name, e.g. 'windows.netscan'.
         pid: Only these process IDs, e.g. [3644] (plugins that take pid).
-        contains: Only rows containing this text in any column (case-insensitive), e.g. 'coreupdater'.
+        contains: Only rows containing this text in any column (case-insensitive), e.g. 'updater.exe'.
         key: Registry key for windows.registry.printkey, e.g. 'Software\\Microsoft\\Windows\\CurrentVersion\\Run'.
         recurse: With key: include subkeys.
     """
