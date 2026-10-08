@@ -17,3 +17,7 @@ venv/
 case_data/
 reports/
 output/
+
+# Accounts (password hashes) and Streamlit secrets — server-local, never commit
+auth.yaml
+.streamlit/secrets.toml

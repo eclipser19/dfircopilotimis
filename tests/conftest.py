@@ -82,6 +82,19 @@ def case(tmp_path, monkeypatch):
 def no_approval_channel(monkeypatch):
     """Every test starts without an approval UI (the CLI test installs its own prompt)."""
     monkeypatch.setattr(approvals, "ASK", None)
+    monkeypatch.setattr(approvals, "ACTOR", None)
+
+
+@pytest.fixture(autouse=True)
+def isolated_server_settings(tmp_path, monkeypatch):
+    """No accounts and the default cloud endpoint, whatever the developer's shell or folder has."""
+    from copilot import auth
+    monkeypatch.setenv("DFIR_AUTH_FILE", str(tmp_path / "no_auth.yaml"))
+    for var in ("DFIR_REQUIRE_LOGIN", "DFIR_LLM_BASE_URL", "DFIR_LLM_MODEL", "DFIR_LLM_API_KEY", "DFIR_LLM_LOCAL",
+                "OPENAI_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(auth, "_failures", {})
+    monkeypatch.setattr(auth, "ITERATIONS", 1000)       # fast hashing in tests
 
 
 @pytest.fixture

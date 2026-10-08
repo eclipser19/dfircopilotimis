@@ -123,7 +123,8 @@ def test_moved_files_are_found_again(case, monkeypatch, tmp_path):
     assert outputs.locate(outputs.produced_since(0)[-1]) == ""
 
 
-def test_output_dir_is_absolute(case, monkeypatch):
+def test_output_dir_is_absolute(case, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)          # output_dir() creates the folder; keep it out of the repo
     monkeypatch.setenv("DFIR_OUTPUT_DIR", "relative/outs")
     assert os.path.isabs(outputs.output_dir())
 

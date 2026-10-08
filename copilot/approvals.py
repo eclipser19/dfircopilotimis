@@ -30,6 +30,9 @@ MODES = ("confirm", "auto", "off")
 
 # Set by the UI: ask(request) -> True (approved now), False (declined) or "queued" (decided later).
 ASK = None
+# Who answers ASK in this process (the CLI sets the OS user). Streamlit passes the signed-in
+# user to resolve() instead, since one server process serves several sessions.
+ACTOR = None
 
 
 class ApprovalError(Exception):
@@ -45,7 +48,8 @@ def mode(kind: str) -> str:
 
 
 def _log(request: dict, decision: str):
-    case_db.log_query("approval", f"{request['kind']} {decision}: {request['summary']} "
+    by = f" by {request['decided_by']}" if request.get("decided_by") else ""
+    case_db.log_query("approval", f"{request['kind']} {decision}{by}: {request['summary']} "
                                 f"-- {json.dumps(request['details'], default=str)}", 0)
 
 
@@ -70,6 +74,8 @@ def gate(kind: str, summary: str, details: dict) -> dict:
         raise ApprovalError(f"This needs the investigator's approval, which isn't available here. "
                             f"Ask them to {ACTIONS[kind]} themselves.")
     decision = ASK(request)
+    if decision != "queued":
+        request["decided_by"] = ACTOR
     if decision == "queued":
         _log(request, "awaiting approval")
         raise ApprovalError(f"Waiting for the investigator's approval: {summary}. If they approve, the result "
@@ -88,11 +94,12 @@ def run(kind: str, summary: str, details: dict):
     return execute(gate(kind, summary, details))
 
 
-def resolve(request: dict, approved: bool):
+def resolve(request: dict, approved: bool, actor: str = None):
     """For requests decided later (Streamlit): logs the decision and runs the action if approved."""
     from copilot import cases
     if request.get("case_id") != cases.current_id():
         raise ApprovalError(f"This request belongs to case '{request.get('case_id')}'; switch to it first.")
+    request["decided_by"] = actor
     if not approved:
         _log(request, "declined")
         return None
@@ -108,7 +115,10 @@ def execute(request: dict):
     if kind == "collect":
         return collection.collect(d["artifact"], d.get("params") or {})
     if kind == "retract_finding":
-        who = "approved by the investigator" if request.get("approved_by") == "investigator" else "by the agent"
+        if request.get("approved_by") == "investigator":
+            who = f"approved by {request.get('decided_by') or 'the investigator'}"
+        else:
+            who = "by the agent"
         found = case_db.retract_finding(d["finding_id"], f"{d['reason']} (retraction {who})")
         if not found:
             raise ApprovalError(f"Finding {d['finding_id']} no longer exists.")

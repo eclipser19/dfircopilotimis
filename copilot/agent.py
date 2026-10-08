@@ -1,6 +1,5 @@
 import getpass
 import json
-import os
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
 from copilot.tools import tools, tool_map
 
@@ -75,12 +74,16 @@ def _confirm(request: dict) -> bool:
 
 def run_agent_loop():
     from copilot import collection
+    from copilot import llm as llm_config
     from copilot.case_config import case_config
-    from copilot.llm import make_llm
     from copilot.prompts import build_system_prompt
 
-    api_key = os.environ.get("OPENAI_API_KEY") or getpass.getpass("Please enter your OpenAI API Key: ")
-    llm = make_llm(api_key)
+    api_key = None
+    if llm_config.needs_user_key():
+        api_key = getpass.getpass("Please enter the API key for the LLM endpoint: ")
+    elif llm_config.is_local():
+        print(f"[*] Local model '{llm_config.model_name()}' at {llm_config.base_url()}")
+    llm = llm_config.make_llm(api_key)
     llm_with_tools = llm.bind_tools(tools)
     # Same model, but not allowed to call tools: used to wrap up before the budget runs out.
     finalizer = llm.bind_tools(tools, tool_choice="none")
@@ -128,6 +131,10 @@ def run_agent_loop():
 
     from copilot import approvals
     approvals.ASK = _confirm
+    try:
+        approvals.ACTOR = getpass.getuser()  # recorded with each approval in the audit log
+    except Exception:                        # no login name in some containers
+        approvals.ACTOR = None
     MAX_STEPS = case_config.max_steps
     usage = TokenUsage()
 
@@ -213,21 +220,32 @@ def run_agent_loop():
 
 
 class TokenUsage:
-    """Counts tokens reported by the LLM API, per turn and for the whole session."""
+    """
+    Counts tokens per turn and for the session. Uses the usage the API reports; when an
+    endpoint reports none (common for local model servers), estimates ~4 characters per
+    token so the per-turn budget still works.
+    """
 
     def __init__(self):
         self.session_input = self.session_output = 0
         self.turn_input = self.turn_output = 0
+        self.estimated = False
 
     def start_turn(self):
         self.turn_input = self.turn_output = 0
 
-    def add(self, response):
+    def add(self, response, prompt_chars: int = 0):
         meta = getattr(response, "usage_metadata", None) or {}
-        self.turn_input += meta.get("input_tokens", 0)
-        self.turn_output += meta.get("output_tokens", 0)
-        self.session_input += meta.get("input_tokens", 0)
-        self.session_output += meta.get("output_tokens", 0)
+        tokens_in, tokens_out = meta.get("input_tokens", 0), meta.get("output_tokens", 0)
+        if not (tokens_in or tokens_out):
+            self.estimated = True
+            out_chars = len(str(response.content or "")) + len(json.dumps(getattr(response, "tool_calls", None) or [],
+                                                                           default=str))
+            tokens_in, tokens_out = prompt_chars // 4, out_chars // 4
+        self.turn_input += tokens_in
+        self.turn_output += tokens_out
+        self.session_input += tokens_in
+        self.session_output += tokens_out
 
     @property
     def turn_total(self) -> int:
@@ -235,7 +253,13 @@ class TokenUsage:
 
     def summary(self) -> str:
         return (f"[tokens] this turn: {self.turn_input:,} in / {self.turn_output:,} out"
-                f" | session: {self.session_input + self.session_output:,}")
+                f" | session: {self.session_input + self.session_output:,}"
+                + (" (estimated: the model doesn't report usage)" if self.estimated else ""))
+
+
+def _prompt_chars(history) -> int:
+    return sum(len(str(m.content or "")) + len(json.dumps(getattr(m, "tool_calls", None) or [], default=str))
+               for m in history)
 
 
 WRAP_UP_AT = 0.8  # share of the token budget after which the agent must answer
@@ -289,10 +313,18 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
                 emit("notice", f"{usage.turn_total:,} of {max_tokens:,} tokens used: asking the agent to wrap up.")
                 chat_history.append(HumanMessage(content=WRAP_UP_PROMPT))
                 trim_chat_history(chat_history)
-                response = finalizer.invoke(chat_history)
-                usage.add(response)
+                try:
+                    response = finalizer.invoke(chat_history)
+                except Exception:
+                    # Some local servers don't support tool_choice="none": ask the normal model
+                    # and keep only its text (unanswered tool calls would break the next request).
+                    response = llm_with_tools.invoke(chat_history)
+                    usage.add(response, _prompt_chars(chat_history))
+                    response = AIMessage(content=answer_text(response))
+                else:
+                    usage.add(response, _prompt_chars(chat_history))
                 chat_history.append(response)
-                answer, answered = answer_text(response), True
+                answer, answered = answer_text(response) or "(The model returned no text.)", True
                 emit("answer", answer)
                 break
             if max_tokens and usage.turn_total >= max_tokens:
@@ -303,7 +335,7 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
             trim_chat_history(chat_history)
 
             response = llm_with_tools.invoke(chat_history)
-            usage.add(response)
+            usage.add(response, _prompt_chars(chat_history))
             chat_history.append(response)
 
             if not response.tool_calls:

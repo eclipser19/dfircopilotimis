@@ -120,3 +120,18 @@ def test_cli_prompt_shows_what_the_agent_wants(monkeypatch, capsys):
     assert _confirm(request) is False                     # Enter = No
     out = capsys.readouterr().out
     assert "The agent wants to retract a finding" in out and "'coreupdater service' because: x" in out
+
+
+def test_audit_log_names_who_decided(case, finding, monkeypatch):
+    monkeypatch.setattr(approvals, "ACTOR", "alice")         # the CLI's OS user
+    monkeypatch.setattr(approvals, "ASK", lambda r: False)
+    _retract(finding)
+    queue = []
+    monkeypatch.setattr(approvals, "ASK", lambda r: queue.append(r) or "queued")
+    _retract(finding)
+    approvals.resolve(queue[0], True, actor="bob")            # Streamlit passes the signed-in user
+    rows = [r[0] for r in case.conn.execute("SELECT query FROM audit_log WHERE tool_name = 'approval'")]
+    assert rows[0].startswith("retract_finding declined by alice")
+    assert rows[1].startswith("retract_finding awaiting approval:")
+    assert rows[2].startswith("retract_finding approved by bob")
+    assert case.get_findings(include_retracted=True)[0]["status_reason"].endswith("(retraction approved by bob)")

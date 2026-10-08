@@ -307,3 +307,106 @@ def test_pending_requests_stay_with_their_case(two_app_cases):
     assert not at.exception
     assert case_config.iocs["ips"] == ["203.78.103.109"]
     assert "203.78.103.109" in at.session_state["chat_history"][0].content   # agent sees new settings
+
+
+def _sign_in(at, username, password):
+    at.text_input[0].input(username)
+    at.text_input[1].input(password)
+    next(b for b in at.button if b.label == "Sign in").click().run()
+    return at
+
+
+def test_sign_in_gates_the_whole_app(app_env):
+    from copilot import auth
+    auth.add_user("alice", "correct horse battery")
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert not at.exception
+    assert "Interactive Investigation" not in [t.value for t in at.title]   # nothing of the case is shown
+    assert not at.chat_input and "No data collected" not in _texts(at)
+    _sign_in(at, "alice", "wrong password!")
+    assert "Wrong username or password." in [e.value for e in at.error]
+    _sign_in(at, "alice", "correct horse battery")
+    assert not at.exception
+    assert "Interactive Investigation" in [t.value for t in at.title]
+    assert "Signed in as **alice**" in _texts(at)
+    next(b for b in at.button if b.label == "Sign out").click().run()
+    assert "Interactive Investigation" not in [t.value for t in at.title]
+
+
+def test_locked_account_is_told_so(app_env):
+    from copilot import auth
+    auth.add_user("alice", "correct horse battery")
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    for _ in range(auth.MAX_FAILURES):
+        _sign_in(at, "alice", "wrong password!")
+    assert any("Too many failed attempts" in e.value for e in at.error)
+    _sign_in(at, "alice", "correct horse battery")
+    assert "Interactive Investigation" not in [t.value for t in at.title]
+
+
+def test_removed_account_is_signed_out(app_env):
+    from copilot import auth
+    auth.add_user("alice", "correct horse battery")
+    auth.add_user("bob", "another long password")
+    at = _sign_in(AppTest.from_file(APP, default_timeout=30).run(), "alice", "correct horse battery")
+    assert "Interactive Investigation" in [t.value for t in at.title]
+    auth.remove_user("alice")
+    at.run()
+    assert "Interactive Investigation" not in [t.value for t in at.title]
+
+
+def test_required_login_without_accounts_refuses_to_run_open(app_env, monkeypatch):
+    monkeypatch.setenv("DFIR_REQUIRE_LOGIN", "1")
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert any("no accounts exist" in e.value for e in at.error)
+    assert "Interactive Investigation" not in [t.value for t in at.title]
+
+
+def test_open_app_warns_that_anyone_can_use_it(app_env):
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert any("No sign-in configured" in w.value for w in at.warning)
+
+
+def test_approvals_record_the_signed_in_investigator(app_env):
+    from copilot import auth
+    auth.add_user("alice", "correct horse battery")
+    app_env.ingest_artifact_results([{"EventTime": "2020-09-19T03:42:42Z", "Message": "coreupdater"}],
+                                    "S", "D", "C.1")
+    eid = app_env.search_events("coreupdater")["records"][0]["evidence_id"]
+    fid = app_env.record_finding("coreupdater service installed", "d", [eid], "high")
+    at = _sign_in(AppTest.from_file(APP, default_timeout=30).run(), "alice", "correct horse battery")
+    llm = ScriptedLLM(
+        AIMessage(content="", tool_calls=[{"name": "retract_finding", "id": "1",
+                                           "args": {"finding_id": fid, "reason": "benign updater"}}]),
+        AIMessage(content="Asked."))
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    at.chat_input[0].set_value("check it").run()
+    next(b for b in at.button if b.label == "Approve").click().run()
+    assert not at.exception
+    assert app_env.get_findings(include_retracted=True)[0]["status_reason"].endswith("(retraction approved by alice)")
+    rows = [r[0] for r in app_env.conn.execute("SELECT query FROM audit_log WHERE tool_name = 'approval'")]
+    assert any(r.startswith("retract_finding approved by alice") for r in rows)
+
+
+def test_local_model_needs_no_key_field(app_env, monkeypatch):
+    class Bindable(ScriptedLLM):
+        def bind_tools(self, *a, **k):
+            return self
+
+    monkeypatch.setenv("DFIR_LLM_BASE_URL", "http://localhost:11434/v1")
+    monkeypatch.setenv("DFIR_LLM_MODEL", "qwen3:32b")
+    seen = []
+    monkeypatch.setattr("copilot.llm.make_llm", lambda key=None: seen.append(key) or Bindable())
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert not at.exception
+    assert not [w for w in at.text_input if w.label == "API key for the LLM endpoint"]
+    assert "Local model `qwen3:32b` at http://localhost:11434/v1" in _texts(at)
+    assert "llm_with_tools" in at.session_state and seen == [None]
+
+
+def test_cloud_endpoint_without_server_key_asks_for_one(app_env):
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert [w for w in at.text_input if w.label == "API key for the LLM endpoint"]
+    assert "llm_with_tools" not in at.session_state

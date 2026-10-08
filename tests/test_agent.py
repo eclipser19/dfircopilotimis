@@ -73,3 +73,47 @@ def test_collection_plan_accepts_names_and_parameters(monkeypatch):
         {"artifact": "Generic.Client.Info", "parameters": {}},
         {"artifact": "Windows.EventLogs.EvtxHunter", "parameters": {"IdRegex": "7045"}},
     ]
+
+
+class SilentLLM:
+    """A local server that reports no token usage."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def invoke(self, history):
+        self.calls += 1
+        return AIMessage(content="", tool_calls=[{"name": "case_summary", "args": {}, "id": f"c{self.calls}"}])
+
+
+def test_usage_is_estimated_when_the_model_reports_none():
+    usage = TokenUsage()
+    usage.add(AIMessage(content="x" * 400), prompt_chars=4000)
+    assert (usage.turn_input, usage.turn_output) == (1000, 100)
+    assert usage.estimated and "estimated" in usage.summary()
+
+
+def test_budget_still_applies_without_reported_usage(case, capsys):
+    llm = SilentLLM()
+    _process_turn(llm, [HumanMessage(content="x" * 40_000)], max_steps=50, max_tokens=25_000)
+    assert 1 < llm.calls < 50                       # stopped by the estimated budget, not the step limit
+    assert "Token budget for this turn reached" in capsys.readouterr().out
+
+
+class NoToolChoice:
+    def invoke(self, history):
+        raise ValueError("tool_choice 'none' is not supported")
+
+
+def test_wrap_up_falls_back_when_the_server_rejects_tool_choice(case, capsys):
+    class Answers(FakeLLM):
+        def invoke(self, history):
+            if "Do not call any tools" in str(history[-1].content):
+                return AIMessage(content="Wrapped up anyway", tool_calls=[{"name": "case_summary", "args": {},
+                                                                           "id": "late"}])
+            return super().invoke(history)
+
+    history = [HumanMessage(content="go")]
+    _process_turn(Answers(tokens_per_call=1000), history, max_steps=50, max_tokens=5000, finalizer=NoToolChoice())
+    assert "Wrapped up anyway" in capsys.readouterr().out
+    assert history[-1].content == "Wrapped up anyway" and not history[-1].tool_calls   # no dangling tool call

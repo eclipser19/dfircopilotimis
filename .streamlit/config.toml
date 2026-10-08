@@ -1,0 +1,11 @@
+# Streamlit settings for the copilot (read when started from this folder).
+[browser]
+gatherUsageStats = false     # no telemetry to Streamlit; the server may have no internet anyway
+# On the server, set the address investigators use. Streamlit then also skips looking up
+# its public IP (checkip.amazonaws.com) at startup.
+# serverAddress = "dfir-copilot.internal"
+
+[server]
+# Passwords are sent at sign-in: serve over HTTPS (or put a TLS reverse proxy in front).
+# sslCertFile = "/etc/dfir-copilot/cert.pem"
+# sslKeyFile = "/etc/dfir-copilot/key.pem"

@@ -5,15 +5,50 @@ import re
 import streamlit as st
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from copilot import approvals, cases, collection, commands, conversation, outputs, tools as copilot_tools
+from copilot import approvals, auth, cases, collection, commands, conversation, outputs, tools as copilot_tools
+from copilot import llm as llm_config
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
 from copilot.database import case_db
-from copilot.llm import make_llm
 from copilot.prompts import build_system_prompt
 from copilot.tools import tools
 
 st.set_page_config(page_title="DFIR Copilot", page_icon="🕵️", layout="wide")
+
+
+# ==========================================
+# Login (local accounts, works offline; see copilot/auth.py)
+# ==========================================
+def login_gate():
+    """Stops the page here until a configured user signs in. Without accounts the app runs open."""
+    user = st.session_state.get("user")
+    if user and auth.is_user(user):
+        return
+    if user:                                   # account removed on the server: sign out
+        st.session_state.clear()
+    if not auth.login_required():
+        return
+    st.title("🕵️ DFIR Copilot")
+    if not auth.configured():
+        st.error("Sign-in is required (DFIR_REQUIRE_LOGIN) but no accounts exist yet. On the server, run "
+                 "`python -m copilot.auth add <username>`.")
+        st.stop()
+    with st.form("login"):
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Sign in", type="primary")
+    if submitted:
+        username = username.strip()
+        if auth.verify(username, password):
+            st.session_state.user = username
+            st.rerun()
+        wait = auth.locked_for(username)
+        st.error(f"Too many failed attempts for this account. Try again in {wait // 60 + 1} min."
+                 if wait else "Wrong username or password.")
+    st.stop()
+
+
+login_gate()
 
 MAX_DOWNLOAD_MB = 50  # larger files are listed with their path instead of loaded into the page
 MIME = {"html": "text/html", "md": "text/markdown", "csv": "text/csv", "json": "application/json",
@@ -268,14 +303,14 @@ def resolve_request(request: dict, approved: bool):
     st.session_state.pending = [r for r in st.session_state.pending if r["id"] != request["id"]]
     label = approvals.describe(request)
     if not approved:
-        approvals.resolve(request, False)
+        approvals.resolve(request, False, actor=st.session_state.get("user"))
         st.session_state.chat_history.append(HumanMessage(content=f"[Investigator] Declined: {label}."))
         st.session_state.messages.append({"role": "assistant", "content": f"❌ Declined — {label}"})
         return
     with st.chat_message("assistant"):
         with st.spinner(f"{label}..."):
             try:
-                result = approvals.resolve(request, True)
+                result = approvals.resolve(request, True, actor=st.session_state.get("user"))
             except (approvals.ApprovalError, collection.CollectionError, cases.CaseError) as e:
                 result = f"Failed: {e}"
     shown = f"```\n{status_line(result)}\n```" if isinstance(result, dict) else str(result)
@@ -295,19 +330,32 @@ action = None
 with st.sidebar:
     st.title("🕵️ DFIR Copilot")
 
-    # A server-side key is used directly and never sent to the browser (a pre-filled password
-    # field is readable by every visitor). Without one, each investigator enters their own.
-    server_key = os.environ.get("OPENAI_API_KEY", "")
-    if server_key:
-        api_key_input = server_key
-        st.caption("🔑 Using the server's API key.")
+    if st.session_state.get("user"):
+        c1, c2 = st.columns([3, 2])
+        c1.caption(f"👤 Signed in as **{st.session_state.user}**")
+        if c2.button("Sign out"):
+            persist()
+            st.session_state.clear()
+            st.rerun()
     else:
-        api_key_input = st.text_input("Azure OpenAI API Key", type="password")
-    if api_key_input and ("llm_with_tools" not in st.session_state
-                          or st.session_state.get("current_api_key") != api_key_input):
+        st.warning("No sign-in configured: anyone who can reach this page can use it. "
+                   "Add an account with `python -m copilot.auth add <username>`.")
+
+    # A server-side key is used directly and never sent to the browser (a pre-filled password
+    # field is readable by every visitor). A local model needs no key at all. Only a cloud
+    # endpoint without a server key asks each investigator for theirs.
+    user_key = ""
+    if llm_config.needs_user_key():
+        user_key = st.text_input("API key for the LLM endpoint", type="password")
+    elif llm_config.is_local():
+        st.caption(f"🖥️ Local model `{llm_config.model_name()}` at {llm_config.base_url()}")
+    else:
+        st.caption("🔑 Using the server's API key.")
+    key_id = user_key or ("" if llm_config.needs_user_key() else "server")
+    if key_id and ("llm_with_tools" not in st.session_state or st.session_state.get("current_api_key") != key_id):
         # Kept in this browser session only; never written to os.environ.
-        st.session_state.current_api_key = api_key_input
-        llm = make_llm(api_key_input)
+        st.session_state.current_api_key = key_id
+        llm = llm_config.make_llm(user_key or None)
         st.session_state.llm = llm
         st.session_state.llm_with_tools = llm.bind_tools(tools)
         st.session_state.finalizer = llm.bind_tools(tools, tool_choice="none")
@@ -413,7 +461,8 @@ with st.sidebar:
             choice = st.selectbox("Finding", list(labels), key="retract_choice")
             reason = st.text_input("Reason (e.g. the contradicting evidence)", key="retract_reason")
             if st.button("Retract", disabled=not reason.strip()):
-                case_db.retract_finding(labels[choice], reason.strip())
+                who = st.session_state.get("user")
+                case_db.retract_finding(labels[choice], reason.strip() + (f" (retracted by {who})" if who else ""))
                 st.session_state.chat_history.append(HumanMessage(
                     content=f"[Investigator] Retracted finding '{choice}': {reason.strip()}"))
                 st.rerun()

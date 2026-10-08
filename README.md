@@ -45,8 +45,10 @@ pip install -r requirements.txt
      with `agent_collections: confirm` you approve each request (y/n).
    See `cases/szechuan/` for a complete example with an answer key.
 
-4. **LLM.** Set `OPENAI_API_KEY` (or enter it when prompted). Optional:
-   `DFIR_LLM_MODEL`, `DFIR_LLM_BASE_URL`.
+4. **LLM.** Any OpenAI-compatible endpoint: the default cloud one, or a model on your own
+   server (see [Offline / local model](#offline--local-model)). For a cloud endpoint, set
+   `DFIR_LLM_API_KEY` (or `OPENAI_API_KEY`) on the server, or let each investigator enter
+   their own key. Optional: `DFIR_LLM_MODEL`, `DFIR_LLM_BASE_URL`, `DFIR_LLM_TIMEOUT`.
 
 ## Cases
 
@@ -150,6 +152,57 @@ The HTML report includes charts (activity over the incident window and around th
 findings, the findings in sequence, and which indicators connect which findings), drawn as
 static SVG with a "Show data" table under each. It is self-contained and safe to open: evidence text is shown as text (never
 interpreted as HTML) and the page blocks scripts and external content.
+
+## Sign-in
+
+The web app uses local accounts stored on the server, so it works without internet access
+or an identity provider. Passwords are stored as salted PBKDF2-SHA256 hashes in `auth.yaml`
+(`DFIR_AUTH_FILE`; git-ignored, readable only by its owner).
+
+```bash
+python -m copilot.auth add alice      # asks for the password (12+ characters) twice
+python -m copilot.auth list
+python -m copilot.auth remove alice   # also signs out alice's open sessions
+```
+
+- With no accounts, the app runs open and shows a warning. Set `DFIR_REQUIRE_LOGIN=1` on a
+  server so it refuses to run open.
+- After 5 failed attempts an account is locked for 5 minutes.
+- Approvals and sidebar retractions record who made them, in the audit log and in the
+  finding's retraction reason. In the CLI, this is the operating system user.
+- Refreshing the page signs you out. The chat is kept per case, so nothing is lost.
+- Streamlit serves plain HTTP. Serve it over HTTPS (`server.sslCertFile` and
+  `server.sslKeyFile` in `.streamlit/config.toml`, or a TLS reverse proxy), otherwise
+  passwords cross the network in clear text.
+- One investigator at a time: the active case is shared by everyone signed in.
+
+## Offline / local model
+
+The copilot needs no internet access once its packages are installed: Velociraptor, the
+case data, the knowledge base and the reports are all local. Streamlit's usage statistics
+are switched off in `.streamlit/config.toml` (start the app from this folder). Set
+`browser.serverAddress` there as well, so Streamlit doesn't look up its public IP at startup.
+
+To use a model on your own hardware, point the copilot at any OpenAI-compatible server.
+Endpoints on localhost, a private IP address or a `.local` name need no API key
+(`DFIR_LLM_LOCAL=1` marks any other host as local):
+
+```bash
+# Ollama
+export DFIR_LLM_BASE_URL=http://localhost:11434/v1
+export DFIR_LLM_MODEL=<model name>        # must support tool calling
+export DFIR_LLM_TIMEOUT=900               # local models can be slow
+```
+
+- The agent works only through tool calls, so the model must support them. With vLLM,
+  start the server with `--enable-auto-tool-choice` and the model's `--tool-call-parser`.
+- Give the model a large context (at least 32k tokens). Ollama's default context is much
+  smaller and silently cuts the conversation; raise it (`OLLAMA_CONTEXT_LENGTH`, or
+  `num_ctx` in a Modelfile).
+- If the server reports no token usage, the copilot estimates it (about 4 characters per
+  token) so the per-turn budget still applies. The usage line then says "estimated".
+- Servers that reject `tool_choice="none"` still work: the wrap-up answer is requested from
+  the normal model.
 
 ## Tests
 
