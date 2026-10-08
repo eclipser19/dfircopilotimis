@@ -549,11 +549,11 @@ def render_message(msg: dict, index: int):
             download_button(entry, key=f"dl-{index}-{entry['output_id']}")
 
 
-def agent_turn(text: str, show_user: bool = True):
-    """Runs one agent turn; new files the agent produced are attached to its message."""
+def agent_turn(text: str, show_user: bool = True) -> bool:
+    """Runs one agent turn; new files the agent produced are attached to its message. False: it couldn't run."""
     if "llm_with_tools" not in st.session_state:
         st.error("Enter the API key in the sidebar first.")
-        return
+        return False
     if show_user:
         st.session_state.messages.append({"role": "user", "content": text})
         with st.chat_message("user"):
@@ -593,6 +593,7 @@ def agent_turn(text: str, show_user: bool = True):
             download_button(entry, key=f"dl-new-{entry['output_id']}")
         st.caption(st.session_state.usage.summary())
     st.session_state.messages.append({"role": "assistant", "content": content, "log": log, "files": files})
+    return True
 
 
 def run_triage(analyze: bool, plan: list = None):
@@ -617,7 +618,7 @@ def run_triage(analyze: bool, plan: list = None):
     started = [s for s in summaries if s.get("state") != "NOT_STARTED"]
     if not (analyze and started):
         st.rerun()  # refresh sidebar stats
-    agent_turn(
+    return agent_turn(
         "The initial collection has been run for you. Results per artifact:\n"
         f"{json.dumps(summaries, indent=2)}\n"
         "Follow up on any collection that is still RUNNING with check_collection. "
@@ -644,7 +645,7 @@ def run_memory_triage(analyze: bool, plugins: list = None):
                                       "content": "**Memory triage**\n\n```\n" + "\n".join(lines) + "\n```"})
     if not (analyze and any(s.get("state") == "FINISHED" for s in summaries)):
         st.rerun()
-    agent_turn(
+    return agent_turn(
         "The memory triage has been run for you on the case's memory image. Results per plugin:\n"
         f"{json.dumps(summaries, indent=2)}\n"
         "Analyze the memory evidence: processes with odd names, parents or paths (pslist/pstree), processes "
@@ -911,10 +912,14 @@ if action:
     kind, arg = action
     if kind == "triage":
         st.session_state.triage_dismissed = True
-        run_triage(*arg)
+        if run_triage(*arg):
+            after_possible_switch()
+            st.rerun()      # the sidebar shows the agent's approval requests, findings and token use
     elif kind == "memory_triage":
         st.session_state.triage_dismissed = True
-        run_memory_triage(*arg)
+        if run_memory_triage(*arg):
+            after_possible_switch()
+            st.rerun()
     elif kind in ("approve", "deny", "approve_all"):
         for request in (pending_here() if kind == "approve_all" else [arg]):
             resolve_request(request, approved=(kind != "deny"))
@@ -932,9 +937,8 @@ if prompt := st.chat_input("Ask the copilot to investigate... (/help for command
         st.session_state.messages.append({"role": "assistant", "content": reply})
         after_possible_switch()
         st.rerun()
-    agent_turn(prompt)
-    after_possible_switch()
-    if pending_here():
-        st.rerun()  # show the new approval requests in the sidebar
+    if agent_turn(prompt):
+        after_possible_switch()
+        st.rerun()      # the sidebar shows the agent's approval requests, findings and token use
 
 persist()  # runs that end normally save here; runs ending in st.rerun() are saved at the top of the next run

@@ -97,6 +97,8 @@ def collect_artifact(artifact_name: str, parameters: Optional[dict] = None) -> s
     try:
         return _dump(collection.collect(artifact_name, parameters, requested_by="agent"))
     except CollectionError as e:
+        if str(e).startswith("Waiting for the investigator's approval"):
+            return str(e)
         return f"Collection not started or failed: {e}"
 
 
@@ -136,6 +138,8 @@ def analyze_memory(plugin: str, pid: Optional[List[int]] = None, contains: Optio
     try:
         return _dump(memory.run(plugin, options, requested_by="agent"))
     except memory.MemoryAnalysisError as e:
+        if str(e).startswith("Waiting for the investigator's approval"):
+            return str(e)
         return f"Memory analysis not run: {e}"
 
 

@@ -69,6 +69,22 @@ def test_empty_case_offers_triage_and_runs_it(app_env):
     assert "No data collected" not in _texts(at)
 
 
+def test_requests_from_the_triage_analysis_show_up_for_approval(app_env):
+    at = AppTest.from_file(APP, default_timeout=30)
+    llm = ScriptedLLM(
+        AIMessage(content="", tool_calls=[{"name": "collect_artifact", "id": "1",
+                                           "args": {"artifact_name": "Windows.System.TaskScheduler"}}]),
+        AIMessage(content="Triage reviewed; one collection waits for you."))
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    next(b for b in at.button if b.label == "Run triage").click().run()      # with analysis (the default)
+    assert not at.exception
+    assert "Triage reviewed; one collection waits for you." in _texts(at)
+    assert [b for b in at.button if b.label == "Approve"]                      # no extra click needed
+    assert "LLM tokens this session: 0" not in _texts(at)                      # the sidebar is current
+
+
 def test_agent_report_appears_as_downloads(app_env):
     app_env.ingest_artifact_results([{"EventTime": "2020-09-19T03:36:23Z", "Message": "logon"}], "S", "D", "C.1")
     at = AppTest.from_file(APP, default_timeout=30)
