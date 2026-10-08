@@ -576,3 +576,21 @@ def test_agent_memory_request_waits_in_the_sidebar(mem_app, app_env):
     assert not at.exception
     assert len(mem_app.commands) == 1 and "Approved" in _texts(at)
     assert app_env.search_events("203.78.103.109")["total"] == 1
+
+
+def test_cited_evidence_ids_are_explained_under_the_answer(app_env):
+    app_env.ingest_artifact_results([{"EventTime": "2020-09-19T03:42:42Z", "Message": "service coreupdater installed"}],
+                                    "S", "D", "C.1")
+    eid = app_env.search_events("coreupdater")["records"][0]["evidence_id"]
+    at = AppTest.from_file(APP, default_timeout=30)
+    llm = ScriptedLLM(AIMessage(content=f"The service was installed (`{eid}`)."))
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    at.chat_input[0].set_value("what happened?").run()
+    assert not at.exception
+    box = next(e for e in at.expander if e.label.startswith("🔎 Cited in this answer"))
+    assert box.label.endswith("1 evidence record")
+    assert "service coreupdater installed" in str(at.table[0].value.to_dict())
+    at.run()                                                     # also on stored messages
+    assert any(e.label.startswith("🔎 Cited") for e in at.expander)

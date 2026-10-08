@@ -7,7 +7,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
-from copilot import approvals, auth, cases, collection, commands, conversation, memory, outputs, session
+from copilot import (approvals, auth, cases, citations, collection, commands, conversation, memory, outputs,
+                     session)
 from copilot import llm as llm_config
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
@@ -309,6 +310,18 @@ def download_button(entry: dict, key: str):
                            mime=MIME.get(name.rsplit(".", 1)[-1], "application/octet-stream"), key=key)
 
 
+def cited_box(content: str):
+    """What the evidence and finding IDs in an answer are, looked up in the case database (no LLM)."""
+    found = citations.cited(content, case_db, case_config)
+    if not (found["evidence"] or found["findings"]):
+        return
+    with st.expander(f"🔎 Cited in this answer: {citations.summary(found)}", expanded=False):
+        if found["findings"]:
+            st.table(found["findings"])
+        if found["evidence"]:
+            st.table(found["evidence"])
+
+
 def render_message(msg: dict, index: int):
     with st.chat_message(msg["role"]):
         if msg.get("log"):
@@ -316,6 +329,8 @@ def render_message(msg: dict, index: int):
                 st.text("\n".join(msg["log"]))
         if msg.get("content"):
             st.markdown(msg["content"])
+            if msg["role"] == "assistant":
+                cited_box(msg["content"])
         for entry in msg.get("files", []):
             download_button(entry, key=f"dl-{index}-{entry['output_id']}")
 
@@ -358,6 +373,7 @@ def agent_turn(text: str, show_user: bool = True):
         content = re.sub(r"\[([^\]]+)\]\((?!https?://)[^)]*\)", r"\1", content)
         files = outputs.produced_since(before)
         st.markdown(content)
+        cited_box(content)
         for entry in files:
             download_button(entry, key=f"dl-new-{entry['output_id']}")
         st.caption(st.session_state.usage.summary())
