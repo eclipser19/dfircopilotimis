@@ -15,8 +15,17 @@ the disk image records them one hour later (see the clock trap below).
 | 5 | — | Malware moved from Administrator's Downloads to `C:\Windows\System32\` | MFT, Prefetch, Amcache | ☐ |
 | 6 | @02:46 | `loot.zip` created with File Explorer (USN: created 02:46:15 as `My Social Security Number.zip` in `C:\Users\mortysmith\Documents`, renamed to `loot.zip` 02:46:18) | USN journal, MFT, LNK / JumpLists | ☐ |
 | 7 | @02:48 | `loot.zip` exfiltrated, then deleted (USN: deleted 02:47:09) | USN journal, Recycle Bin | ☐ |
-| 8 | later | Attacker logs off; logs in again, restarts and migrates Meterpreter, exits RDP | Security 4624/4634/4647, RDP logs | ☐ |
-| 9 | ~03:00 | Last interactive logoff | Security 4634/4647 | ☐ |
+| 8 | 02:52:13 | Attacker's RDP session (C137\Administrator from 10.42.85.10, Logon ID 8748659, session 3) logs off: 4647 and LocalSessionManager 23. No later Administrator session on this desktop (see note) | Security 4647/4634, RDP logs | ☐ |
+| 9 | 04:08:15 | Next interactive logon is ricksanchez at the console (4624 type 7, LocalSessionManager 21 from LOCAL), not the attacker; the Run key's PowerShell fires at that logon | Security 4624, RDP logs | ☐ |
+
+Note on rows 8-9 (revised): the published answers describe the attacker logging on again, restarting,
+migrating Meterpreter (into spoolsv.exe) and logging off for the last time around 03:00. That sequence
+most likely belongs to the DC: in the copilot's run (RDPAuth, records up to 04:08 UTC) the desktop's
+Security and RDP logs show no second Administrator session after 02:52:13. Not verified independently.
+A report that says the attacker did not come back to the desktop is right; one that claims a desktop
+re-login without evidence is not.
+Row 2: Internet Explorer and Edge Legacy share WinINet (history "Visited: user@url", INetCache
+<name>[1].exe, <name>.<random>.partial); either browser name is acceptable.
 
 ## Context the report should get right
 - Initial access was on the **DC** (RDP brute force from 194.61.24.102 at 02:21, Hydra);
