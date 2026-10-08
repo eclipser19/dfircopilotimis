@@ -57,7 +57,7 @@ collect:
 # (Case settings > Memory image) or write its file name here, as it is in memory.images_dir.
 # The answer key has the C2 (203.78.103.109) and the migration into spoolsv.exe in memory.
 memory:
-  image: ""
+  image: DESKTOP-SDN1RPT.mem      # the desktop's RAM capture (2.0 GB), Windows 10 build 19041
   os: windows
   # Memory triage (default when left out: info, pslist, psscan, pstree, cmdline, netscan, svcscan, malfind)
   # collect: [windows.info, windows.pslist, windows.psscan, windows.pstree, windows.cmdline,
