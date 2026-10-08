@@ -235,12 +235,14 @@ the agent can search the memory image for it (with your approval, like any plugi
   with the readable text around it (a full URL, an HTTP request). It also finds leftovers in freed
   memory of processes that have exited. It needs neither Volatility symbols nor YARA, but it
   can't say which process the memory belonged to, and it can't see inside compressed images.
-- `windows.vadyarascan` (Linux: `linux.vmayarascan`) runs YARA over each process's memory: with
-  `text` it names the processes that still hold the text (e.g. the owner of a C2 address that
-  netscan could not read), and with `rules` it scans with a rule file from `memory.yara_dir`.
-  The agent can't write rules itself; it can only use the files in that folder.
-  This needs YARA for Python next to Volatility: `pip install yara-x` (or `yara-python`).
-  `python -m copilot.memory check` says whether it is available.
+- `windows.memsearch` searches each running process's memory: with `text` it names the processes
+  that still hold the text, with the text around it (e.g. the owner of a C2 address that netscan
+  could not read); with `rules` it scans with a YARA rule file from `memory.yara_dir`. The agent
+  can't write rules itself; it can only use the files in that folder. It is the copilot's own
+  Volatility plugin (`copilot/vol_plugins/`), sturdier than `windows.vadyarascan`: an unreadable
+  process or region is skipped instead of stopping the run. Text searches need nothing extra;
+  rules need YARA for Python next to Volatility: `pip install yara-x` (or `yara-python`).
+  `python -m copilot.memory check` says whether it is available. (Linux: `linux.vmayarascan`.)
 
 Searches need a text or rules, so they can't be part of the memory triage.
 

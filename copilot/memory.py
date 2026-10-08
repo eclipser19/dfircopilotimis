@@ -24,8 +24,9 @@ files, writes outside the case, or reads anything but an image in images_dir (an
 in yara_dir).
 
 Searching memory: `strings` reads the image file itself for a text (no Volatility, also freed
-memory, but no process); windows.vadyarascan finds it per process with YARA, or scans with a
-rule file from yara_dir (needs `pip install yara-x` or yara-python next to Volatility).
+memory, but no process); windows.memsearch finds it per process, or scans with a rule file from
+yara_dir (rules need `pip install yara-x` or yara-python next to Volatility). windows.memsearch
+is the copilot's own Volatility plugin (vol_plugins/dfir_memsearch.py, loaded with -p).
 """
 import json
 import os
@@ -39,6 +40,8 @@ from copilot import settings
 from copilot.case_config import case_config
 from copilot.database import case_db
 
+# The copilot's own Volatility plugins (Volatility's -p option).
+PLUGIN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vol_plugins")
 # Runs Volatility's command line with this Python (the `vol` script is often not on PATH).
 BOOT = "import sys; sys.argv[0] = 'vol'; from volatility3.cli import main; main()"
 IMAGE_EXTENSIONS = {".mem", ".raw", ".vmem", ".dmp", ".lime", ".bin", ".img", ".dd", ".mddramimage",
@@ -50,7 +53,8 @@ class MemoryAnalysisError(Exception):
 
 
 class Plugin:
-    def __init__(self, names, about, options=(), heavy=False, needs_one_of=(), post=None, requires=""):
+    def __init__(self, names, about, options=(), heavy=False, needs_one_of=(), post=None, requires="",
+                 yara_string=False):
         self.names = names            # full Volatility names, newest first (renamed between versions)
         self.about = about
         self.options = set(options)   # pid | key | recurse | contains | text | rules
@@ -58,6 +62,7 @@ class Plugin:
         self.needs_one_of = set(needs_one_of)   # a search: one of these options is required
         self.post = post              # rows -> rows, after Volatility (e.g. decode matched bytes)
         self.requires = requires      # what to install when the installed Volatility lacks it
+        self.yara_string = yara_string    # Volatility's YARA plugins: text goes in as a --yara-string rule
 
     @property
     def searches(self) -> bool:
@@ -66,6 +71,7 @@ class Plugin:
 
 YARA_INSTALL = ("YARA for Python is not installed next to Volatility: run 'pip install yara-x' "
                 "(or yara-python) with the copilot's Python, then restart the copilot.")
+YARA_PLUGIN = "yarascan.YaraScan"      # listed by Volatility only when YARA for Python is installed
 
 
 def _printable(data: bytes) -> tuple:
@@ -139,13 +145,12 @@ PLUGINS = {
     # --- Searching memory
     "strings": Plugin([], "Searches the image file itself for a text (IP, domain, URL, file name), ASCII and "
                           "UTF-16, with the text around it. Finds leftovers in freed memory too; does not say "
-                          "which process (then use windows.vadyarascan). Fast, needs no symbols.",
+                          "which process (then use windows.memsearch). Fast, needs no symbols.",
                       ["text"], needs_one_of=["text"]),
-    "windows.vadyarascan": Plugin(["windows.vadyarascan.VadYaraScan"],
-                                  "YARA scan of each process's memory: which processes hold a text (text) or "
-                                  "match a rule file from the server's YARA folder (rules)",
-                                  ["pid", "text", "rules"], needs_one_of=["text", "rules"], post=_yara_hits,
-                                  requires=YARA_INSTALL),
+    "windows.memsearch": Plugin(["dfir_memsearch.MemSearch"],
+                                "Searches each running process's memory: which processes hold a text (text), "
+                                "with the text around it, or match a YARA rule file from the server (rules)",
+                                ["pid", "text", "rules"], needs_one_of=["text", "rules"]),
     # --- Windows: network
     "windows.netscan": Plugin(["windows.netscan.NetScan"],
                               "Network connections and listening sockets, also closed ones: owner process, "
@@ -212,7 +217,7 @@ PLUGINS = {
     "linux.vmayarascan": Plugin(["linux.vmayarascan.VmaYaraScan"],
                                 "YARA scan of each process's memory for a text or with a rule file",
                                 ["pid", "text", "rules"], needs_one_of=["text", "rules"], post=_yara_hits,
-                                requires=YARA_INSTALL),
+                                requires=YARA_INSTALL, yara_string=True),
 }
 
 # Raw search of the image file (the `strings` plugin).
@@ -422,10 +427,12 @@ def yara_text_rule(text: str) -> str:
     return "/" + "".join("\\" + c if c in _YARA_META else c for c in text) + "[ -~]{0,100}/"
 
 
-def _arguments(options: dict) -> list:
+def _arguments(options: dict, spec: Plugin = None) -> list:
     args = []
-    if options.get("text"):
+    if options.get("text") and spec is not None and spec.yara_string:
         args += ["--yara-string", yara_text_rule(options["text"]), "--wide", "--insensitive"]
+    elif options.get("text"):
+        args += ["--text", options["text"]]
     if options.get("rules"):
         args += ["--yara-file", rule_path(options["rules"])]
     if options.get("pid"):
@@ -446,7 +453,8 @@ def available_plugins() -> set:
     """Plugin names the installed Volatility offers (cached per process)."""
     if _available["names"] is None:
         try:
-            out = subprocess.run(command() + ["--help"], capture_output=True, text=True, timeout=120,
+            out = subprocess.run(command() + ["-p", PLUGIN_DIR, "--help"], capture_output=True, text=True,
+                                 timeout=120,
                                  env=_env(), encoding="utf-8", errors="replace")
         except (OSError, subprocess.TimeoutExpired) as e:
             raise MemoryAnalysisError(f"Volatility 3 could not be started ({e}). Install it on the server with "
@@ -457,7 +465,7 @@ def available_plugins() -> set:
                                "'pip install volatility3'.")
         version = re.search(r"Volatility 3 Framework (\S+)", text)
         _available["version"] = version.group(1) if version else "unknown"
-        _available["names"] = set(re.findall(r"^\s{4}((?:windows|linux|mac)\.[\w.]+)", text, re.M))
+        _available["names"] = set(re.findall(r"^\s{4}([a-z][a-z0-9_]*(?:\.[A-Za-z0-9_]+)+)", text, re.M))
     return _available["names"]
 
 
@@ -476,8 +484,8 @@ def _env() -> dict:
     return env
 
 
-def build_command(image: str, plugin_name: str, options: dict) -> list:
-    cmd = command() + ["-q", "-r", "json"]
+def build_command(image: str, plugin_name: str, options: dict, spec: Plugin = None) -> list:
+    cmd = command() + ["-p", PLUGIN_DIR, "-q", "-r", "json"]
     if symbols_problem():
         raise MemoryAnalysisError(symbols_problem())
     if symbols_dir():
@@ -487,13 +495,40 @@ def build_command(image: str, plugin_name: str, options: dict) -> list:
         cmd.append("--offline")
     if options.get("contains"):
         cmd += ["--filters", _contains_filter(options["contains"])]
-    return cmd + ["-f", image, plugin_name] + _arguments(options)
+    return cmd + ["-f", image, plugin_name] + _arguments(options, spec)
+
+
+_LOG_LINE = re.compile(r"^(WARNING|INFO|DEBUG)\s+\S+:")
+
+
+def _frame(line: str) -> str:
+    """'File ".../volatility3/cli/text_renderer.py", line 545, in <lambda>' -> 'text_renderer.py:545 <lambda>'."""
+    m = re.match(r'File "(.*?)", line (\d+), in (.*)', line)
+    if not m:
+        return line[:120]
+    name = m.group(1).replace("\\", "/").rsplit("/", 1)[-1]
+    return f"{name}:{m.group(2)} {m.group(3)}"
 
 
 def explain_failure(output: str) -> str:
     """Volatility's own messages, plus what to do about the common ones."""
     lines = [line.strip() for line in output.splitlines()
              if line.strip() and not line.startswith("Volatility 3 Framework")]
+    warnings = [line for line in lines if _LOG_LINE.match(line)]
+    lines = [line for line in lines if not _LOG_LINE.match(line)]
+    if "Traceback (most recent call last)" in output:
+        # Volatility crashed: the exception (last line) and where it happened (last frames) say why;
+        # the start of a long traceback does not.
+        frames = [line for line in lines if line.startswith('File "')]
+        where = " <- ".join(_frame(f) for f in reversed(frames[-3:]))
+        raw = output.splitlines()
+        last = max((i for i, line in enumerate(raw) if line.lstrip().startswith('File "')), default=-1)
+        error = next((line.strip() for line in raw[last + 1:] if line.strip() and not line[0].isspace()),
+                     lines[-1])          # the exception: the first unindented line after the last frame
+        crash = f"Volatility stopped with an error: {error[:600]} (in {where})."
+        if warnings:
+            crash += f" Before that it warned {len(warnings)} time(s), e.g.: {warnings[0][:200]}"
+        return crash
     text = " ".join(lines)[:1500]
     if "symbol_table_name" in output:
         where = symbols_dir() or "Volatility's symbols folder"
@@ -559,7 +594,9 @@ def execute(short: str, options: dict, image: str = None) -> dict:
     image = image or image_path()
     if spec.names:
         plugin_name = _plugin_name(short, spec)
-        cmd = build_command(image, plugin_name, options)      # settings problems surface before anything runs
+        if options.get("rules") and YARA_PLUGIN not in available_plugins():
+            raise MemoryAnalysisError(f"Scanning with YARA rules needs YARA. {YARA_INSTALL}")
+        cmd = build_command(image, plugin_name, options, spec)   # settings problems surface before anything runs
     else:
         plugin_name, cmd = short, None                        # done here, not by Volatility
     started = datetime.now(timezone.utc)
@@ -761,10 +798,10 @@ def check(image: str = None) -> int:
     else:
         print("Symbols: Volatility's own folders (memory.symbols_dir not set)")
     print(f"Offline: {'yes, nothing is downloaded' if offline() else 'no, missing symbols are downloaded'}")
-    if "windows.vadyarascan.VadYaraScan" in available_plugins():
-        print("YARA: available (memory searches per process)")
+    if YARA_PLUGIN in available_plugins():
+        print("YARA: available (rule files can be used)")
     else:
-        print(f"[i] YARA scans are off: {YARA_INSTALL}")
+        print(f"[i] YARA rule scans are off (text searches work without): {YARA_INSTALL}")
     if yara_dir():
         state = f"{len(rule_files())} rule files" if os.path.isdir(yara_dir()) else "does not exist"
         print(f"YARA rule folder {yara_dir()}: {state}")

@@ -34,7 +34,7 @@ class FakeVolatility:
 
     def __call__(self, cmd):
         self.commands.append(cmd)
-        plugin = next(c for c in cmd if c.startswith(("windows.", "linux.")))
+        plugin = cmd[cmd.index("-f") + 2]
         if plugin in self.fail:
             return 1, self.fail[plugin], "Volatility 3 Framework 2.28.2\nUnable to validate the plugin requirements"
         return 0, "\n" + json.dumps(OUTPUT.get(plugin, []), indent=2), "Volatility 3 Framework 2.28.2\n"
@@ -55,7 +55,7 @@ def mem(case, tmp_path, monkeypatch):
     fake = FakeVolatility()
     monkeypatch.setattr(memory, "_run_process", fake)
     monkeypatch.setattr(memory, "available_plugins",
-                        lambda: {n for p in memory.PLUGINS.values() for n in p.names})
+                        lambda: {n for p in memory.PLUGINS.values() for n in p.names} | {memory.YARA_PLUGIN})
     monkeypatch.setattr(memory, "version", lambda: "2.28.2")
     return fake
 
@@ -306,41 +306,32 @@ def test_identical_rows_are_stored_once(case, mem):
                                     "59 repeated rows dropped (0 s)")
 
 
-# ---- Searching memory: the image file itself (strings) and YARA per process ----
+# ---- Searching memory: the image file itself (strings) and each process (windows.memsearch) ----
 
-def _hex(text, wide=False):
-    return (text.encode("utf-16-le") if wide else text.encode()).hex(" ")
-
-
-VADYARA = [  # as Volatility 2.28 renders windows.vadyarascan with -r json (Value = the matched bytes)
-    {"Offset": 4096, "PID": 3644, "CreateTime": "2020-09-19T03:42:42+00:00", "PPID": 600,
-     "ImageFileName": "spoolsv.exe", "SessionId": 0, "Threads": 9, "Rule": "r1", "Component": "$a",
-     "Value": _hex("203.78.103.109:443"), "__children": []},
-    {"Offset": 8192, "PID": 3644, "CreateTime": "2020-09-19T03:42:42+00:00", "PPID": 600,
-     "ImageFileName": "spoolsv.exe", "SessionId": 0, "Threads": 9, "Rule": "r1", "Component": "$a",
-     "Value": _hex("203.78.103.109:443"), "__children": []},
-    {"Offset": 64, "PID": 860, "CreateTime": "2020-09-19T03:36:40+00:00", "PPID": 700,
-     "ImageFileName": "MicrosoftEdge.", "SessionId": 2, "Threads": 30, "Rule": "r1", "Component": "$a",
-     "Value": _hex("203.78.103.109/x", wide=True), "__children": []},
+MEMSEARCH = [  # as the copilot's plugin (vol_plugins/dfir_memsearch.py) renders with -r json
+    {"PID": 3644, "PPID": 600, "Process": "spoolsv.exe", "Rule": "", "Encoding": "ASCII", "Before": "",
+     "Match": "203.78.103.109:443", "Hits": 2, "FirstOffset": 4096, "__children": []},
+    {"PID": 860, "PPID": 700, "Process": "MicrosoftEdge.", "Rule": "", "Encoding": "UTF-16",
+     "Before": "Visited: Administrator@http://", "Match": "203.78.103.109/x", "Hits": 1, "FirstOffset": 64,
+     "__children": []},
 ]
 
 
-def test_yara_text_search_names_the_processes_that_hold_it(case, mem):
-    OUTPUT["windows.vadyarascan.VadYaraScan"] = VADYARA
+def test_memsearch_names_the_processes_that_hold_a_text(case, mem):
+    OUTPUT["dfir_memsearch.MemSearch"] = MEMSEARCH
     try:
-        summary = memory.run("windows.vadyarascan", {"text": "203.78.103.109"})
+        summary = memory.run("windows.memsearch", {"text": "203.78.103.109"})
     finally:
-        del OUTPUT["windows.vadyarascan.VadYaraScan"]
+        del OUTPUT["dfir_memsearch.MemSearch"]
     cmd = mem.commands[-1]
-    assert cmd[cmd.index("--yara-string") + 1] == r"/203\.78\.103\.109[ -~]{0,100}/"
-    assert "--wide" in cmd and "--insensitive" in cmd
-    assert summary["rows_read"] == 2                        # one row per process and matched text
-    events = case.query_timeline()["events"]
-    descriptions = sorted(e["description"] for e in events)
-    assert descriptions == ['MicrosoftEdge. PID 860 memory holds "203.78.103.109/x" (UTF-16), 1x',
-                            'spoolsv.exe PID 3644 memory holds "203.78.103.109:443" (ASCII), 2x']
-    assert {e["event_type"] for e in events} == {"memory_search"}
-    assert case.search_events("203.78.103.109")["total"] == 2
+    assert cmd[cmd.index("-p") + 1] == memory.PLUGIN_DIR and cmd.index("-p") < cmd.index("-f")
+    assert cmd[cmd.index("--text") + 1] == "203.78.103.109" and "--yara-string" not in cmd
+    assert summary["rows_read"] == 2
+    records = case.search_events("203.78.103.109")["records"]
+    assert sorted(r["description"] for r in records) == [
+        'MicrosoftEdge. PID 860 memory holds "Visited: Administrator@http://203.78.103.109/x" (UTF-16), 1x',
+        'spoolsv.exe PID 3644 memory holds "203.78.103.109:443" (ASCII), 2x']
+    assert {r["event_type"] for r in records} == {"memory_search"}
 
 
 def test_yara_rule_files_come_from_the_server_folder(case, mem, tmp_path, monkeypatch):
@@ -349,22 +340,22 @@ def test_yara_rule_files_come_from_the_server_folder(case, mem, tmp_path, monkey
     (rules / "meterpreter.yar").write_text("rule m { strings: $a = \"metsrv\" condition: $a }")
     (rules / "notes.txt").write_text("x")
     with pytest.raises(memory.MemoryAnalysisError, match="memory.yara_dir"):
-        memory.run("windows.vadyarascan", {"rules": "meterpreter.yar"})
+        memory.run("windows.memsearch", {"rules": "meterpreter.yar"})
     monkeypatch.setenv("DFIR_YARA_DIR", str(rules))
     assert memory.rule_files() == ["meterpreter.yar"]
     for bad in ("../yara/../case.db", "notes.txt", "nope.yar"):
         with pytest.raises(memory.MemoryAnalysisError, match="Available: meterpreter.yar"):
-            memory.run("windows.vadyarascan", {"rules": bad})
-    OUTPUT["windows.vadyarascan.VadYaraScan"] = [dict(VADYARA[0], Rule="default.m", Value=_hex("metsrv.dll"))]
+            memory.run("windows.memsearch", {"rules": bad})
+    OUTPUT["dfir_memsearch.MemSearch"] = [dict(MEMSEARCH[0], Rule="default.m", Match="metsrv.dll", Encoding="")]
     try:
-        memory.run("windows.vadyarascan", {"rules": "meterpreter.yar", "pid": [3644]})
+        memory.run("windows.memsearch", {"rules": "meterpreter.yar", "pid": [3644]})
     finally:
-        del OUTPUT["windows.vadyarascan.VadYaraScan"]
+        del OUTPUT["dfir_memsearch.MemSearch"]
     cmd = mem.commands[-1]
     assert cmd[cmd.index("--yara-file") + 1] == str(rules / "meterpreter.yar") and "--pid" in cmd
     assert any("rule default.m" in r["description"] for r in case.search_events("metsrv")["records"])
     listed = {p["plugin"]: p for p in memory.plugin_list()}
-    assert listed["windows.vadyarascan"]["rule_files"] == ["meterpreter.yar"]
+    assert listed["windows.memsearch"]["rule_files"] == ["meterpreter.yar"]
 
 
 def test_searches_need_one_sensible_text_or_rules(case, mem):
@@ -373,17 +364,35 @@ def test_searches_need_one_sensible_text_or_rules(case, mem):
                              ({"text": "ab"}, "4 to 200 printable ASCII"),
                              ({"text": "caf\u00e9.example"}, "printable ASCII")):
         with pytest.raises(memory.MemoryAnalysisError, match=message):
-            memory.run("windows.vadyarascan", options)
+            memory.run("windows.memsearch", options)
     with pytest.raises(memory.MemoryAnalysisError, match="does not take text"):
         memory.run("windows.pslist", {"text": "1.2.3.4"})
     assert not mem.commands
 
 
-def test_yara_missing_says_what_to_install(case, mem, monkeypatch):
-    monkeypatch.setattr(memory, "available_plugins", lambda: {"windows.pslist.PsList"})
+def test_without_yara_text_searches_work_and_rules_say_what_to_install(case, mem, tmp_path, monkeypatch):
+    monkeypatch.setattr(memory, "available_plugins", lambda: {"windows.pslist.PsList", "dfir_memsearch.MemSearch"})
+    assert memory.run("windows.memsearch", {"text": "203.78.103.109"})["state"] == "FINISHED"
+    (tmp_path / "yara").mkdir()
+    (tmp_path / "yara" / "m.yar").write_text("rule m { condition: true }")
+    monkeypatch.setenv("DFIR_YARA_DIR", str(tmp_path / "yara"))
     with pytest.raises(memory.MemoryAnalysisError, match="pip install yara-x"):
-        memory.run("windows.vadyarascan", {"text": "203.78.103.109"})
+        memory.run("windows.memsearch", {"rules": "m.yar"})
     assert memory.main(["check"]) == 0
+
+
+def test_volatilitys_own_yara_plugin_gets_the_text_as_a_rule(case, mem):
+    OUTPUT["linux.vmayarascan.VmaYaraScan"] = [
+        {"Offset": 1, "PID": 77, "Rule": "r1", "Component": "$a", "Value": "203.78.103.109".encode().hex(" "),
+         "__children": []}]
+    try:
+        memory.run("linux.vmayarascan", {"text": "203.78.103.109"})
+    finally:
+        del OUTPUT["linux.vmayarascan.VmaYaraScan"]
+    cmd = mem.commands[-1]
+    assert cmd[cmd.index("--yara-string") + 1] == r"/203\.78\.103\.109[ -~]{0,100}/" and "--wide" in cmd
+    assert any(r["description"] == 'PID 77 memory holds "203.78.103.109" (ASCII), 1x'
+               for r in case.search_events("203.78.103.109")["records"])
 
 
 def test_strings_searches_the_image_file_without_volatility(case, mem, tmp_path, monkeypatch):
@@ -404,13 +413,84 @@ def test_strings_searches_the_image_file_without_volatility(case, mem, tmp_path,
 
 
 def test_searches_are_not_part_of_the_triage(case, mem):
-    assert "windows.pslist" in memory.triage_plugins("windows")
-    assert "windows.vadyarascan" not in memory.triage_plugins("windows") and "strings" not in memory.triage_plugins("windows")
+    plugins = memory.triage_plugins("windows")
+    assert "windows.pslist" in plugins and "windows.memsearch" not in plugins and "strings" not in plugins
     with pytest.raises(cases.CaseError, match="can't be part of the triage"):
-        cases._check_memory_triage(["windows.pslist", "windows.vadyarascan"])
+        cases._check_memory_triage(["windows.pslist", "windows.memsearch"])
 
 
 def test_agent_searches_memory_with_approval(case, mem, approve_all):
     out = json.loads(tools.analyze_memory.invoke({"plugin": "strings", "text": "203.78.103.109"}))
     assert out["state"] == "FINISHED" and out["rows_read"] == 0
     assert approve_all[0]["summary"] == "strings (text=203.78.103.109) on desktop.mem"
+
+
+def test_a_volatility_crash_is_explained_by_its_last_line(case, mem):
+    mem.fail["windows.pslist.PsList"] = (
+        "WARNING  volatility3.plugins.windows.vadyarascan: No VADs were found for task 860, not scanning\n"
+        "Traceback (most recent call last):\n"
+        '  File "C:\\py\\volatility3\\cli\\__init__.py", line 527, in run\n    renderer.render(grid)\n'
+        '  File "C:\\py\\volatility3\\cli\\text_renderer.py", line 212, in render_bytes\n'
+        "    current_map = next(mapping)\nStopIteration\n")
+    error = memory.run("windows.pslist")["error"]
+    assert error.startswith("Volatility stopped with an error: StopIteration (in text_renderer.py:212 render_bytes "
+                            "<- __init__.py:527 run).")
+    assert "warned 1 time(s)" in error
+
+
+# ---- The plugin itself, with Volatility's process objects faked ----
+
+class _FakeLayer:
+    def __init__(self, memory_bytes, broken=()):
+        self.data, self.broken = memory_bytes, broken
+
+    def read(self, offset, length, pad=False):
+        if offset in self.broken:
+            raise ValueError("page not readable")
+        return self.data[offset:offset + length].ljust(length, b"\0")
+
+
+class _FakeTask:
+    def __init__(self, pid, name, layer, regions, unreadable=False):
+        from types import SimpleNamespace
+        self.UniqueProcessId, self.InheritedFromUniqueProcessId = pid, 4
+        self.ImageFileName = SimpleNamespace(cast=lambda *a, **k: name, vol=SimpleNamespace(count=15))
+        self.vol = SimpleNamespace(offset=pid)
+        self.layer, self.regions, self.unreadable = layer, regions, unreadable
+
+    def add_process_layer(self):
+        if self.unreadable:
+            raise ValueError("no process layer")
+        return self.layer
+
+    def get_vad_root(self):
+        from types import SimpleNamespace
+        vads = [SimpleNamespace(get_start=lambda s=s: s, get_size=lambda n=n: n) for s, n in self.regions]
+        return SimpleNamespace(traverse=lambda: vads)
+
+
+def test_memsearch_plugin_finds_text_per_process_across_pieces(monkeypatch):
+    pytest.importorskip("volatility3")
+    import importlib.util
+    from types import SimpleNamespace
+    spec = importlib.util.spec_from_file_location("dfir_memsearch", os.path.join(memory.PLUGIN_DIR, "dfir_memsearch.py"))
+    plugin = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(plugin)
+    monkeypatch.setattr(plugin, "CHUNK", 64)                    # a region is read in several pieces
+    url = b"GET http://194.61.24.102/coreupdater.exe HTTP/1.1"
+    wide = "Visited: Administrator@http://194.61.24.102/".encode("utf-16-le")
+    edge = b"\1" * 50 + wide + b"\0" * 30 + url + b"\2" * 200 + url
+    tasks = [_FakeTask(860, "MicrosoftEdge.", "edge", [(0, len(edge))]),
+             _FakeTask(999, "broken.exe", "none", [], unreadable=True),
+             _FakeTask(4, "System", "sys", [(0, 300), (300, 64)])]
+    layers = {"edge": _FakeLayer(edge), "sys": _FakeLayer(b"\0" * 364, broken=(300,))}
+    monkeypatch.setattr(plugin.pslist.PsList, "list_processes", classmethod(lambda cls, **kw: iter(tasks)))
+    fake = SimpleNamespace(config={"text": "194.61.24.102", "kernel": "k"}, context=SimpleNamespace(layers=layers))
+    fake._scanner = lambda: plugin.MemSearch._scanner(fake)
+    rows = [values for _, values in plugin.MemSearch._generator(fake)]
+    found = sorted((r[0], r[2], r[4], r[5], r[6], r[7]) for r in rows)
+    assert found == [
+        (860, "MicrosoftEdge.", "ASCII", "GET http://", "194.61.24.102/coreupdater.exe HTTP/1.1", 2),
+        (860, "MicrosoftEdge.", "UTF-16", "Visited: Administrator@http://", "194.61.24.102/", 1)]
+    ascii_hit = next(r for r in rows if r[4] == "ASCII")
+    assert int(ascii_hit[8]) == 50 + len(wide) + 30 + len("GET http://")     # where it was first found

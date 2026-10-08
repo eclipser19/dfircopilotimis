@@ -116,8 +116,8 @@ def analyze_memory(plugin: str, pid: Optional[List[int]] = None, contains: Optio
     windows.consoles/cmdscan (typed commands). All: list_memory_plugins.
     SEARCHING memory for an IP, domain, URL or file name that the collected data doesn't explain:
     plugin 'strings' with text (the whole image file, freed memory too, with the surrounding text,
-    e.g. the full URL; fast) and 'windows.vadyarascan' with text (WHICH PROCESS holds it, e.g. the
-    owner of a C2 address netscan could not read). windows.vadyarascan with rules scans with a
+    e.g. the full URL; fast) and 'windows.memsearch' with text (WHICH PROCESS holds it, e.g. the
+    owner of a C2 address netscan could not read). windows.memsearch with rules scans with a
     YARA rule file from the server (list_memory_plugins shows them).
     Heavy plugins (dlllist, handles, filescan, envars, printkey...) need pid, contains or key.
     The investigator may be asked to approve. A run can take minutes.
@@ -127,9 +127,9 @@ def analyze_memory(plugin: str, pid: Optional[List[int]] = None, contains: Optio
         contains: Only rows containing this text in any column (case-insensitive), e.g. 'updater.exe'.
         key: Registry key for windows.registry.printkey, e.g. 'Software\\Microsoft\\Windows\\CurrentVersion\\Run'.
         recurse: With key: include subkeys.
-        text: For strings / windows.vadyarascan: the text to find (4+ characters, case-insensitive,
+        text: For strings / windows.memsearch: the text to find (4+ characters, case-insensitive,
             ASCII and UTF-16), e.g. '10.20.30.40' or 'evil-domain.example'.
-        rules: For windows.vadyarascan: a rule file name from the server's YARA folder.
+        rules: For windows.memsearch: a rule file name from the server's YARA folder.
     """
     from copilot import memory
     options = {"pid": pid, "contains": contains, "key": key, "recurse": recurse, "text": text, "rules": rules}

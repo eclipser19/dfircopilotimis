@@ -541,7 +541,8 @@ def render_message(msg: dict, index: int):
             with st.expander("Steps", expanded=False):
                 st.text("\n".join(msg["log"]))
         if msg.get("content"):
-            st.markdown(citations.answer_markdown(msg["content"]))
+            # "literal": the app built it with md_literal already (approval results quote agent requests)
+            st.markdown(msg["content"] if msg.get("literal") else citations.answer_markdown(msg["content"]))
             if msg["role"] == "assistant":
                 cited_box(msg["content"])
         for entry in msg.get("files", []):
@@ -660,7 +661,8 @@ def resolve_request(request: dict, approved: bool):
     if not approved:
         approvals.resolve(request, False, actor=USER)
         st.session_state.chat_history.append(HumanMessage(content=f"[Investigator] Declined: {label}."))
-        st.session_state.messages.append({"role": "assistant", "content": f"❌ Declined — {label}"})
+        st.session_state.messages.append({"role": "assistant", "content": f"❌ Declined — {citations.md_literal(label)}",
+                                          "literal": True})
         return
     with st.chat_message("assistant"):
         with st.spinner(f"{label}..."):
@@ -668,11 +670,14 @@ def resolve_request(request: dict, approved: bool):
                 result = approvals.resolve(request, True, actor=USER)
             except (approvals.ApprovalError, collection.CollectionError, cases.CaseError) as e:
                 result = f"Failed: {e}"
-    shown = f"```\n{status_line(result)}\n```" if isinstance(result, dict) else str(result)
+    if isinstance(result, dict):        # a code block shows the status line as it is; it can't be closed early
+        shown = "```\n" + status_line(result).replace("```", "'''") + "\n```"
+    else:
+        shown = citations.md_literal(result)
     st.session_state.chat_history.append(HumanMessage(
         content=f"[Investigator] Approved: {label}. Result: {json.dumps(result, default=str)}"))
-    st.session_state.messages.append({"role": "assistant",
-                                      "content": f"✅ Approved — {label}\n\n{shown}" +
+    st.session_state.messages.append({"role": "assistant", "literal": True,
+                                      "content": f"✅ Approved — {citations.md_literal(label)}\n\n{shown}" +
                                                  ("" if st.session_state.get("auto_continue", True) else
                                                   "\n\nAsk the copilot to continue when ready.")})
     if cases.consume_settings_change():

@@ -37,6 +37,7 @@ _TIME_NAME_RE = re.compile(
 EVENT_TYPES = [
     # Memory images (Volatility, see memory.py): sources are "Memory.<plugin>".
     ("Memory.strings*", "memory_search"),
+    ("Memory.*memsearch*", "memory_search"),
     ("Memory.*yarascan*", "memory_search"),
     ("Memory.*netscan*", "network"),
     ("Memory.*netstat*", "network"),
@@ -146,6 +147,7 @@ DESCRIPTION_TEMPLATES = [
     ("Memory.linux.psaux*", "process {COMM}[ PID {PID}][ PPID {PPID}][: {ARGS}]"),
     ("Memory.linux.pslist*", "process {COMM}[ PID {PID}][ PPID {PPID}]"),
     ("Memory.strings*", 'memory image holds "[{Before}]{Match}"[ ({Encoding})][, {Hits}x][ first at {Offset}]'),
+    ("Memory.*memsearch*", '{Process}[ PID {PID}] memory holds "[{Before}]{Match}"[ ({Encoding})][, {Hits}x][, rule {Rule}]'),
     ("Memory.*yarascan*", '[{Process} ]PID {PID} memory holds "{Match}"[ ({Encoding})][, {Hits}x][, rule {Rule}]'),
 ]
 NORMALIZER_VERSION = 4

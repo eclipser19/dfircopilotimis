@@ -51,7 +51,7 @@
   tips:
     - Owner is the process name; join on PID with pslist/cmdline for the full path.
     - Connections from unusual processes (not a browser) to external IPs on 443/80/8080 are typical C2.
-    - 'When the owning process is not readable, run analyze_memory windows.vadyarascan with text = the remote IP: the process whose memory holds the address is usually the owner. Also compare the connection''s Created time with process start times (pslist/psscan) and malfind hits.'
+    - 'When the owning process is not readable, run analyze_memory windows.memsearch with text = the remote IP: the process whose memory holds the address is usually the owner. Also compare the connection''s Created time with process start times (pslist/psscan) and malfind hits.'
     - Run search_iocs on the remote IP to see the record's description and get_event_detail for the raw row (Created, PID, Owner).
 
 - pattern: Memory.*.netstat.*
@@ -117,15 +117,16 @@
   meaning: 'Every place the image holds a text, with the readable text around it (Before + Match): a URL, an HTTP request, a command line. Includes freed memory of exited processes, so it finds traces that no process list or connection table still has. It does not say which process the memory belonged to.'
   tips:
     - 'Search for what the collected data cannot explain: an IP or domain from the case (also the download server, not only the C2), a file name, a URL path. The text after the match often completes it (full URL, HTTP headers, user agent).'
-    - Then run windows.vadyarascan with the same text to see which running process still holds it.
+    - Then run windows.memsearch with the same text to see which running process still holds it.
+    - '"Visited: <user>@<url>" is a WinINet history record (Internet Explorer / Edge Legacy, stored in WebCacheV01.dat): it names the Windows account and the browser family. A URL ending in a file name (e.g. .exe) is a download. Search next for the file name the case knows, to get its full URL.'
     - 'No hit is weak evidence: the memory may have been reused, or the image is compressed.'
 
-- pattern: Memory.*yarascan.*
-  what: YARA scan of process memory (Volatility vadyarascan)
-  location: memory image, each process's virtual memory
+- pattern: Memory.*memsearch.*
+  what: Search of each process's memory (text or YARA rules)
+  location: memory image, each running process's virtual memory
   meaning: 'Which process holds a text (text search) or matches a YARA rule (rules): the owner of a C2 address that netscan could not read, the process an injected payload lives in, a browser that still has a download URL.'
   tips:
-    - Match is the matched text with what follows it; Hits counts how often that process holds it.
+    - Before + Match is the text around the hit (e.g. the full URL); Hits counts how often that process holds it.
     - 'A C2 address in a system process (spoolsv.exe, svchost.exe, explorer.exe) next to malfind hits points to injection or migration; confirm with malfind / dlllist for that PID.'
     - 'Several processes can hold the same text (a browser, the console that typed it, the payload): give each one''s role.'
 
@@ -342,7 +343,7 @@
   location: live process memory
   meaning: Scans the processes running on the endpoint. A disk image has none.
   live_only: true
-  dead_disk_note: 'For process memory use the memory image: analyze_memory windows.vadyarascan (text or rules).'
+  dead_disk_note: 'For process memory use the memory image: analyze_memory windows.memsearch (text or rules).'
 
 - pattern: Windows.NTFS.ADSHunter*
   what: Alternate data streams, including Zone.Identifier (Mark of the Web)
@@ -351,6 +352,7 @@
   tips:
     - 'The stream moves with the file: look at the file''s current path (e.g. System32), not only Downloads.'
     - Filter by path and stream name (see describe_artifact for this server's parameter names); scanning every stream on a volume is slow.
+    - 'Look at the stream of the suspicious file first, without a content filter: some browsers (older Internet Explorer) write only ZoneId=3 and no HostUrl, so a search for the IP in stream content can miss a real download.'
     - Copying a file through some tools, extracting archives or the attacker's cleanup can remove the stream; no stream is not proof of no download.
 
 - pattern: Windows.Applications.*

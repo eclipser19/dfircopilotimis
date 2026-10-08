@@ -54,7 +54,7 @@ Memory shows what was running at capture time: processes (also hidden or exited)
 network connections (also closed ones, e.g. C2), injected code. Check `list_collections` for the memory
 triage first; `dfir_guide('memory')` has the playbook. Narrow heavy plugins with pid or contains.
 To find an IP, domain, URL or file name in RAM, search for it: plugin `strings` (whole image, with the
-text around it) and `windows.vadyarascan` (which process holds it), both with `text`.
+text around it) and `windows.memsearch` (which process holds it), both with `text`.
 
 ## LESSONS
 Investigators approve lessons that apply to every case on this server{learned_topics}. dfir_guide on an
