@@ -168,6 +168,11 @@ def list_collections() -> str:
     rows = case_db.get_collections()
     if not rows:
         return "No collections have been started in this case yet."
+    from copilot.knowledge import is_live_only
+    for row in rows:
+        if is_live_only(row.get("artifact") or ""):
+            row["note"] = ("This artifact cannot work on a disk image: its 0 rows are not evidence that "
+                           "the data is absent.")
     return _dump(rows)
 
 
