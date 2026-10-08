@@ -490,3 +490,25 @@ def test_owner_shares_a_case_from_the_sidebar(team_app):
     assert "Bob's case" in _texts(carol)
     assert not [m for m in carol.multiselect if m.key == "ac_bob-case_members"]   # carol can't re-share it
     assert "The owner or an admin can change this" in _texts(carol)
+
+
+def test_model_change_in_server_yaml_applies_without_reloading(app_env, tmp_path, monkeypatch):
+    import time
+
+    class Bindable(ScriptedLLM):
+        def bind_tools(self, *a, **k):
+            return self
+
+    settings_file = tmp_path / "server.yaml"
+    monkeypatch.setenv("DFIR_SETTINGS", str(settings_file))
+    settings_file.write_text("llm:\n  base_url: http://localhost:11434/v1\n  model: first\n", encoding="utf-8")
+    built = []
+    monkeypatch.setattr("copilot.llm.make_llm", lambda key=None: built.append(__import__("copilot.llm").llm
+                                                                               .model_name()) or Bindable())
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.run()
+    assert built == ["first"]                                   # built once, not on every run
+    settings_file.write_text("llm:\n  base_url: http://localhost:11434/v1\n  model: second\n", encoding="utf-8")
+    os.utime(settings_file, (time.time() + 2, time.time() + 2))
+    at.run()
+    assert built == ["first", "second"] and "Local model `second`" in _texts(at)

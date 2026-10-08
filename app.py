@@ -249,7 +249,9 @@ def llm_box():
         st.caption(f"🖥️ Local model `{llm_config.model_name()}` at {llm_config.base_url()}")
     else:
         st.caption(f"🔑 Model `{llm_config.model_name()}`, using the server's API key.")
-    key_id = user_key or ("" if llm_config.needs_user_key() else "server")
+    key = user_key or ("" if llm_config.needs_user_key() else "server")
+    # Rebuilt when the key or the model settings change (server.yaml is re-read on every run).
+    key_id = key and f"{key}|{llm_config.base_url()}|{llm_config.model_name()}"
     if key_id and ("llm_with_tools" not in st.session_state or st.session_state.get("current_api_key") != key_id):
         # Kept in this browser session only; never written to os.environ.
         st.session_state.current_api_key = key_id
