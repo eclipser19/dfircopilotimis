@@ -102,8 +102,7 @@ def _re2_escape(text: str) -> str:
 @tool
 def search_clients() -> str:
     """
-    Lists clients enrolled in Velociraptor (including dead-disk virtual clients).
-    Only useful for setup: collections always run on the case's configured client.
+    Lists Velociraptor clients (dead-disk ones too). Setup only: collections use the case's client.
     """
     res = get_vql().run_vql("SELECT client_id, os_info.hostname AS hostname, os_info.system AS os FROM clients()")
     return safe_json_truncate(res)
@@ -112,19 +111,15 @@ def search_clients() -> str:
 @tool
 def collect_artifact(artifact_name: str, parameters: Optional[dict] = None) -> str:
     """
-    TARGETED follow-up collection from the case's disk image, stored in the case database.
-    The case's standard triage artifacts are already collected: analyze those first and
-    only collect more to test a specific lead. The case time window is applied to the
-    artifact's date filters automatically, and results are capped at a row limit.
-    Heavy artifacts (MFT, USN journal, EvtxHunter, file searches) require a filter
-    parameter (e.g. a filename/path regex or event IDs) or a DateAfter/DateBefore window
-    of at most 60 minutes (recorded host time). The investigator may be asked
-    to approve the collection. If it is still running, it returns state RUNNING and a
-    flow_id for `check_collection`.
+    Targeted collection from the case's disk image into the case database. Triage artifacts are already
+    collected: analyze them first and collect only to test a lead. The case window fills the artifact's
+    date filters; rows are capped. Heavy artifacts (MFT, USN, EvtxHunter, file searches) need a filter
+    (name/path regex, event IDs) or a DateAfter/DateBefore window of at most 60 minutes (recorded host
+    time). May need approval. A RUNNING result gives a flow_id for check_collection.
     Args:
-        artifact_name: The artifact name (e.g., 'Windows.NTFS.MFT').
-        parameters: Artifact parameters (e.g., {'FileRegex': 'updater'}). Use the artifact's own
-            names from `describe_artifact`; unknown names are refused.
+        artifact_name: e.g. 'Windows.NTFS.MFT'.
+        parameters: The artifact's own parameter names (describe_artifact), e.g. {'FileRegex': 'updater'};
+            unknown names are refused.
     """
     try:
         return _dump(collection.collect(artifact_name, parameters, requested_by="agent"))
@@ -139,31 +134,24 @@ def analyze_memory(plugin: str, pid: Optional[List[int]] = None, contains: Optio
                    key: Optional[str] = None, recurse: Optional[bool] = None, text: Optional[str] = None,
                    rules: Optional[str] = None) -> str:
     """
-    Runs a Volatility 3 plugin on the case's MEMORY IMAGE and stores its rows in the case database
-    (source "Memory.<plugin>"), next to the disk evidence: query them with query_timeline,
-    search_iocs, pivot_entity like any other evidence. Memory shows what was RUNNING at capture
-    time: processes (also hidden/exited), command lines, network connections (also closed ones),
-    injected code. The memory triage may already have run: check list_collections first.
-    Useful plugins: windows.pslist, windows.psscan (hidden/exited processes), windows.pstree,
-    windows.cmdline, windows.netscan (connections, C2), windows.malfind (injection),
-    windows.dlllist, windows.handles, windows.svcscan, windows.filescan, windows.registry.printkey,
-    windows.consoles/cmdscan (typed commands). All: list_memory_plugins.
-    SEARCHING memory for an IP, domain, URL or file name that the collected data doesn't explain:
-    plugin 'strings' with text (the whole image file, freed memory too, with the surrounding text,
-    e.g. the full URL; fast) and 'windows.memsearch' with text (WHICH PROCESS holds it, e.g. the
-    owner of a C2 address netscan could not read). windows.memsearch with rules scans with a
-    YARA rule file from the server (list_memory_plugins shows them).
-    Heavy plugins (dlllist, handles, filescan, envars, printkey...) need pid, contains or key.
-    The investigator may be asked to approve. A run can take minutes.
+    Runs a Volatility 3 plugin on the case's memory image; rows are stored as source "Memory.<plugin>"
+    and queried like disk evidence. Memory shows the state at capture time: processes (also hidden or
+    exited), command lines, connections (also closed), injected code. Check list_collections first: the
+    memory triage may have run. Common: windows.pslist, psscan (exited/hidden), pstree, cmdline, netscan,
+    malfind, dlllist, handles, svcscan, filescan, registry.printkey, consoles, cmdscan; all: list_memory_plugins.
+    To find an IP, domain, URL or file name: 'strings' with text (whole image, freed memory too, with
+    the text around it; fast), then 'windows.memsearch' with text (which process holds it, e.g. the
+    owner of a C2 address netscan could not read) or with rules (a YARA file from the server).
+    Heavy plugins (dlllist, handles, filescan, envars, printkey) need pid, contains or key.
+    May need approval; a run can take minutes.
     Args:
-        plugin: Plugin name, e.g. 'windows.netscan'.
-        pid: Only these process IDs, e.g. [3644] (plugins that take pid).
-        contains: Only rows containing this text in any column (case-insensitive), e.g. 'updater.exe'.
+        plugin: e.g. 'windows.netscan', 'strings', 'windows.memsearch'.
+        pid: Only these process IDs, e.g. [3644].
+        contains: Only rows containing this text (case-insensitive).
         key: Registry key for windows.registry.printkey, e.g. 'Software\\Microsoft\\Windows\\CurrentVersion\\Run'.
         recurse: With key: include subkeys.
-        text: For strings / windows.memsearch: the text to find (4+ characters, case-insensitive,
-            ASCII and UTF-16), e.g. '10.20.30.40' or 'evil-domain.example'.
-        rules: For windows.memsearch: a rule file name from the server's YARA folder.
+        text: For strings / windows.memsearch: the text to find (4+ characters; ASCII and UTF-16), e.g. an IP.
+        rules: For windows.memsearch: a YARA rule file name from the server.
     """
     from copilot import memory
     options = {"pid": pid, "contains": contains, "key": key, "recurse": recurse, "text": text, "rules": rules}
@@ -185,10 +173,9 @@ def list_memory_plugins() -> str:
 @tool
 def check_collection(flow_id: str) -> str:
     """
-    Checks a collection started earlier. If it has finished, its results are ingested
-    into the case database. Use for collections that `collect_artifact` reported as RUNNING.
+    Checks a collection that collect_artifact reported as RUNNING, and ingests it once finished.
     Args:
-        flow_id: The flow ID returned by `collect_artifact` (e.g., 'F.CN3ABC...').
+        flow_id: The flow ID, e.g. 'F.CN3ABC...'.
     """
     if flow_id.startswith("MEM."):        # memory analyses finish before their tool call returns
         return _dump(case_db.get_collection(flow_id) or {"error": f"No memory analysis {flow_id}."})
@@ -200,7 +187,9 @@ def check_collection(flow_id: str) -> str:
 
 @tool
 def list_collections() -> str:
-    """Lists every collection started in this case, with its state and rows ingested."""
+    """
+    Every collection in this case: state, parameters (time window, filters) and rows ingested.
+    """
     rows = case_db.get_collections()
     if not rows:
         return "No collections have been started in this case yet."
@@ -215,10 +204,9 @@ def list_collections() -> str:
 @tool
 def list_artifacts(keyword: str) -> str:
     """
-    Finds artifacts this case is allowed to collect whose name matches a keyword
-    (case-insensitive, plain text, e.g. 'evtx', 'prefetch', 'registry').
+    Artifacts this case may collect whose name contains a keyword (case-insensitive), e.g. 'evtx'.
     Args:
-        keyword: Text to look for in artifact names.
+        keyword: Text in the artifact name.
     """
     res = get_vql().run_vql(
         "SELECT name, description FROM artifact_definitions() WHERE name =~ DfirKeyword",
@@ -239,10 +227,9 @@ def list_artifacts(keyword: str) -> str:
 @tool
 def describe_artifact(artifact_name: str) -> str:
     """
-    Shows an artifact's description and parameters (name, type, default), so you can
-    pass correct `parameters` to `collect_artifact`.
+    An artifact's description and parameters (name, type, default), for collect_artifact.
     Args:
-        artifact_name: The exact artifact name.
+        artifact_name: Exact artifact name.
     """
     res = get_vql().run_vql(
         "SELECT name, description, parameters FROM artifact_definitions(names=DfirName)",
@@ -287,16 +274,14 @@ def _shown(total: int, shown: int) -> str:
 def query_timeline(start_time: Optional[str] = None, end_time: Optional[str] = None,
                    event_type: Optional[str] = None, source: Optional[str] = None) -> str:
     """
-    Timeline of the case: one event per timestamp found in the collected data, in UTC,
-    oldest first. Each event names the field its time came from (timestamp_desc, e.g.
-    'Created0x10' vs 'Modified0x10'). Reports the total number of matches, and how many
-    matching records have no timestamp at all (e.g. PSReadline history) so they aren't missed;
-    find those with search_iocs or pivot_entity.
+    Case timeline: one event per timestamp in the collected data, oldest first. Each event names the
+    field its time came from (timestamp_desc, e.g. 'Created0x10'). Gives the total matches and how many
+    matching records have no timestamp (find those with search_iocs or pivot_entity).
     Args:
-        start_time: ISO 8601 start (e.g., '2024-01-15T10:00:00Z'). Optional.
-        end_time: ISO 8601 end (e.g., '2024-01-15T10:10:00Z'). Optional.
-        event_type: One of: {types}. Optional.
-        source: Filter by artifact source name (partial match). Optional.
+        start_time: ISO 8601 recorded time, e.g. '2024-01-15T10:00:00Z'.
+        end_time: ISO 8601 recorded time.
+        event_type: One of: {types}.
+        source: Artifact source name (partial match).
     """
     try:
         res = case_db.query_timeline(start_time, end_time, event_type, source, limit=PAGE_EVENTS)
@@ -319,14 +304,13 @@ query_timeline.description = query_timeline.description.replace("{types}", ", ".
 def activity_histogram(start_time: Optional[str] = None, end_time: Optional[str] = None, bucket: str = "hour",
                        event_type: Optional[str] = None, source: Optional[str] = None) -> str:
     """
-    Counts timeline events per time bucket and event type (UTC). Use it first to find
-    bursts of activity worth zooming into, instead of reading raw timelines.
+    Counts timeline events per time bucket and event type: find bursts of activity to zoom into.
     Args:
-        start_time: ISO 8601 start. Optional.
-        end_time: ISO 8601 end. Optional.
+        start_time: ISO 8601 recorded time.
+        end_time: ISO 8601 recorded time.
         bucket: 'minute', 'hour' (default) or 'day'.
-        event_type: Optional event type filter.
-        source: Optional artifact source filter (partial match).
+        event_type: Event type filter.
+        source: Artifact source (partial match).
     """
     try:
         rows = case_db.activity_histogram(start_time, end_time, bucket, event_type, source)
@@ -340,13 +324,12 @@ def activity_histogram(start_time: Optional[str] = None, end_time: Optional[str]
 @tool
 def context_window(timestamp: str, minutes: int = 5, event_type: Optional[str] = None) -> str:
     """
-    Everything on the timeline within ±`minutes` of a moment, across all collected
-    sources: the main correlation tool once you have an event of interest
-    (e.g. what ran right after a logon, what was written right after a download).
+    Everything on the timeline within +/- minutes of a moment, across all sources: the main correlation
+    tool once you have an event (what ran after a logon, what was written after a download).
     Args:
-        timestamp: ISO 8601 time of the event of interest (UTC).
-        minutes: Window on each side (default 5, max 120).
-        event_type: Optional event type filter.
+        timestamp: ISO 8601 recorded time of the event, as in the timeline.
+        minutes: Each side (default 5, max 120).
+        event_type: Event type filter.
     """
     from datetime import timedelta
     from copilot.normalize import parse_timestamp, format_ts
@@ -361,11 +344,10 @@ def context_window(timestamp: str, minutes: int = 5, event_type: Optional[str] =
 @tool
 def search_iocs(keyword: str) -> str:
     """
-    Case-insensitive substring search over every collected record (description, extracted
-    fields and the full raw data) for an IOC or term: IP, hash, domain, filename, user, etc.
-    Returns the total number of matching records and each record's first/last timestamp.
+    Case-insensitive substring search over every record (description, fields, raw data) for an IOC or
+    term. Gives the total and each record's first and last time.
     Args:
-        keyword: The IOC or search term to look for.
+        keyword: The IOC or term.
     """
     res = case_db.search_events(keyword, limit=PAGE_RECORDS)
     case_db.log_query("search_iocs", f"keyword={keyword}", res["total"])
@@ -377,12 +359,11 @@ def search_iocs(keyword: str) -> str:
 @tool
 def pivot_entity(entity: str, field: Optional[str] = None) -> str:
     """
-    Find all records related to an entity. With `field`, matches only that extracted field
-    (more precise); without it, searches everything.
-    Use this to follow a user's activity, trace a process, or find everything about an IP.
+    All records about an entity: a user's activity, a process, an IP. With field, matches only that
+    extracted field (precise); without it, searches everything.
     Args:
-        entity: The value to pivot on (e.g., 'svchost.exe', 'jdoe', '192.168.1.50').
-        field: Optional: user, process, command_line, path, hash, ip or event_id.
+        entity: e.g. 'svchost.exe', 'jdoe', '192.168.1.50'.
+        field: user, process, command_line, path, hash, ip or event_id.
     """
     try:
         res = case_db.pivot_entity(entity, field, limit=PAGE_RECORDS)
@@ -397,9 +378,9 @@ def pivot_entity(entity: str, field: Optional[str] = None) -> str:
 @tool
 def get_event_detail(evidence_id: str) -> str:
     """
-    Retrieve one record in full: its raw artifact data and every timestamp found in it.
+    One record in full: its raw artifact data and every timestamp in it.
     Args:
-        evidence_id: The evidence ID to look up (returned by timeline/search/pivot tools).
+        evidence_id: From the timeline, search or pivot tools.
     """
     result = case_db.get_event_detail(evidence_id)
     if not result:
@@ -415,9 +396,8 @@ def get_event_detail(evidence_id: str) -> str:
 @tool
 def case_summary() -> str:
     """
-    Summary of the case database: records and timeline events, how many records have no
-    timestamp, time range, breakdown by artifact, and ALL recorded findings (including ones
-    from earlier sessions) with their IDs. Read this before writing a report or summary.
+    Case overview: record and event counts, undated records, time range, counts per artifact, and ALL
+    findings (also from earlier sessions) with their IDs. Read it before a report or summary.
     """
     stats = case_db.get_stats()
     findings = case_db.get_findings()
@@ -433,19 +413,17 @@ def record_finding(title: str, description: str, evidence_ids: list,
                    confidence: str = "medium", mitre_technique: Optional[str] = None,
                    timestamp_utc: Optional[str] = None) -> str:
     """
-    Record a forensic finding for the final report. Call this whenever you discover
-    something suspicious or malicious during analysis. The finding's time is taken
-    automatically from the FIRST evidence ID, so list first the record that shows WHEN
-    it happened (e.g. the 7045 event, the logon event), then supporting records.
-    Record what the evidence shows; avoid "nothing found" findings unless the search was
-    complete and appropriate (say exactly what was searched).
+    Records a finding for the report: anything suspicious or malicious you establish. Its time comes from
+    the FIRST evidence ID, so list first the record that shows WHEN it happened (e.g. the 7045 or logon
+    event), then supporting ones. Record what the evidence shows; a "nothing found" finding only after a
+    complete, suitable search (say what was searched).
     Args:
-        title: Short title (e.g., 'Webshell Detected').
-        description: Detailed explanation of the finding (give corrected and recorded times if the host clock was skewed).
-        evidence_ids: List of evidence_id strings that support this finding.
-        confidence: 'low', 'medium', or 'high'.
-        mitre_technique: MITRE ATT&CK technique ID (e.g., 'T1505.003'). Optional.
-        timestamp_utc: Only used when none of the evidence has a timestamp (recorded host time). Optional.
+        title: Short title, e.g. 'Webshell detected'.
+        description: What it shows and why it matters; corrected and recorded times if the clock was skewed.
+        evidence_ids: Supporting evidence IDs.
+        confidence: 'low', 'medium' or 'high'.
+        mitre_technique: ATT&CK technique ID, e.g. 'T1505.003'.
+        timestamp_utc: Only if no evidence has a time (recorded host time).
     """
     from copilot.normalize import normalize_bound
     from copilot.report import finding_time
@@ -507,17 +485,17 @@ def export_results(query_type: str, start_time: Optional[str] = None, end_time: 
                    keyword: Optional[str] = None, field: Optional[str] = None,
                    include_raw: bool = False) -> str:
     """
-    Saves ALL rows of a query (not just the page you see) as a CSV file for the investigator
-    to download, e.g. "give me the timeline of 02:30-03:00 as a file". Returns the file path.
+    Saves ALL rows of a query (not just the page you see) as a CSV file for the investigator, e.g. "the
+    timeline of 02:30-03:00 as a file". Returns the file path.
     Args:
         query_type: 'timeline' (time window), 'search' (keyword) or 'pivot' (keyword in one field).
-        start_time: For timeline: ISO 8601 start. Optional.
-        end_time: For timeline: ISO 8601 end. Optional.
-        event_type: For timeline: event type filter. Optional.
-        source: For timeline: artifact source filter. Optional.
-        keyword: For search/pivot: the term or entity.
-        field: For pivot: user, process, command_line, path, hash, ip or event_id.
-        include_raw: Add the full raw record (JSON) as a column.
+        start_time: Timeline start (ISO 8601).
+        end_time: Timeline end (ISO 8601).
+        event_type: Timeline event type.
+        source: Timeline artifact source.
+        keyword: Search or pivot term.
+        field: Pivot field: user, process, command_line, path, hash, ip or event_id.
+        include_raw: Add the raw record (JSON) as a column.
     """
     import csv
     from copilot import outputs
@@ -562,10 +540,10 @@ def export_results(query_type: str, start_time: Optional[str] = None, end_time: 
 @tool
 def export_evidence(evidence_ids: list) -> str:
     """
-    Saves the complete original records (raw data and every timestamp) of the given
-    evidence IDs as a JSON file for the investigator to download. Returns the file path.
+    Saves the full original records (raw data, every timestamp) of evidence IDs as a JSON file for the
+    investigator. Returns the file path.
     Args:
-        evidence_ids: Evidence IDs to export.
+        evidence_ids: Evidence IDs.
     """
     from copilot import outputs
     records, missing = [], []
@@ -589,31 +567,34 @@ def export_evidence(evidence_ids: list) -> str:
 @tool
 def dfir_guide(topic: str) -> str:
     """
-    DFIR reference (no data access, cheap): what to check for an investigation question,
-    what an event ID means, or what an artifact shows and how to query it.
+    DFIR reference (no data access): what to check for a question, what an event ID means, what an
+    artifact shows and how to query it.
     Args:
-        topic: A playbook (initial_access, execution, persistence, lateral_movement,
-               credential_access, collection_exfiltration, anti_forensics, timeline_basics, memory),
-               an event ID (e.g. '4624'), an artifact name (e.g. 'Windows.NTFS.MFT'), or 'learned'
-               for the lessons investigators approved on this server.
+        topic: A playbook ({playbooks}), an event ID (e.g. '4624'), an artifact name, or 'learned'
+            (lessons approved on this server).
     """
     from copilot.knowledge import guide
     return guide(topic)
 
 
+def _playbook_names() -> str:
+    from copilot import knowledge
+    return ", ".join(knowledge.playbooks() or {})
+
+
+dfir_guide.description = dfir_guide.description.replace("{playbooks}", _playbook_names())
+
+
 @tool
 def propose_lesson(topic: str, lesson: str, unusable_on_images: Optional[bool] = None) -> str:
     """
-    Proposes a lesson for the knowledge base, so this and future investigations (every case on this
-    server) avoid a mistake or reuse a method. Only for something you VERIFIED in this
-    investigation and that holds in general, e.g. "returns 0 rows on disk images because it calls
-    lookupSID (seen in the flow log)", "the parameter is FileNameRegex, not FileRegex", "a FILE_CREATE
-    and a RENAME_NEW_NAME with the same name in the same second are one file creation". Never case
-    facts (IPs, hashes, hosts, users, times). The investigator approves it first.
+    Proposes a lesson for every future investigation on this server. Only something you VERIFIED here
+    that holds in general, e.g. "returns 0 rows on disk images: it calls lookupSID (flow log)", "the
+    parameter is FileNameRegex, not FileRegex". Never case facts (IPs, hashes, hosts, users, times).
+    The investigator approves it.
     Args:
-        topic: What it is about: an artifact name (e.g. 'Windows.Applications.Chrome.History'), a
-               playbook (e.g. 'initial_access') or a short subject (e.g. 'Memory.windows.netscan').
-        lesson: The lesson in one to three sentences, with the evidence that showed it.
+        topic: An artifact name, a playbook (e.g. 'initial_access') or a short subject.
+        lesson: One to three sentences, with the evidence that showed it.
         unusable_on_images: True if the artifact returns nothing from disk images (it is then refused).
     """
     from copilot import approvals, cases, lessons
@@ -632,12 +613,11 @@ def propose_lesson(topic: str, lesson: str, unusable_on_images: Optional[bool] =
 @tool
 def retract_finding(finding_id: str, reason: str) -> str:
     """
-    Retract a finding that later evidence contradicts or that was recorded in error
-    (e.g. "no archive found" after the USN journal shows one). Retracted findings leave
-    the report body and are listed in an appendix with the reason.
+    Retracts a finding that later evidence contradicts or that was recorded in error; it moves to the
+    report's appendix with the reason. Not for findings that are still true (add a new one instead).
     Args:
         finding_id: The finding ID (a unique prefix is enough).
-        reason: Why it is retracted, citing the contradicting evidence or finding.
+        reason: Why, citing the contradicting evidence or finding.
     """
     from copilot import approvals
     found = case_db.find_finding(finding_id)
@@ -674,15 +654,10 @@ def server_vql_query(vql_query: str) -> str:
 @tool
 def export_case(include_csv: bool = True) -> str:
     """
-    Exports the entire case database for offline investigation.
-    Creates a ZIP file containing:
-    - case.db (SQLite database - open with DB Browser, DBeaver, or Python)
-    - records.csv (every collected row with extracted fields)
-    - timeline.csv (one row per timestamp - open with Excel or Timeline Explorer)
-    - findings.csv (all recorded findings)
-    - audit_log.csv (full query audit trail for chain of custody)
+    Exports the whole case as a ZIP for offline work: case.db (SQLite) and, with include_csv, the
+    records, timeline, findings and audit log as CSV files.
     Args:
-        include_csv: If True, also exports CSV files alongside the SQLite DB.
+        include_csv: Also export the CSV files.
     """
     import csv
     import shutil
@@ -752,10 +727,10 @@ def list_cases() -> str:
 @tool
 def switch_case(case_id: str) -> str:
     """
-    Makes another case the active investigation. Only when the investigator asks to.
-    The conversation restarts in the new case after this turn, so finish your answer briefly.
+    Makes another case active, only when the investigator asks. The conversation restarts in it after
+    this turn: finish your answer briefly.
     Args:
-        case_id: The case ID from list_cases.
+        case_id: From list_cases.
     """
     from copilot import approvals, cases
     known = {c["id"]: c for c in cases.list_cases()}
@@ -775,20 +750,18 @@ def create_case(case_id: str, name: str, client_id: Optional[str] = None, start_
                 clock_offset_minutes: Optional[int] = None, iocs: Optional[dict] = None,
                 copy_data_from: Optional[str] = None) -> str:
     """
-    Creates a new investigation from what the investigator told you (does not switch to it).
-    Only when the investigator asks. Use details they gave; leave the rest empty.
-    IOCs mentioned in the description are also extracted automatically.
+    Creates a new case (does not switch to it). Only when the investigator asks; use only the details
+    they gave. IOCs in the description are extracted automatically.
     Args:
-        case_id: Short ID for the folder, e.g. 'acme-ws42' (letters, digits, - and _). Required.
-        name: Case name. Required.
+        case_id: Folder ID: letters, digits, - and _, e.g. 'acme-ws42'.
+        name: Case name.
         client_id: Velociraptor client ID of the dead-disk image (C.xxxx), if known.
-        start_time: Incident window start, ISO 8601 UTC. Optional.
-        end_time: Incident window end, ISO 8601 UTC. Optional.
-        description: What happened / what to determine, in the investigator's words.
-        clock_offset_minutes: How far the host clock ran ahead of UTC, if known.
-        iocs: Known indicators: {"ips": [], "domains": [], "hashes": [], "filenames": [], "users": []}.
-        copy_data_from: ID of a case on the SAME evidence whose collected data should be copied
-                        (saves re-collecting; findings are not copied).
+        start_time: Incident window start, ISO 8601 UTC.
+        end_time: Incident window end, ISO 8601 UTC.
+        description: What happened / what to find out, in their words.
+        clock_offset_minutes: How far the host clock ran ahead of UTC.
+        iocs: {"ips": [], "domains": [], "hashes": [], "filenames": [], "users": []}.
+        copy_data_from: ID of a case on the SAME evidence to copy collected data from (not findings).
     """
     from copilot import approvals, cases
     from copilot.iocs import extract_iocs, merge
@@ -816,16 +789,16 @@ def update_case(client_id: Optional[str] = None, start_time: Optional[str] = Non
                 description: Optional[str] = None, clock_offset_minutes: Optional[int] = None,
                 add_iocs: Optional[dict] = None, remove_iocs: Optional[dict] = None) -> str:
     """
-    Changes the ACTIVE case's settings. Only when the investigator asks (e.g. "add 1.2.3.4 as an
-    IOC", "the window is actually 18-19 Sept"). Pass only what changes.
+    Changes the ACTIVE case's settings, only when the investigator asks (e.g. "add 1.2.3.4 as an IOC").
+    Pass only what changes.
     Args:
-        client_id: New Velociraptor client ID.
-        start_time: New window start (ISO 8601 UTC).
-        end_time: New window end (ISO 8601 UTC).
-        description: New description.
+        client_id: Velociraptor client ID.
+        start_time: Window start (ISO 8601 UTC).
+        end_time: Window end (ISO 8601 UTC).
+        description: Case description.
         clock_offset_minutes: Host clock offset ahead of UTC.
-        add_iocs: IOCs to add, e.g. {"ips": ["1.2.3.4"]}.
-        remove_iocs: IOCs to remove, same shape.
+        add_iocs: e.g. {"ips": ["1.2.3.4"]}.
+        remove_iocs: Same shape.
     """
     from copilot import cases
     from copilot.iocs import clean, merge
@@ -858,19 +831,16 @@ def update_case(client_id: Optional[str] = None, start_time: Optional[str] = Non
 @tool
 def generate_report(executive_summary: str, recommendations: str, correlations: Optional[str] = None) -> str:
     """
-    Generates the final DFIR report (Markdown) from the recorded findings and the case
-    database. Call this at the END of an investigation, when the investigator asks.
-    FIRST call case_summary: the summary must cover ALL active findings, including those
-    recorded in earlier sessions, and contradicted findings should be retracted beforehand.
-    Times (corrected and recorded), the evidence timeline, indicators, artifact
-    explanations and audit log are filled in automatically; you only write:
+    Writes the final DFIR report from the recorded findings and the case database: only when the
+    investigator asks, at the end. Call case_summary FIRST: cover ALL active findings (also from earlier
+    sessions) and retract contradicted ones before. Times, timeline, indicators, artifact notes and audit
+    log are added automatically; the investigator sets the file format.
     Args:
-        executive_summary: 2-4 paragraphs for a non-technical reader: what happened, when (corrected
-                           UTC), how, impact, and what remains unknown. Based only on recorded findings.
-        recommendations: Bullet-point remediation and follow-up recommendations.
-        correlations: How the findings connect (e.g. logon -> execution -> persistence), citing finding
-                      titles and evidence IDs; state which links are proven and which are inferred.
-    The file format is set by the investigator, not by you.
+        executive_summary: 2-4 paragraphs for non-technical readers: what happened, when (corrected UTC),
+            how, impact, what remains unknown. Only from recorded findings.
+        recommendations: Bullet-point remediation and follow-up.
+        correlations: How findings connect (e.g. logon -> execution -> persistence), citing finding titles
+            and evidence IDs; say which links are proven and which inferred.
     """
     from copilot.report import build_report
 
