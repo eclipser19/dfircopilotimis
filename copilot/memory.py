@@ -449,7 +449,10 @@ def execute(short: str, options: dict, image: str = None) -> dict:
         error = f"Volatility's output was not JSON: {explain_failure(stdout + chr(10) + stderr)}"
         case_db.upsert_collection(flow_id, state="ERROR", error=error[:4000], finished_at=finished)
         return {**summary, "state": "ERROR", "error": error, "seconds": seconds}
-    rows = list(_rows(tree if isinstance(tree, list) else [tree]))
+    returned = list(_rows(tree if isinstance(tree, list) else [tree]))
+    # Some scans report the same record many times (svcscan finds each service list from
+    # several headers): keep one copy of identical rows.
+    rows = list({json.dumps(r, sort_keys=True, default=str): r for r in returned}.values())
     limit = case_config.max_rows
     kept = rows[:limit]
     new = case_db.ingest_artifact_results(kept, source, hostname=os.path.basename(case_config.memory_image),
@@ -457,8 +460,10 @@ def execute(short: str, options: dict, image: str = None) -> dict:
     case_db.upsert_collection(flow_id, state="FINISHED", finished_at=finished, rows_ingested=new, ingested=1)
     case_db.log_query("analyze_memory", f"{plugin_name} {json.dumps(options)}", len(kept), source)
     summary.update(state="FINISHED", rows_read=len(kept), new_rows_ingested=new, seconds=seconds)
+    if len(returned) != len(rows):
+        summary["duplicates_dropped"] = len(returned) - len(rows)
     if len(rows) > limit:
-        summary["note"] = (f"Volatility returned {len(rows)} rows; only the first {limit} were stored "
+        summary["note"] = (f"Volatility returned {len(rows)} distinct rows; only the first {limit} were stored "
                            f"(collection.max_rows). Narrow it with pid or contains.")
     elif not rows:
         summary["note"] = "No rows (nothing matched, or nothing of this kind in this image)."

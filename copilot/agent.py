@@ -34,6 +34,8 @@ def status_line(summary: dict) -> str:
                  f"read {summary.get('rows_read')}, new {summary.get('new_rows_ingested')}")
     elif summary.get("state") == "FINISHED":
         line += f": rows {summary.get('rows_read')}, new {summary.get('new_rows_ingested')}"
+        if summary.get("duplicates_dropped"):
+            line += f", {summary['duplicates_dropped']} repeated rows dropped"
         if summary.get("seconds") is not None:
             line += f" ({summary['seconds']} s)"
     if summary.get("error"):

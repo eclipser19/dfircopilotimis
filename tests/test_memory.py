@@ -283,3 +283,17 @@ def test_check_accepts_the_full_path_of_an_image_in_the_folder(case, mem, tmp_pa
     finally:
         del OUTPUT["windows.info.Info"]
     assert "OK: Windows 10" in capsys.readouterr().out
+
+
+def test_identical_rows_are_stored_once(case, mem):
+    service = {"Offset": 1, "Name": "coreupdater", "Display": "coreupdater", "State": "SERVICE_RUNNING",
+               "Start": "SERVICE_AUTO_START", "Binary": "C:\\Windows\\System32\\coreupdater.exe", "__children": []}
+    OUTPUT["windows.svcscan.SvcScan"] = [dict(service) for _ in range(60)] + [dict(service, Offset=2)]
+    try:
+        summary = memory.run("windows.svcscan")
+    finally:
+        del OUTPUT["windows.svcscan.SvcScan"]
+    assert summary["rows_read"] == 2 and summary["duplicates_dropped"] == 59
+    from copilot.agent import status_line
+    assert status_line(summary) == ("Memory.windows.svcscan.SvcScan -> FINISHED: rows 2, new 2, "
+                                    "59 repeated rows dropped (0 s)")
