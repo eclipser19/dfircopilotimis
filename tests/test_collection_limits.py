@@ -189,3 +189,17 @@ def test_empty_result_note_uses_what_the_case_collected_before(case, monkeypatch
     third = collection.collect("Windows.NTFS.MFT", {"FileRegex": "^loot\\.zip$"}, vql=nothing(), sleep=lambda s: None)
     assert "This artifact works on this image" in third["note"] and "loot" in third["note"]
     assert "Do not blame the disk mapping" in third["note"]
+
+
+def test_csv_parameters_get_the_artifacts_header(case, monkeypatch):
+    _config(monkeypatch, agent_collections="auto")
+    declared = [{"name": "DirectoryPathGlob", "type": "csv", "default": "Path\nC:/Users/*/Downloads/**/*\n"}]
+    for given in ("C:/Windows/System32/x.exe", ["C:/Windows/System32/x.exe"]):
+        vql = FakeVQL(artifact_params=declared)
+        collection.collect("Windows.Analysis.EvidenceOfDownload", {"DirectoryPathGlob": given}, vql=vql,
+                           requested_by="agent", sleep=lambda s: None)
+        assert _spec(vql)["Windows.Analysis.EvidenceOfDownload"] == {"DirectoryPathGlob": "Path\nC:/Windows/System32/x.exe\n"}
+    vql = FakeVQL(artifact_params=declared)                 # already CSV: sent as it is
+    collection.collect("Windows.Analysis.EvidenceOfDownload", {"DirectoryPathGlob": "Path\nC:/a"}, vql=vql,
+                       sleep=lambda s: None)
+    assert _spec(vql)["Windows.Analysis.EvidenceOfDownload"] == {"DirectoryPathGlob": "Path\nC:/a"}

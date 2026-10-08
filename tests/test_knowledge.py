@@ -57,7 +57,7 @@ def test_questions_get_the_matching_playbook():
     assert knowledge.playbooks_for("summarize the case") == []
     attached = knowledge.with_playbooks("How did coreupdater.exe get onto this machine?")
     assert attached.startswith("How did coreupdater.exe get onto this machine?\n\n[Copilot] Playbook")
-    assert "ADSHunter" in attached and "Prefetch" in attached
+    assert "EvidenceOfDownload" in attached and "Prefetch" in attached
     assert knowledge.with_playbooks("summarize the case") == "summarize the case"
 
 

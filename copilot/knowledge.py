@@ -109,7 +109,8 @@ def triage_suggestions(os_name: str = None) -> list:
     seen, out = set(), []
     for group in groups:
         for entry in data.get(group) or []:
-            if entry.get("artifact") and entry["artifact"] not in seen:
+            # Learned or known not to work on disk images (e.g. lookupSID): not suggested.
+            if entry.get("artifact") and entry["artifact"] not in seen and not is_live_only(entry["artifact"]):
                 seen.add(entry["artifact"])
                 out.append({"artifact": entry["artifact"], "why": entry.get("why", ""),
                             "parameters": dict(entry.get("parameters") or {})})

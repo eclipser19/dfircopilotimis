@@ -40,14 +40,10 @@ windows:
     why: Folders each user browsed
   - artifact: Windows.Forensics.RecycleBin
     why: Deleted files in the Recycle Bin
-  - artifact: Windows.System.Powershell.PSReadline
-    why: PowerShell command history per user (no timestamps)
   - artifact: Windows.Forensics.SRUM
     why: Per-application network and resource usage
-  - artifact: Windows.NTFS.ADSHunter
-    why: Alternate data streams, e.g. Zone.Identifier download markers with the source URL
-  - artifact: Windows.Applications.Firefox.History
-    why: Firefox history (if Firefox was used)
+  - artifact: Windows.Analysis.EvidenceOfDownload
+    why: Downloaded files in Downloads and the Recycle Bin, with the source URL (Zone.Identifier)
   - artifact: Windows.Forensics.Usn
     why: File creations, renames and deletions (large; capped at the row limit)
   - artifact: Windows.NTFS.MFT

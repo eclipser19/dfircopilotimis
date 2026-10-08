@@ -318,7 +318,7 @@
 # Browsers. Verified on a dead-disk Velociraptor server (Windows 10 image): Chrome.History,
 # Edge.History, PSReadline and NirsoftBrowserViewer return nothing from an image (lookupSID). Internet Explorer / Edge Legacy history
 # (WebCacheV01.dat) has no parser artifact on a standard server: prove downloads with the
-# Zone.Identifier stream (Windows.NTFS.ADSHunter), Prefetch of the browser and LNK files.
+# Zone.Identifier stream (Windows.Analysis.EvidenceOfDownload), Prefetch of the browser and LNK files.
 - pattern: Windows.Applications.Chrome.History*
   what: Chrome browsing history
   location: 'C:\Users\*\AppData\Local\Google\Chrome\User Data\*\History'
@@ -351,7 +351,7 @@
   location: 'C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\History'
   meaning: URLs visited and downloads in the new (Chromium) Edge. Not Internet Explorer or Edge Legacy.
   live_only: true
-  dead_disk_note: 'Calls lookupSID, which is disabled for disk images: it returns 0 rows with "Call to function lookupSID disabled" in the log (verified). Use Zone.Identifier (Windows.NTFS.ADSHunter), Prefetch, and a strings search of the memory image for the URL or host.'
+  dead_disk_note: 'Calls lookupSID, which is disabled for disk images: it returns 0 rows with "Call to function lookupSID disabled" in the log (verified). Use Zone.Identifier (Windows.Analysis.EvidenceOfDownload), Prefetch, and a strings search of the memory image for the URL or host.'
 
 - pattern: Windows.Detection.Yara.Process*
   what: YARA scan of running processes
@@ -360,15 +360,23 @@
   live_only: true
   dead_disk_note: 'For process memory use the memory image: analyze_memory windows.memsearch (text or rules).'
 
-- pattern: Windows.NTFS.ADSHunter*
-  what: Alternate data streams, including Zone.Identifier (Mark of the Web)
-  location: 'NTFS alternate data streams, e.g. C:\Users\<user>\Downloads\setup.exe:Zone.Identifier'
-  meaning: 'A Zone.Identifier stream proves a file came from the internet: ZoneId=3, HostUrl (download URL) and ReferrerUrl (page it was linked from). The best disk evidence of a browser download when no browser history parser works.'
+- pattern: Windows.Analysis.EvidenceOfDownload*
+  what: Downloaded files, from their Zone.Identifier stream (Mark of the Web)
+  location: 'NTFS alternate data stream <file>:Zone.Identifier'
+  meaning: 'A Zone.Identifier stream proves a file came from another security zone (ZoneId=3: internet). Each row is a file with ZoneId, HostUrl (download URL), ReferrerUrl (page it was linked from), the stream''s time and the file''s hash. The best disk evidence of a browser download when no browser history parser works on an image.'
+  params: {DirectoryPathGlob: 'CSV with a Path header, one glob per line (a list of globs is converted). Default: C:/Users/*/Downloads/**/* and the Recycle Bin'}
+  dead_disk_note: Reads the stream through the ntfs accessor, which the dead-disk remapping maps (unlike Windows.NTFS.ADSHunter).
   tips:
-    - 'The stream moves with the file: look at the file''s current path (e.g. System32), not only Downloads.'
-    - Filter by path and stream name (see describe_artifact for this server's parameter names); scanning every stream on a volume is slow.
-    - 'Look at the stream of the suspicious file first, without a content filter: some browsers (older Internet Explorer) write only ZoneId=3 and no HostUrl, so a search for the IP in stream content can miss a real download.'
+    - 'The stream moves with the file: add the file''s current path (e.g. C:/Windows/System32/<file>.exe) to DirectoryPathGlob, not only Downloads.'
+    - 'Some browsers (older Internet Explorer) write only ZoneId=3 and no HostUrl: the stream still proves the download; get the URL from memory (strings "Visited: ") or the browser.'
     - Copying a file through some tools, extracting archives or the attacker's cleanup can remove the stream; no stream is not proof of no download.
+
+- pattern: Windows.NTFS.ADSHunter*
+  what: Alternate data streams (hidden data in NTFS streams)
+  location: 'NTFS alternate data streams <file>:<stream>'
+  meaning: Hunts for data hidden in alternate data streams; common benign streams are excluded by default.
+  params: {TargetGlob: 'file glob; the artifact appends :<AdsNameGlob>; **\* is recursive (default C:\{*,**\*})', AdsNameGlob: 'stream name glob, e.g. Zone.Identifier', AdsNameExclusion: regex of stream names to skip, AdsContentRegex: 'regex on the first 1 KB of the stream (default .)', AdsContentExclusion: regex, MinSize: bytes, MaxSize: bytes, UploadDataStream: Y/N}
+  dead_disk_note: 'Reads stream content through the mft accessor, which the dead-disk remapping does not map: the content is empty, so the default AdsContentRegex "." drops every row and the artifact returns 0 rows from an image. For Zone.Identifier use Windows.Analysis.EvidenceOfDownload. To list other streams on an image, pass AdsContentRegex ".*" (you get names, sizes and files, not content).'
 
 - pattern: Windows.Applications.*
   what: Application artifacts (browsers etc.)

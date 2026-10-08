@@ -8,6 +8,8 @@ query. Nothing is ever formatted into the VQL text.
 Variable names carry a `Dfir` prefix: VQL resolves built-in names first, so a
 variable called e.g. `Artifact` silently becomes the Artifact plugin instead.
 """
+import csv
+import io
 import json
 import re
 import time
@@ -164,6 +166,38 @@ def check_parameter_names(artifact: str, params: dict, specs: list) -> dict:
             f"it and run with the defaults, so an empty result would mean nothing. Accepted parameters: "
             f"{accepted}. Retry with these names (describe_artifact shows the full description).")
     return {declared[k.lower()]: v for k, v in params.items()}
+
+
+def csv_parameters(params: dict, specs: list) -> dict:
+    """
+    Parameters of type csv are CSV text with a header line (e.g. "Path\\nC:/Users/*/Downloads/**").
+    A list (of values or of dicts) or a bare value without the header becomes that text, with the
+    header taken from the parameter's default; otherwise Velociraptor would read it as a table
+    with the wrong column and match nothing.
+    """
+    params = dict(params or {})
+    for spec in specs or []:
+        name = spec.get("name")
+        if spec.get("type") != "csv" or name not in params or params[name] in (None, ""):
+            continue
+        value = params[name]
+        header = (str(spec.get("default") or "").strip().splitlines() or [""])[0].strip()
+        out = io.StringIO()
+        writer = csv.writer(out, lineterminator="\n")
+        if isinstance(value, list) and value and all(isinstance(v, dict) for v in value):
+            columns = list(dict.fromkeys(k for v in value for k in v))
+            writer.writerow(columns)
+            writer.writerows([[v.get(c, "") for c in columns] for v in value])
+        elif isinstance(value, list) and header:
+            writer.writerow([header])
+            writer.writerows([[v] for v in value])
+        elif isinstance(value, str) and header and "," not in header and value.splitlines()[0].strip() != header:
+            writer.writerow([header])
+            writer.writerows([[line.strip()] for line in value.splitlines() if line.strip()])
+        else:
+            continue
+        params[name] = out.getvalue()
+    return params
 
 
 def with_time_window(artifact: str, params: dict, vql, specs: list = None) -> tuple:
@@ -462,6 +496,7 @@ def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=No
     specs = parameter_specs(artifact, vql)
     if requested_by == "agent":
         params = check_parameter_names(artifact, params, specs)
+    params = csv_parameters(params, specs)
     params, window = with_time_window(artifact, params, vql, specs)
     if requested_by == "agent":
         # The investigator approves (or the case allows) agent collections before anything runs.

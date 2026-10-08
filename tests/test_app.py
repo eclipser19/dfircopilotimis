@@ -794,5 +794,5 @@ def test_typed_questions_carry_the_playbook_but_show_as_typed(app_env):
     at.run()
     at.chat_input[0].set_value("How did coreupdater.exe get onto this machine?").run()
     sent = [m.content for m in at.session_state["chat_history"] if m.type == "human"][-1]
-    assert "[Copilot] Playbook" in sent and "ADSHunter" in sent
+    assert "[Copilot] Playbook" in sent and "EvidenceOfDownload" in sent
     assert "[Copilot] Playbook" not in _texts(at)                 # the chat shows what you typed
