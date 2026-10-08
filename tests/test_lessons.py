@@ -82,11 +82,11 @@ def test_list_artifacts_and_the_prompt_know_the_lessons(case, monkeypatch):
     lessons.add(CHROME, LOOKUP, unusable_on_images=True)
     vql = FakeVQL()
     vql.run_vql = lambda query, env=None, timeout=None: {"results": [{"name": CHROME, "description": "d"},
-                                                                     {"name": "Windows.Applications.Firefox.History",
+                                                                     {"name": "Windows.Applications.Opera.History",
                                                                       "description": "d"}], "log": ""}
     monkeypatch.setattr(tools, "get_vql", lambda: vql)
     listed = tools.list_artifacts.invoke({"keyword": "history"})
-    assert "Firefox" in listed and CHROME not in listed
+    assert "Windows.Applications.Opera.History" in listed and CHROME not in listed
     from copilot.case_config import case_config
     from copilot.prompts import build_system_prompt
     assert f"lessons so far about: {CHROME}" in build_system_prompt(case_config)

@@ -118,6 +118,8 @@
   tips:
     - 'Search for what the collected data cannot explain: an IP or domain from the case (also the download server, not only the C2), a file name, a URL path. The text after the match often completes it (full URL, HTTP headers, user agent).'
     - Then run windows.memsearch with the same text to see which running process still holds it.
+    - 'To list the web pages users visited from memory (Internet Explorer / Edge Legacy history is otherwise unreadable on an image), search for the text "Visited: " - every hit is "Visited: <user>@<url>".'
+    - '<name>.<random>.partial is the temporary name Internet Explorer / Edge Legacy give a download in progress: it proves a browser download of <name>. Date it with the USN journal (FILE_CREATE and RENAME of that name).'
     - '"Visited: <user>@<url>" is a WinINet history record (Internet Explorer / Edge Legacy, stored in WebCacheV01.dat): it names the Windows account and the browser family. A URL ending in a file name (e.g. .exe) is a download. Search next for the file name the case knows, to get its full URL.'
     - 'No hit is weak evidence: the memory may have been reused, or the image is compressed.'
 
@@ -204,6 +206,8 @@
   what: UserAssist
   location: 'NTUSER.DAT: Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist'
   meaning: GUI programs a user launched, with run count and last run time (names are ROT13-encoded in the hive).
+  live_only: true
+  dead_disk_note: 'Calls lookupSID, which is disabled for disk images: it returns 0 rows with "Call to function lookupSID disabled" in the log (verified). On an image use Windows.Registry.NTUser with KeyGlob on the UserAssist key (value names are ROT13), or analyze_memory windows.registry.userassist.'
 
 - pattern: Windows.Forensics.SRUM*
   what: System Resource Usage Monitor
@@ -246,6 +250,7 @@
     - The journal rolls over; on busy systems it may only cover days.
     - 'Follow a file across renames by its MFT entry number (e.g. _FileMFTID / MFTId): search_iocs on the number finds every record of that file, including FILE_CREATE with its original name and RENAME_OLD_NAME with each previous name.'
     - 'To find files created next to it, also search the parent folder''s MFT entry (_ParentMFTID).'
+    - 'Download time: browsers write the download under a temporary name and rename it when done (Internet Explorer / Edge Legacy: <name>.<random>.partial; Chrome / new Edge: .crdownload). FILE_CREATE of the temporary name is when the download started, its RENAME to the final name when it finished. Collect with FileNameRegex on the file name.'
     - 'To see every file touched around an event (e.g. an archive created under another name), collect with only DateAfter/DateBefore a few minutes apart (recorded host time): a window of 60 minutes or less counts as a filter.'
     - 'Placeholder pattern: Explorer (Send to > Compressed folder), Office and many programs create the final name as a placeholder (FILE_CREATE on one MFT entry), build the content in another file and rename or move it over (RENAME_NEW_NAME with the same name on another entry) in the same second. Together that is one file creation at that time; say so, and look for the second entry''s RENAME_OLD_NAME (temporary name, often in a Temp folder) and the placeholder''s FILE_DELETE.'
     - '~RFxxxx.TMP names in the USN journal come from Windows'' safe-replace (ReplaceFile): the old file is moved aside under that name while the new one takes over the original name.'
@@ -296,6 +301,15 @@
   live_only: true
 
 # ---------------------------------------------------------------- registry, apps, system
+- pattern: Windows.Registry.NTUser*
+  what: Keys from each user's NTUSER.DAT
+  location: 'C:\Users\*\NTUSER.DAT'
+  meaning: 'Any key of the users'' registry hives, read from the files: works on disk images (verified), unlike the per-user artifacts that call lookupSID.'
+  params: {KeyGlob: 'key path under the hive root, glob, e.g. Software\Microsoft\Windows\CurrentVersion\Run* (verified)'}
+  tips:
+    - 'Useful keys: Software\Microsoft\Internet Explorer\TypedURLs* (URLs typed into Internet Explorer), Software\Microsoft\Windows\CurrentVersion\Explorer\RunMRU* (Win+R commands), ...\Explorer\RecentDocs*, ...\Explorer\UserAssist\*\Count* (programs run; names ROT13), Software\Microsoft\Terminal Server Client\* (RDP targets).'
+    - The key's LastWrite time is the only time a registry value has.
+
 - pattern: Windows.Registry.*
   what: Registry data
   location: 'C:\Windows\System32\config\{SYSTEM,SOFTWARE,SAM,SECURITY}, C:\Users\*\NTUSER.DAT, UsrClass.dat'
@@ -329,7 +343,8 @@
   location: 'C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\places.sqlite'
   meaning: URLs visited and files downloaded with Firefox, with times.
   params: {userRegex: user filter, URLRegex: URL filter}
-  dead_disk_note: Not yet verified on an image; if it returns 0 rows with "lookupSID disabled" in the log, it cannot work here.
+  live_only: true
+  dead_disk_note: 'Calls lookupSID, which is disabled for disk images: it returns 0 rows with "Call to function lookupSID disabled" in the log (verified). (History and Downloads.)'
 
 - pattern: Windows.Applications.Edge.History*
   what: Edge (Chromium) browsing history
