@@ -382,7 +382,9 @@ def knowledge_panel():
     active, waiting = lessons.active(), lessons.proposed()
     with st.expander(f"🧠 Knowledge · {len(active)} lesson{'' if len(active) == 1 else 's'}"
                      + (f" · {len(waiting)} proposed" if waiting else ""), expanded=False):
-        st.caption("Lessons apply to every case on this server. The agent proposes them; a person approves.")
+        st.caption("Notes the agent reads in every case on this server: which artifacts fail on disk images, "
+                   "parameters that work, how to read certain records. The agent proposes them in the chat "
+                   "(you approve them under ⏳ Awaiting your approval), or you write one here.")
         for lesson in active:
             st.caption(citations.md_literal(lessons.summary(lesson)) +
                        f" · *{lesson.get('approved_by') or lesson.get('source')}*")
@@ -396,11 +398,14 @@ def knowledge_panel():
                     c1, c2 = st.columns(2)
                     c1.button("Accept", key=f"ln-ok-{lesson['id']}", on_click=lesson_cb, args=("accept", lesson["id"]))
                     c2.button("Remove", key=f"ln-no-{lesson['id']}", on_click=lesson_cb, args=("remove", lesson["id"]))
-        if st.toggle("Add a lesson", key="ln_open"):
-            st.text_input("Topic", key="ln_topic", placeholder="Windows.Applications.Chrome.History")
+        if st.toggle("✍️ Write a lesson yourself", key="ln_open"):
+            st.caption("It applies to the agent right away" +
+                       ("." if trusted else " once an admin accepts it.") + " Keep it general: no case details.")
+            st.text_input("Topic: an artifact, playbook or subject", key="ln_topic",
+                          placeholder="e.g. Windows.Applications.Chrome.History")
             st.text_area("Lesson", key="ln_text", height=80,
-                         placeholder="Returns 0 rows on disk images: it calls lookupSID (see the flow log).")
-            st.checkbox("This artifact does not work on disk images", key="ln_unusable")
+                         placeholder="e.g. Returns 0 rows on disk images: it calls lookupSID (see the flow log).")
+            st.checkbox("This artifact does not work on disk images (the copilot will refuse it)", key="ln_unusable")
             st.button("Save lesson", on_click=lesson_cb, args=("add",))
         if st.session_state.get("ln_message"):
             st.caption(st.session_state.ln_message)

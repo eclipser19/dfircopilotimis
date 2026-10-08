@@ -72,7 +72,8 @@ def load(case_id: str, system_prompt: str, user: str = None) -> tuple:
         agent = messages_from_dict(json.loads(rows[agent_key])) if rows.get(agent_key) else []
     except (ValueError, KeyError, TypeError):
         agent = []
-    return ui, [SystemMessage(content=system_prompt)] + agent
+    from copilot.agent import repair_history
+    return ui, repair_history([SystemMessage(content=system_prompt)] + agent)
 
 
 def clear(case_id: str, user: str = None):

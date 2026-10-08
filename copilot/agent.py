@@ -24,6 +24,40 @@ def trim_chat_history(chat_history: list, keep_last_turns: int = 3) -> list:
                 )
     return chat_history
 
+INTERRUPTED = ("[No result: this step was interrupted before the tool finished (e.g. the page was used while "
+               "the agent worked). Run it again if it is still needed.]")
+
+
+def repair_history(history: list) -> list:
+    """
+    Keeps the conversation valid for the model API: every tool call the agent made gets a result,
+    and no tool result is left without its call. A turn cut short between the two (Streamlit stops
+    a running script when the page is used; a crash) would otherwise make every later request fail.
+    Repairs in place and returns the list.
+    """
+    fixed, pending, names = [], [], {}
+
+    def answer_pending():
+        fixed.extend(ToolMessage(content=INTERRUPTED, tool_call_id=i, name=names.get(i, "")) for i in pending)
+        pending.clear()
+
+    for msg in history:
+        if isinstance(msg, ToolMessage):
+            if msg.tool_call_id in pending:
+                pending.remove(msg.tool_call_id)
+                fixed.append(msg)
+            continue                                   # a result without its call is dropped
+        answer_pending()
+        fixed.append(msg)
+        if isinstance(msg, AIMessage) and msg.tool_calls:
+            for call in msg.tool_calls:
+                pending.append(call["id"])
+                names[call["id"]] = call.get("name", "")
+    answer_pending()
+    history[:] = fixed
+    return history
+
+
 def status_line(summary: dict) -> str:
     """One-line, human readable result of a collection."""
     line = f"{summary.get('artifact')} -> {summary.get('state')}"
@@ -324,6 +358,7 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
     usage.start_turn()
     answer = ""
     answered = False
+    repair_history(chat_history)               # e.g. a previous turn that was cut short
     try:
         step_count = 0
         while step_count < max_steps:
@@ -385,6 +420,10 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
 
     except Exception as e:
         emit("notice", f"Agent Error: {e}")
+    finally:
+        # Also when Streamlit stops the script mid-turn (its exceptions are not Exceptions):
+        # the saved conversation must stay valid.
+        repair_history(chat_history)
     emit("usage", usage.summary())
     return answer
 
