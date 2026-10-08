@@ -31,8 +31,10 @@ memory:
   #    from this folder in the app (Case settings > Memory image). Nothing outside it can be opened.
   images_dir: 'C:\dfir\memory'
 
-  # 2. The folder for Windows symbol tables. Volatility needs the table of the image's exact Windows
-  #    kernel to read it. It looks here first, and saves tables it downloads here.
+  # 2. A FOLDER for symbol tables (created if missing). Volatility needs the table of the image's
+  #    exact Windows kernel to read it. It looks here first and saves tables it downloads here, as
+  #    <this folder>\windows\ntkrnlmp.pdb\<ID>.json.xz. So give the folder that holds "windows",
+  #    never the .json.xz file or the windows folder itself.
   symbols_dir: 'C:\dfir\symbols'
 
   # 3. Offline. true = Volatility never goes online; each image's table must already be in
@@ -42,8 +44,11 @@ memory:
   #       Volatility downloads the table from Microsoft into symbols_dir. Set offline: true again;
   #       that image now works offline.
   #    b) Copy it from a PC that already read the image: `windows.info` shows it as "Symbols"
-  #       (...\symbols\windows\ntkrnlmp.pdb\<ID>.json.xz). Copy the windows folder from there
-  #       into symbols_dir, keeping the sub-folders.
+  #       (...\volatility3\symbols\windows\ntkrnlmp.pdb\<ID>.json.xz). Copy that windows folder
+  #       into symbols_dir, keeping the sub-folders, e.g. in PowerShell:
+  #         Copy-Item -Recurse "<...>\volatility3\symbols\windows" 'C:\dfir\symbols\'
+  #       (On the PC that downloaded it nothing is needed: Volatility's own symbols folder is
+  #       always searched as well.)
   #    c) The symbol pack, for many Windows builds at once: on a PC with internet download
   #         https://downloads.volatilityfoundation.org/volatility3/symbols/windows.zip
   #       and put windows.zip into symbols_dir as it is (no need to unzip). Not every build is in it;

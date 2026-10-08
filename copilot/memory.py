@@ -166,6 +166,34 @@ def symbols_dir() -> str:
     return os.path.abspath(str(path)) if path else ""
 
 
+def symbols_problem() -> str:
+    """Why memory.symbols_dir can't be used as set ("" = fine, or not set). Volatility expects the
+    folder that holds windows\\<pdb name>\\<id>.json.xz (and windows.zip), not a file or a sub-folder."""
+    path = symbols_dir()
+    if not path:
+        return ""
+    parts = os.path.normpath(path).split(os.sep)
+    lowered = [p.lower() for p in parts]
+    # Pointing into the tables (...\windows, ...\windows\ntkrnlmp.pdb, or a table file): the folder
+    # Volatility wants is the one above windows\ (or linux\, mac\). C:\Windows\... is not that.
+    root = ""
+    for i in range(len(parts) - 1, 0, -1):
+        if lowered[i] in ("windows", "linux", "mac"):
+            rest = lowered[i + 1:]
+            if not rest or (len(rest) <= 2 and (rest[0].endswith(".pdb") or
+                                                rest[-1].endswith((".json", ".json.xz", ".json.gz", ".json.bz2")))):
+                root = os.sep.join(parts[:i])
+            break
+    if os.path.exists(path) and not os.path.isdir(path):
+        return (f"memory.symbols_dir must be a folder, but it points to a file ({path}). "
+                + (f"Use the folder that holds the windows folder: {root}" if root else
+                   "Use a folder for symbol tables, e.g. C:\\dfir\\symbols") + ".")
+    if root:
+        return (f"memory.symbols_dir must be the folder that holds the windows folder, not a folder inside it. "
+                f"Use: {root}")
+    return ""
+
+
 def offline() -> bool:
     return settings.flag("memory", "offline", "DFIR_VOL_OFFLINE")
 
@@ -315,6 +343,8 @@ def _env() -> dict:
 
 def build_command(image: str, plugin_name: str, options: dict) -> list:
     cmd = command() + ["-q", "-r", "json"]
+    if symbols_problem():
+        raise MemoryAnalysisError(symbols_problem())
     if symbols_dir():
         os.makedirs(symbols_dir(), exist_ok=True)
         cmd += ["-s", symbols_dir()]       # searched first; downloaded tables are saved here too
@@ -392,6 +422,7 @@ def execute(short: str, options: dict, image: str = None) -> dict:
     _, spec = resolve(short)
     image = image or image_path()
     plugin_name = _plugin_name(short, spec)
+    cmd = build_command(image, plugin_name, options)      # settings problems surface before anything runs
     started = datetime.now(timezone.utc)
     flow_id = f"MEM.{short}.{started.strftime('%Y%m%d%H%M%S%f')}"
     source = f"Memory.{plugin_name}"
@@ -402,7 +433,7 @@ def execute(short: str, options: dict, image: str = None) -> dict:
     summary = {"artifact": source, "flow_id": flow_id, "image": case_config.memory_image}
     clock = time.monotonic()
     try:
-        code, stdout, stderr = _run_process(build_command(image, plugin_name, options))
+        code, stdout, stderr = _run_process(cmd)
     except subprocess.TimeoutExpired:
         code, stdout, stderr = None, "", f"Stopped after {timeout()} s (memory.timeout)."
     seconds = round(time.monotonic() - clock)
@@ -451,6 +482,8 @@ def triage(progress=None) -> list:
     try:                 # problems every plugin would hit: report once
         image_path()
         available_plugins()
+        if symbols_problem():
+            raise MemoryAnalysisError(symbols_problem())
     except MemoryAnalysisError as e:
         return [{"artifact": "Memory triage", "state": "NOT_STARTED", "error": str(e)}]
     summaries = []
@@ -493,6 +526,9 @@ def check(image: str = None) -> int:
         for item in images:
             print(f"  - {item['name']} ({human_size(item['size'])})")
     syms = symbols_dir()
+    if symbols_problem():
+        print(f"[!] {symbols_problem()}")
+        return 1
     if syms:
         packs = [n for n in ("windows.zip", "linux.zip", "mac.zip") if os.path.isfile(os.path.join(syms, n))]
         tables = sum(1 for _, _, files in os.walk(syms) for f in files if f.endswith((".json.xz", ".json")))

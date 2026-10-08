@@ -251,3 +251,35 @@ def test_report_names_the_memory_image_and_capture_time(case, mem):
     assert "Memory.windows.netscan.NetScan" in report
     assert case.search_events("SystemTime")["records"][0]["description"] == \
         "memory image SystemTime: 2020-09-19 05:10:39+00:00"
+
+
+def test_symbols_dir_pointing_at_a_table_says_which_folder_to_use(case, mem, tmp_path, monkeypatch, capsys):
+    symbols = tmp_path / "volatility3" / "symbols"
+    table = symbols / "windows" / "ntkrnlmp.pdb" / "81BC5C377C525081645F9958F209C527-1.json.xz"
+    table.parent.mkdir(parents=True)
+    table.write_bytes(b"")
+    for wrong in (table, table.parent, table.parent.parent):
+        monkeypatch.setenv("DFIR_VOL_SYMBOLS", str(wrong))
+        with pytest.raises(memory.MemoryAnalysisError) as e:
+            memory.run("windows.info")
+        assert str(e.value).endswith(str(symbols) + ("." if wrong == table else ""))
+    assert not case.get_collections() and not mem.commands           # nothing started, nothing left RUNNING
+    assert memory.main(["check"]) == 1 and "points to a file" not in capsys.readouterr().out   # last one: a folder
+    monkeypatch.setenv("DFIR_VOL_SYMBOLS", str(table))
+    assert memory.main(["check", "desktop.mem"]) == 1 and "points to a file" in capsys.readouterr().out
+    result = memory.triage()
+    assert len(result) == 1 and "points to a file" in result[0]["error"]
+    for fine in (symbols, tmp_path / "windows" / "temp" / "symbols"):     # C:\Windows\... is not a symbols sub-folder
+        monkeypatch.setenv("DFIR_VOL_SYMBOLS", str(fine))
+        assert memory.symbols_problem() == ""
+
+
+def test_check_accepts_the_full_path_of_an_image_in_the_folder(case, mem, tmp_path, capsys):
+    mem.fail = {}
+    OUTPUT["windows.info.Info"] = [{"Variable": "NtMajorVersion", "Value": "10"},
+                                   {"Variable": "SystemTime", "Value": "2020-09-19 05:10:39+00:00"}]
+    try:
+        assert memory.main(["check", str(tmp_path / "memory" / "desktop.mem")]) == 0
+    finally:
+        del OUTPUT["windows.info.Info"]
+    assert "OK: Windows 10" in capsys.readouterr().out
