@@ -594,3 +594,23 @@ def test_cited_evidence_ids_are_explained_under_the_answer(app_env):
     assert "service coreupdater installed" in str(at.table[0].value.to_dict())
     at.run()                                                     # also on stored messages
     assert any(e.label.startswith("🔎 Cited") for e in at.expander)
+
+
+def test_attacker_text_is_shown_literally_in_the_app(app_env):
+    evil = "$b=$env:windir ![p](http://evil.example/x.png)"
+    app_env.ingest_artifact_results([{"EventTime": "2020-09-19T03:42:42Z", "Message": evil}], "S", "D", "C.1")
+    eid = app_env.search_events("windir")["records"][0]["evidence_id"]
+    app_env.record_finding(f"Loader {evil}", "d", [eid], "high")
+    at = AppTest.from_file(APP, default_timeout=30)
+    llm = ScriptedLLM(AIMessage(content=f"It set $b=$env:windir (`{eid}`) ![p](http://evil.example/y.png)"))
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    at.chat_input[0].set_value("what ran?").run()
+    assert not at.exception
+    answer = next(m.value for m in at.markdown if m.value.startswith("It set"))
+    assert "\\$b=\\$env:windir" in answer and "![p]" not in answer and "[image removed: p]" in answer
+    cell = at.table[0].value["What it shows"].iloc[0]
+    assert "![p]" not in cell and "\\!\\[p\\]" in cell and "\\$b" in cell
+    sidebar_title = next(c.value for c in at.caption if c.value.startswith("[HIGH]"))
+    assert "![p]" not in sidebar_title and "\\$b" in sidebar_title

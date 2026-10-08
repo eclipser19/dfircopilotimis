@@ -17,6 +17,9 @@ from copilot.prompts import build_system_prompt
 from copilot.tools import tools
 
 st.set_page_config(page_title="DFIR Copilot", page_icon="🕵️", layout="wide")
+# Long evidence values (base64, paths) wrap inside tables instead of widening them.
+st.markdown("<style>[data-testid='stTable'] td:last-child, [data-testid='stTable'] td:last-child * "
+            "{overflow-wrap: anywhere !important; word-break: break-word !important;}</style>", unsafe_allow_html=True)
 
 
 # ==========================================
@@ -316,10 +319,10 @@ def cited_box(content: str):
     if not (found["evidence"] or found["findings"]):
         return
     with st.expander(f"🔎 Cited in this answer: {citations.summary(found)}", expanded=False):
-        if found["findings"]:
-            st.table(found["findings"])
-        if found["evidence"]:
-            st.table(found["evidence"])
+        # st.table renders cells as Markdown: evidence text must stay literal (no links, images or math).
+        for rows in (found["findings"], found["evidence"]):
+            if rows:
+                st.table([{k: citations.md_literal(v) for k, v in row.items()} for row in rows])
 
 
 def render_message(msg: dict, index: int):
@@ -328,7 +331,7 @@ def render_message(msg: dict, index: int):
             with st.expander("Steps", expanded=False):
                 st.text("\n".join(msg["log"]))
         if msg.get("content"):
-            st.markdown(msg["content"])
+            st.markdown(citations.answer_markdown(msg["content"]))
             if msg["role"] == "assistant":
                 cited_box(msg["content"])
         for entry in msg.get("files", []):
@@ -343,7 +346,7 @@ def agent_turn(text: str, show_user: bool = True):
     if show_user:
         st.session_state.messages.append({"role": "user", "content": text})
         with st.chat_message("user"):
-            st.markdown(text)
+            st.markdown(citations.answer_markdown(text))
     st.session_state.chat_history.append(HumanMessage(content=text))
     before = outputs.last_output_id()
     log, notices = [], []
@@ -372,7 +375,7 @@ def agent_turn(text: str, show_user: bool = True):
         # Links to local paths can't work in a browser; files come as download buttons instead.
         content = re.sub(r"\[([^\]]+)\]\((?!https?://)[^)]*\)", r"\1", content)
         files = outputs.produced_since(before)
-        st.markdown(content)
+        st.markdown(citations.answer_markdown(content))
         cited_box(content)
         for entry in files:
             download_button(entry, key=f"dl-new-{entry['output_id']}")
@@ -602,7 +605,7 @@ with st.sidebar:
         st.caption("The agent asked to change something. Nothing happens until you approve.")
         for req in pending_here():
             st.markdown(f"**{approvals.ACTIONS.get(req['kind'], req['kind']).capitalize()}**")
-            st.caption(req["summary"])
+            st.caption(citations.md_literal(req["summary"]))      # exactly what is asked, never rendered
             shown = req["details"].get("params") or req["details"].get("options")
             if req["kind"] in ("collect", "memory") and shown:
                 st.code(json.dumps(shown, indent=1), language="json")
@@ -622,7 +625,7 @@ with st.sidebar:
     st.subheader("🚩 Findings")
     active = case_db.get_findings()
     for f in active:
-        st.caption(f"[{(f['confidence'] or 'unknown').upper()}] {f['title']}")
+        st.caption(f"[{(f['confidence'] or 'unknown').upper()}] {citations.md_literal(f['title'])}")
     if active:
         with st.expander("Retract a finding", expanded=False):
             labels = {f"{f['title']} ({f['finding_id']})": f["finding_id"] for f in active}

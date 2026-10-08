@@ -13,6 +13,40 @@ from copilot.report import Clock
 EVIDENCE_RE = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{16}(?![0-9A-Za-z])")
 FINDING_RE = re.compile(r"(?<![0-9A-Za-z-])[0-9a-f]{8}-[0-9a-f]{3}(?![0-9A-Za-z])")
 MAX_CITED = 100
+_MD_PUNCT = re.compile(r"([!-/:-@\[-`{-~])")          # every ASCII punctuation character
+_CODE = re.compile(r"(```.*?```|`[^`\n]*`)", re.S)
+
+
+_AUTOLINK = re.compile(r"(?i)(\b(?:https?|ftp)):(?=//)|\b(www)(?=\.)")
+
+
+def md_literal(text) -> str:
+    """
+    Text that Markdown shows exactly as it is: evidence is attacker-written, so it must not
+    become links, images, formatting or math ($...$). Every ASCII punctuation character is
+    backslash-escaped (CommonMark drops the backslash when rendering), and a zero-width space
+    after "http:" / "www" stops URLs in it from becoming clickable links.
+    """
+    text = " ".join(str(text if text is not None else "").split())
+    text = _AUTOLINK.sub(lambda m: f"{m.group(1)}:\u200b" if m.group(1) else f"{m.group(2)}\u200b", text)
+    return _MD_PUNCT.sub(r"\\\1", text)
+
+
+_IMAGE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+
+
+def answer_markdown(markdown: str) -> str:
+    """
+    An agent answer, safe to render: answers quote evidence, which is attacker-written.
+    Outside code spans, $ stays a dollar sign (PowerShell $env:windir, not math) and images are
+    removed (a remote image would make the browser contact that server).
+    """
+    def clean(part):
+        return _IMAGE.sub(lambda m: f"[image removed{': ' + m.group(1) if m.group(1) else ''}]",
+                          part).replace("$", "\\$")
+
+    parts = _CODE.split(markdown or "")
+    return "".join(part if i % 2 else clean(part) for i, part in enumerate(parts))
 
 
 def cited(text: str, db, config) -> dict:

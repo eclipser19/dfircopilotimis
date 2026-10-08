@@ -1,3 +1,5 @@
+import re
+
 from copilot import citations
 from copilot.case_config import case_config
 from conftest import CLIENT
@@ -35,3 +37,24 @@ def test_no_recorded_column_without_clock_skew(case, monkeypatch):
     eid, _ = _seed(case, monkeypatch, offset=0)
     assert "Recorded" not in citations.cited(eid, case, case_config)["evidence"][0]
     assert citations.cited("nothing cited here", case, case_config) == {"evidence": [], "findings": []}
+
+
+def test_evidence_text_cannot_become_markdown():
+    evil = "{$b=$env:windir} ![p](http://evil.example/x.png) [click](https://evil.example) *b* <img src=x> www.evil.example"
+    out = citations.md_literal(evil)
+    chars = iter(out)
+    for c in chars:                                                   # every punctuation character is escaped
+        if c == "\\":
+            next(chars)
+        else:
+            assert c.isalnum() or c.isspace() or not c.isascii(), (c, out)
+    assert "http:/" not in re.sub(r"\\(.)", r"\1", out)               # URLs are broken up: no autolinks
+    assert "www." not in re.sub(r"\\(.)", r"\1", out)
+    assert re.sub(r"\\(.)", r"\1", out).replace("​", "") == evil  # and it shows exactly as it was
+    assert citations.md_literal("line1\nline2") == "line1 line2"
+
+
+def test_answers_keep_dollars_and_lose_images():
+    out = citations.answer_markdown("ran $b=$env:windir ![x](http://evil.example/p.png) `$code` [MITRE](https://attack.mitre.org)")
+    assert out == "ran \\$b=\\$env:windir [image removed: x] `$code` [MITRE](https://attack.mitre.org)"
+    assert citations.answer_markdown("```\n$x = 1 ![a](b)\n```") == "```\n$x = 1 ![a](b)\n```"   # code stays as is
