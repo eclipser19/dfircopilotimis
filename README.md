@@ -120,6 +120,14 @@ Patterns in `artifacts.yaml` are matched in order (first match wins), so put spe
 entries above general ones. Only list parameter names under `params` once a real
 collection has confirmed them.
 
+## Playbooks on every question
+
+The investigation playbooks (`copilot/knowledge_data/playbooks.yaml`) say which sources to check
+for a kind of question. A question you type that matches a playbook's `triggers` (e.g. "how did X
+get onto this machine?" → initial access; "which process owned the connection?" → memory) is sent
+to the agent with that playbook and its lessons attached, so it follows them without having to
+look them up. The chat still shows what you typed. Add or tune triggers in the YAML file.
+
 ## Lessons learned
 
 The agent improves its own knowledge, with a person in the loop. When it has verified

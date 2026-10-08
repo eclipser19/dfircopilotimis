@@ -768,3 +768,15 @@ def test_non_admin_lessons_wait_for_an_admin(team_app):
     alice = _browser("alice")
     alice.button(key=f"ln-ok-{lesson['id']}").click().run()
     assert lessons.active()[0]["approved_by"] == "alice"
+
+
+def test_typed_questions_carry_the_playbook_but_show_as_typed(app_env):
+    at = AppTest.from_file(APP, default_timeout=30)
+    llm = ScriptedLLM(AIMessage(content="Checking the download evidence."))
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    at.chat_input[0].set_value("How did coreupdater.exe get onto this machine?").run()
+    sent = [m.content for m in at.session_state["chat_history"] if m.type == "human"][-1]
+    assert "[Copilot] Playbook" in sent and "ADSHunter" in sent
+    assert "[Copilot] Playbook" not in _texts(at)                 # the chat shows what you typed

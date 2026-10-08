@@ -163,7 +163,8 @@ def run_agent_loop():
 
     def turn(text: str, show_user: bool = True):
         from copilot import citations
-        chat_history.append(HumanMessage(content=text))
+        from copilot.knowledge import with_playbooks
+        chat_history.append(HumanMessage(content=with_playbooks(text) if show_user else text))
         answer = run_turn(llm_with_tools, chat_history, MAX_STEPS, usage, case_config.max_tokens_per_turn, finalizer)
         found = citations.cited(answer, case_db, case_config)
         if found["evidence"] or found["findings"]:

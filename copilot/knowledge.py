@@ -74,6 +74,34 @@ def artifact_info(source: str) -> dict:
     return entry
 
 
+def playbooks_for(question: str, limit: int = 2) -> list:
+    """Playbooks whose triggers match an investigator's question, best match first."""
+    scores = []
+    for key, book in (playbooks() or {}).items():
+        hits = 0
+        for pattern in book.get("triggers") or []:
+            try:
+                hits += bool(re.search(pattern, question or "", re.I))
+            except re.error:
+                continue
+        if hits:
+            scores.append((-hits, key))
+    return [key for _, key in sorted(scores)[:limit]]
+
+
+def with_playbooks(question: str) -> str:
+    """
+    The question as the agent receives it: with the knowledge-base playbooks that match it (and the
+    lessons about them) attached, so the agent follows them without having to look them up.
+    """
+    keys = playbooks_for(question)
+    if not keys:
+        return question
+    guides = "\n\n".join(guide(k) for k in keys)
+    return (f"{question}\n\n[Copilot] Playbook from the knowledge base for this kind of question. Go through "
+            f"the checks that apply before concluding something cannot be determined:\n{guides}")
+
+
 def triage_suggestions(os_name: str = None) -> list:
     """Suggested triage artifacts for disk images: [{artifact, why, parameters}] (both OSes if none given)."""
     data = _load("triage.yaml") or {}

@@ -1,17 +1,22 @@
 # Investigation playbooks: for a question, which sources to check and what to look for.
-# Shown to the agent by the dfir_guide tool. Event IDs refer to event_ids.yaml.
+# Shown to the agent by the dfir_guide tool, and attached automatically to an investigator's
+# question that matches one of its `triggers` (regular expressions, case-insensitive; the best
+# two playbooks are attached). Event IDs refer to event_ids.yaml.
 
 initial_access:
   question: How did the attacker first get in?
+  triggers: ['get(ting)? (on)?to\b', 'got (on)?to\b', '\bget in\b', '\bgot in\b', 'initial access', 'entry point', 'deliver', 'download', 'dropped', 'came from', 'arriv', 'how did .* get']
   check:
     - 'Security 4625 bursts from one IP followed by 4624 from the same IP: brute force (RDP: LogonType 10, often preceded by 1149).'
     - 'RDP from external IPs: 4624 type 10, RemoteConnectionManager 1149, LocalSessionManager 21/22.'
+    - 'Before writing that the delivery method cannot be determined, check the download evidence below and the parent process of the first execution (memory pslist PPID, Prefetch of the parent).'
     - 'Downloads, in this order: Prefetch shows WHICH browser ran just before the payload (IEXPLORE.EXE, MSEDGE.EXE, CHROME.EXE, FIREFOX.EXE); Windows.NTFS.ADSHunter on the payload''s current path gives its Zone.Identifier (HostUrl = download URL); then the history artifact of that browser if it works on images (see dfir_guide on the artifact). Internet Explorer history has no parser artifact on a standard server.'
     - Email attachments and Office files opened (LNK, JumpLists) shortly before the first malicious execution.
     - Exposed services (web servers) with new files in web roots (MFT/USN).
 
 execution:
   question: What ran?
+  triggers: ['\bran\b', 'execut', 'launch', 'what (was )?run', 'started by']
   check:
     - Prefetch (run count, last 8 run times) - strongest single execution source on workstations.
     - Security 4688 (if enabled), Sysmon 1.
@@ -21,6 +26,7 @@ execution:
 
 persistence:
   question: How does it survive reboot or logon?
+  triggers: ['persist', 'surviv', 'reboot', 'autostart', 'run key', 'scheduled task', '\bservices?\b']
   check:
     - Run/RunOnce keys and Startup folders (StartupItems).
     - 'Services: System 7045 / Security 4697, SYSTEM hive Services key.'
@@ -30,6 +36,7 @@ persistence:
 
 lateral_movement:
   question: Did the attacker move between machines?
+  triggers: ['lateral', 'pivot', '\bmove[sd]? (to|between|from)', 'other (host|machine)s?', '\brdp\b', 'remote desktop', 'psexec']
   check:
     - 'Inbound (on the target): 4624 type 3 or 10 with a source IP; 1149; LocalSessionManager 21/22/24/25; 5140 to ADMIN$/C$; 7045 PSEXESVC.'
     - 'Outbound (on the source): 4648 naming the target; RDPClient 1024; Prefetch/JumpLists for mstsc.exe, psexec.exe; Terminal Server Client registry MRU.'
@@ -37,6 +44,7 @@ lateral_movement:
 
 credential_access:
   question: Were credentials stolen?
+  triggers: ['credential', 'password', 'lsass', 'mimikatz', 'hash(es)? (dump|stol)', 'kerberos']
   check:
     - Tools in Prefetch/Amcache (mimikatz, procdump, comsvcs.dll MiniDump via rundll32).
     - 'Access to SAM/SECURITY/NTDS.dit copies: USN/MFT for *.dit, *.hive, shadow copy use (vssadmin, ntdsutil in Prefetch/4688).'
@@ -44,6 +52,7 @@ credential_access:
 
 collection_exfiltration:
   question: Was data gathered or taken?
+  triggers: ['exfil', '\bstol(e|en)\b', '\btaken\b', 'leak', 'archive', '\.?\bzip\b', 'upload', 'data (was )?(gathered|collected)']
   check:
     - 'Archives created then deleted: USN journal (FILE_CREATE, RENAME, FILE_DELETE) for .zip/.7z/.rar; MFT for surviving entries.'
     - 'Who did it: the user profile in the paths shows the account. A temp file in C:\Users\<name>\AppData\Local\Temp or a Recent\*.lnk under C:\Users\<name> means the action ran as <name>, even when the result lands in another user''s folder. Match it with that account''s logon session (4624/RDP 21) at the time.'
@@ -53,6 +62,7 @@ collection_exfiltration:
 
 anti_forensics:
   question: Did the attacker cover tracks?
+  triggers: ['clear(ed)? (the )?logs?', 'timestomp', 'anti.?forensic', '\bwip(e|ed)\b', 'cover(ed)? (their |its )?tracks', 'delet(e|ed) (the )?(logs?|evidence)']
   check:
     - Log clearing (Security 1102, System 104), gaps in event logs.
     - 'Timestomping: MFT $SI (0x10) times earlier than $FN (0x30) times, or round/identical times.'
@@ -61,6 +71,7 @@ anti_forensics:
 
 timeline_basics:
   question: How to read times correctly?
+  triggers: ['timeline', '\bclock\b', 'time ?zone', '\bskew']
   check:
     - Event logs and NTFS store UTC, but derived from the host clock; a mis-set clock shifts everything (see the case clock offset).
     - 'MACB: Modified, Accessed, Changed ($MFT record), Born. $SI times are easy to forge; $FN times are harder.'
@@ -69,6 +80,7 @@ timeline_basics:
 
 memory:
   question: What does the memory image show?
+  triggers: ['\bmemory\b', 'volatility', 'inject', '\bc2\b', 'command.and.control', 'malfind', 'netscan', '\bpid\b', 'process(es)? (tree|list)', 'connections?\b', 'which process', '\bown(ed|er|s)\b']
   check:
     - 'Start with the memory triage results (list_collections): windows.info gives the capture time; the triage runs pslist, psscan, pstree, cmdline, netscan, svcscan and malfind.'
     - 'Processes: names that imitate system binaries (scvhost.exe), wrong parents (svchost.exe not under services.exe), system binaries outside System32 (cmdline / pstree path), processes in psscan but not pslist without an exit time (hidden).'
@@ -78,5 +90,6 @@ memory:
     - 'Persistence: svcscan (services with odd binary paths), printkey on Software\Microsoft\Windows\CurrentVersion\Run.'
     - 'Typed commands: consoles / cmdscan; credential theft: handles or dlllist of lsass.exe, processes touching lsass.'
     - 'Correlate with the disk timeline: the process create time (pslist) should match Prefetch/7045/4688 on disk; the C2 IP should appear in the firewall/proxy or other hosts.'
+    - 'Always name the parent: search_iocs "PID <ppid>" finds the parent process in pslist/psscan. explorer.exe means it was started from the desktop (double-click), cmd.exe/powershell.exe a command line, services.exe a service, a browser a download that was opened.'
     - 'Narrow heavy plugins (handles, dlllist, filescan, envars) with pid or contains from a lead you already have.'
 

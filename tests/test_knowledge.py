@@ -44,3 +44,21 @@ def test_guide_tool():
     assert "PathRegex" in tools.dfir_guide.invoke({"topic": "Windows.NTFS.MFT"})
     assert "LIVE SYSTEM ONLY" in tools.dfir_guide.invoke({"topic": "Windows.System.Services"})
     assert "Playbooks:" in tools.dfir_guide.invoke({"topic": "astrology"})
+
+
+def test_questions_get_the_matching_playbook():
+    from copilot import knowledge
+    assert knowledge.playbooks_for("How did coreupdater.exe get onto this machine?") == ["initial_access"]
+    assert knowledge.playbooks_for("Which process owned the connection to 203.78.103.109?") == ["memory"]
+    assert knowledge.playbooks_for("Was data stolen?") == ["collection_exfiltration"]
+    assert knowledge.playbooks_for("summarize the case") == []
+    attached = knowledge.with_playbooks("How did coreupdater.exe get onto this machine?")
+    assert attached.startswith("How did coreupdater.exe get onto this machine?\n\n[Copilot] Playbook")
+    assert "ADSHunter" in attached and "Prefetch" in attached
+    assert knowledge.with_playbooks("summarize the case") == "summarize the case"
+
+
+def test_lessons_about_a_playbook_come_with_it(tmp_path, monkeypatch):
+    from copilot import knowledge, lessons
+    lessons.add("initial_access", "Check the Zone.Identifier stream of the payload's current path first.")
+    assert "Zone.Identifier stream of the payload" in knowledge.with_playbooks("how did it get in?")

@@ -557,7 +557,8 @@ def agent_turn(text: str, show_user: bool = True):
         st.session_state.messages.append({"role": "user", "content": text})
         with st.chat_message("user"):
             st.markdown(citations.answer_markdown(text))
-    st.session_state.chat_history.append(HumanMessage(content=text))
+    # Questions typed by the investigator get the matching playbooks attached (automatic prompts don't).
+    st.session_state.chat_history.append(HumanMessage(content=knowledge.with_playbooks(text) if show_user else text))
     before = outputs.last_output_id()
     log, notices = [], []
 
