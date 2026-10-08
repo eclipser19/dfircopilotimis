@@ -288,7 +288,9 @@ class CaseConfig:
                 f"true UTC. ALL host-recorded times are affected, including event logs and NTFS (they are "
                 f"computed from the skewed clock). The database shows recorded times. When reporting, give "
                 f"the corrected time ({'subtract' if ahead else 'add'} {n} minutes) and the recorded time, "
-                f"e.g. '02:35:54 UTC (recorded 03:35:54)'. Query the database with recorded times.")
+                f"e.g. '02:35:54 UTC (recorded 03:35:54)'. Query the database with recorded times. Tool "
+                f"results already give the corrected time next to each recorded one (true_utc beside "
+                f"timestamp_utc, first_seen_true_utc / last_seen_true_utc): copy those, never calculate.")
 
         if self.has_iocs:
             lines.append(f"\nKNOWN IOCs:")

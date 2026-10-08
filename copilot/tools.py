@@ -12,7 +12,39 @@ from copilot.normalize import EVENT_TYPE_NAMES
 
 def _dump(obj, **_) -> str:
     """Compact JSON for tool output: every character here is paid for in tokens."""
-    return json.dumps(obj, separators=(",", ":"), default=str, ensure_ascii=False)
+    return json.dumps(_with_true_times(obj), separators=(",", ":"), default=str, ensure_ascii=False)
+
+
+# Recorded (host clock) time fields, and the field that carries the same time corrected to true
+# UTC when the case has a clock offset: the model copies it instead of doing the arithmetic.
+_TRUE_TIME_KEYS = {"timestamp_utc": "true_utc", "first_seen": "first_seen_true_utc",
+                   "last_seen": "last_seen_true_utc"}
+
+
+def _with_true_times(obj):
+    try:
+        offset = case_config.clock_offset_minutes
+    except Exception:            # no case open
+        return obj
+    if not offset:
+        return obj
+    from copilot.report import Clock
+    clock = Clock(offset)
+
+    def walk(o):
+        if isinstance(o, dict):
+            out = {}
+            for key, value in o.items():
+                out[key] = walk(value)
+                if key in _TRUE_TIME_KEYS and isinstance(value, str) and value:
+                    corrected = clock.corrected(value)
+                    if corrected != "—":
+                        out[_TRUE_TIME_KEYS[key]] = corrected
+            return out
+        if isinstance(o, list):
+            return [walk(item) for item in o]
+        return o
+    return walk(obj)
 
 
 # Extracted fields are already folded into each row's description; repeating them

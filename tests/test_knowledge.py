@@ -75,3 +75,18 @@ def test_collections_of_artifacts_that_cannot_work_on_images_are_marked(case):
     case.upsert_collection("F.MFT", client_id="C.1", artifact="Windows.NTFS.MFT", state="FINISHED", rows_ingested=0)
     listed = {c["flow_id"]: c for c in json.loads(tools.list_collections.invoke({}))}
     assert "not evidence" in listed["F.EDGE"]["note"] and "note" not in listed["F.MFT"]
+
+
+def test_tool_results_give_the_corrected_time_next_to_the_recorded_one(case, monkeypatch):
+    import json
+    from copilot import tools
+    from copilot.case_config import case_config
+    case.ingest_artifact_results([{"EventTime": "2020-09-19T03:40:00Z", "Message": "renamed"}], "S", "H", "C.1")
+    plain = json.loads(tools.query_timeline.invoke({}))
+    assert "true_utc" not in json.dumps(plain)                         # no clock offset: nothing added
+    monkeypatch.setattr(case_config, "data", dict(case_config.data, scope={"clock_offset_minutes": 60}))
+    event = json.loads(tools.query_timeline.invoke({}))["events"][0]
+    assert event["timestamp_utc"].startswith("2020-09-19T03:40:00") and event["true_utc"] == "2020-09-19 02:40:00"
+    record = json.loads(tools.search_iocs.invoke({"keyword": "renamed"}))
+    assert "02:40:00" in json.dumps(record) and "first_seen_true_utc" in json.dumps(record)
+    assert "copy those, never calculate" in case_config.build_system_context()
