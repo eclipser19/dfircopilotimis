@@ -40,6 +40,9 @@
   what: Process command lines from memory (Volatility cmdline)
   location: memory image, each process' PEB
   meaning: The full command line each running process was started with, including paths and arguments (encoded PowerShell, rundll32 targets, tool options).
+  tips:
+    - '"Not readable" means the memory holding it was paged out or the process had exited: not an empty command line. Get it from disk instead: Security 4688, PowerShell 4104 / 400, PSReadline, or memory consoles / cmdscan.'
+    - pstree on recent Volatility versions also shows the image path (Path) when cmdline cannot.
 
 - pattern: Memory.*.netscan.*
   what: Network connections from memory (Volatility netscan)
@@ -48,6 +51,8 @@
   tips:
     - Owner is the process name; join on PID with pslist/cmdline for the full path.
     - Connections from unusual processes (not a browser) to external IPs on 443/80/8080 are typical C2.
+    - 'When the owning process is not readable, compare the connection''s Created time with process start times (pslist/psscan) and malfind hits; then run netscan or handles with pid / contains to confirm.'
+    - Run search_iocs on the remote IP to see the record's description and get_event_detail for the raw row (Created, PID, Owner).
 
 - pattern: Memory.*.netstat.*
   what: Active network connections from memory (Volatility netstat)

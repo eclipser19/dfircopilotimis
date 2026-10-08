@@ -107,7 +107,7 @@ ENTITY_FIELDS = {
     "event_id": ["eventid"],
 }
 # Volatility column names (memory images).
-ENTITY_FIELDS["process"] += ["imagefilename", "process", "comm"]
+ENTITY_FIELDS["process"] += ["imagefilename", "process", "comm", "binary (registry)"]
 ENTITY_FIELDS["command_line"] += ["args"]
 ENTITY_FIELDS["ip"] += ["foreignaddr"]
 _ENTITY_LOOKUP = {name: entity for entity, names in ENTITY_FIELDS.items() for name in names}
@@ -119,24 +119,32 @@ ENTITY_OVERRIDES = [
     ("Memory.*filescan*", {"name": "path"}),
 ]
 
-# Per source, a one-line description built from the row's fields ({Field}; missing ones are left out).
+# Per source, a one-line description built from the row's fields. {Field} is the value ("" if
+# missing). [text] is kept only if every field in it has a value; [text|other] says `other`
+# instead, so a value Volatility could not read is named as such, not left as an empty label.
+# Bump NORMALIZER_VERSION when this changes: stored descriptions are then rebuilt.
 DESCRIPTION_TEMPLATES = [
     ("Memory.*.info.*", "memory image {Variable}: {Value}"),
-    ("Memory.*pslist*", "process {ImageFileName} PID {PID} PPID {PPID}"),
-    ("Memory.*psscan*", "process {ImageFileName} PID {PID} PPID {PPID} (found by scanning)"),
-    ("Memory.*pstree*", "process {ImageFileName} PID {PID} PPID {PPID} {Cmd}"),
-    ("Memory.*psxview*", "process {Name} PID {PID} pslist={pslist} psscan={psscan} thrdscan={thrdscan}"),
-    ("Memory.*cmdline*", "{Process} PID {PID}: {Args}"),
-    ("Memory.*netscan*", "{Proto} {LocalAddr}:{LocalPort} -> {ForeignAddr}:{ForeignPort} {State} owner {Owner} PID {PID}"),
-    ("Memory.*netstat*", "{Proto} {LocalAddr}:{LocalPort} -> {ForeignAddr}:{ForeignPort} {State} owner {Owner} PID {PID}"),
-    ("Memory.*malfind*", "possible injected code in {Process} PID {PID} at {Start VPN} ({Protection}) {Notes}"),
-    ("Memory.*svcscan*", "service {Name} ({Display}) {State} {Start} binary {Binary}"),
-    ("Memory.*dlllist*", "{Process} PID {PID} loaded {Path}"),
-    ("Memory.*handles*", "{Process} PID {PID} handle {Type} {Name}"),
+    ("Memory.*pslist*", "process {ImageFileName}[ PID {PID}][ PPID {PPID}]"),
+    ("Memory.*psscan*", "process {ImageFileName}[ PID {PID}][ PPID {PPID}] (found by scanning)"),
+    ("Memory.*pstree*", "process {ImageFileName}[ PID {PID}][ PPID {PPID}][ {Cmd}]"),
+    ("Memory.*psxview*", "process {Name}[ PID {PID}] pslist={pslist} psscan={psscan} thrdscan={thrdscan}"),
+    ("Memory.*cmdline*", "{Process}[ PID {PID}]: [{Args}|command line not readable from memory (paged out or exited)]"),
+    ("Memory.*netscan*", "{Proto} {LocalAddr}:{LocalPort} -> {ForeignAddr}:{ForeignPort}[ {State}]"
+                         "[ owner {Owner} PID {PID}|; owning process not readable]"),
+    ("Memory.*netstat*", "{Proto} {LocalAddr}:{LocalPort} -> {ForeignAddr}:{ForeignPort}[ {State}]"
+                         "[ owner {Owner} PID {PID}|; owning process not readable]"),
+    ("Memory.*malfind*", "possible injected code in {Process}[ PID {PID}][ at {Start VPN}][ ({Protection})]"
+                         "[ {Notes}]"),
+    ("Memory.*svcscan*", "service {Name}[ ({Display})][ {State}][ {Start}][ PID {PID}][ binary {Binary}]"
+                         "[ registry binary {Binary (Registry)}][ dll {Dll}]"),
+    ("Memory.*dlllist*", "{Process}[ PID {PID}] loaded {Path}"),
+    ("Memory.*handles*", "{Process}[ PID {PID}] handle {Type}[ {Name}]"),
     ("Memory.*filescan*", "file object {Name}"),
-    ("Memory.linux.psaux*", "process {COMM} PID {PID} PPID {PPID}: {ARGS}"),
-    ("Memory.linux.pslist*", "process {COMM} PID {PID} PPID {PPID}"),
+    ("Memory.linux.psaux*", "process {COMM}[ PID {PID}][ PPID {PPID}][: {ARGS}]"),
+    ("Memory.linux.pslist*", "process {COMM}[ PID {PID}][ PPID {PPID}]"),
 ]
+NORMALIZER_VERSION = 2
 _FIELD_RE = re.compile(r"\{([^{}]+)\}")
 
 # Fields that make the best one-line description, in order of preference.
@@ -277,11 +285,22 @@ KEY_FIELDS = ["LogonType", "Reason", "ServiceName", "TaskName", "Channel"]
 DESCRIPTION_ENTITIES = ["event_id", "user", "ip", "process", "command_line", "hash"]
 
 
+_OPTIONAL_RE = re.compile(r"\[([^\[\]]*)\]")
+
+
 def _from_template(template: str, row: dict) -> str:
-    values = [row.get(name) for name in _FIELD_RE.findall(template)]
-    if not any(v not in (None, "") for v in values):
+    def has(name):
+        return row.get(name) not in (None, "")
+
+    if not any(has(name) for name in _FIELD_RE.findall(template)):
         return ""
-    text = _FIELD_RE.sub(lambda m: "" if row.get(m.group(1)) in (None, "") else str(row.get(m.group(1))), template)
+
+    def optional(m):
+        kept, _, otherwise = m.group(1).partition("|")
+        return kept if all(has(n) for n in _FIELD_RE.findall(kept)) else otherwise
+
+    text = _OPTIONAL_RE.sub(optional, template)
+    text = _FIELD_RE.sub(lambda m: str(row.get(m.group(1))) if has(m.group(1)) else "", text)
     return " ".join(text.split())
 
 

@@ -5,7 +5,8 @@ import uuid
 import os
 from datetime import datetime, timezone
 
-from copilot.normalize import normalize_row, normalize_bound, flatten, ENTITY_FIELDS
+from copilot.normalize import (normalize_row, normalize_bound, flatten, ENTITY_FIELDS, NORMALIZER_VERSION,
+                               describe, event_type_for, extract_entities)
 
 SCHEMA_VERSION = 2
 
@@ -51,6 +52,7 @@ class CaseDatabase:
             pass  # e.g. a file system without shared memory: keep the default journal
         self._check_schema()
         self._init_tables()
+        self._refresh_normalization()
 
     def _check_schema(self):
         cur = self.conn.cursor()
@@ -386,6 +388,37 @@ class CaseDatabase:
             if key not in _COLLECTION_FIELDS:
                 raise ValueError(f"Unknown collections field: {key}")
             cur.execute(f"UPDATE collections SET {key} = ? WHERE flow_id = ?", (value, flow_id))
+        self.conn.commit()
+
+    def _refresh_normalization(self, batch: int = 5000):
+        """
+        Rebuilds descriptions, event types and extracted fields from the raw rows when the
+        normalizer has improved since they were stored (NORMALIZER_VERSION), so the agent sees
+        the same text a new collection would get. Timestamps are not affected.
+        """
+        stored = self.conn.execute("SELECT value FROM meta WHERE key = 'normalizer'").fetchone()
+        if stored and stored[0] == str(NORMALIZER_VERSION):
+            return
+        assignments = ", ".join(f"{c} = ?" for c in ["event_type", "description", *ENTITY_COLUMNS])
+        last = 0
+        while True:
+            rows = self.conn.execute("SELECT rowid, evidence_id, source, raw_data FROM records WHERE rowid > ? "
+                                     "ORDER BY rowid LIMIT ?", (last, batch)).fetchall()
+            if not rows:
+                break
+            updates = []
+            for rowid, evidence_id, source, raw in rows:
+                last = rowid
+                try:
+                    data = json.loads(raw)
+                except (TypeError, ValueError):
+                    continue
+                data = data if isinstance(data, dict) else {"value": data}
+                entities = extract_entities(data, source=source)
+                updates.append((event_type_for(source), describe(data, entities, source=source),
+                                *[entities.get(c) for c in ENTITY_COLUMNS], evidence_id))
+            self.conn.executemany(f"UPDATE records SET {assignments} WHERE evidence_id = ?", updates)
+        self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('normalizer', ?)", (str(NORMALIZER_VERSION),))
         self.conn.commit()
 
     def get_collection(self, flow_id: str) -> dict:

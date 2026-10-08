@@ -111,3 +111,42 @@ def test_bounds_normalized_and_validated():
     assert normalize_bound(None) is None
     with pytest.raises(ValueError):
         normalize_bound("yesterday")
+
+
+def test_memory_descriptions_name_unreadable_values():
+    from copilot.normalize import normalize_row
+
+    def described(row, source):
+        return normalize_row(row, source)["description"]
+
+    net = {"Proto": "TCPv4", "LocalAddr": "10.42.85.115", "LocalPort": 49679, "ForeignAddr": "203.78.103.109",
+           "ForeignPort": 443, "State": "ESTABLISHED", "PID": None, "Owner": None}
+    assert described(net, "Memory.windows.netscan.NetScan") == \
+        "TCPv4 10.42.85.115:49679 -> 203.78.103.109:443 ESTABLISHED; owning process not readable"
+    assert described(dict(net, PID=3316, Owner="powershell.exe"), "Memory.windows.netscan.NetScan").endswith(
+        "ESTABLISHED owner powershell.exe PID 3316")
+    assert described({"PID": 3316, "Process": "powershell.exe", "Args": None}, "Memory.windows.cmdline.CmdLine") == \
+        "powershell.exe PID 3316: command line not readable from memory (paged out or exited)"
+    assert described({"Name": "coreupdater", "State": "SERVICE_STOPPED", "Binary": None,
+                      "Binary (Registry)": "C:\\Windows\\System32\\coreupdater.exe"},
+                     "Memory.windows.svcscan.SvcScan") == \
+        "service coreupdater SERVICE_STOPPED registry binary C:\\Windows\\System32\\coreupdater.exe"
+
+
+def test_stored_descriptions_are_rebuilt_when_the_normalizer_improves(tmp_path):
+    from copilot.database import CaseDatabase
+    db = CaseDatabase(str(tmp_path))
+    db.ingest_artifact_results([{"PID": 3316, "Process": "powershell.exe", "Args": None}],
+                               "Memory.windows.cmdline.CmdLine", "x", "memory:x")
+    db.conn.execute("UPDATE records SET description = 'powershell.exe PID 3316:', process = NULL")
+    db.conn.execute("DELETE FROM meta WHERE key = 'normalizer'")             # stored by an older version
+    db.conn.commit()
+    db.conn.close()
+    db = CaseDatabase(str(tmp_path))
+    row = db.conn.execute("SELECT description, process FROM records").fetchone()
+    assert row["description"].endswith("command line not readable from memory (paged out or exited)")
+    assert row["process"] == "powershell.exe"
+    db.conn.execute("UPDATE records SET description = 'kept'")
+    db.conn.commit()
+    db.conn.close()
+    assert CaseDatabase(str(tmp_path)).conn.execute("SELECT description FROM records").fetchone()[0] == "kept"
