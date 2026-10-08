@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Optional
+from typing import List, Optional
 from langchain_core.tools import tool
 from copilot import collection
 from copilot.collection import CollectionError
@@ -99,6 +99,43 @@ def collect_artifact(artifact_name: str, parameters: Optional[dict] = None) -> s
 
 
 @tool
+def analyze_memory(plugin: str, pid: Optional[List[int]] = None, contains: Optional[str] = None,
+                   key: Optional[str] = None, recurse: Optional[bool] = None) -> str:
+    """
+    Runs a Volatility 3 plugin on the case's MEMORY IMAGE and stores its rows in the case database
+    (source "Memory.<plugin>"), next to the disk evidence: query them with query_timeline,
+    search_iocs, pivot_entity like any other evidence. Memory shows what was RUNNING at capture
+    time: processes (also hidden/exited), command lines, network connections (also closed ones),
+    injected code. The memory triage may already have run: check list_collections first.
+    Useful plugins: windows.pslist, windows.psscan (hidden/exited processes), windows.pstree,
+    windows.cmdline, windows.netscan (connections, C2), windows.malfind (injection),
+    windows.dlllist, windows.handles, windows.svcscan, windows.filescan, windows.registry.printkey,
+    windows.consoles/cmdscan (typed commands). All: list_memory_plugins.
+    Heavy plugins (dlllist, handles, filescan, envars, printkey...) need pid, contains or key.
+    The investigator may be asked to approve. A run can take minutes.
+    Args:
+        plugin: Plugin name, e.g. 'windows.netscan'.
+        pid: Only these process IDs, e.g. [3644] (plugins that take pid).
+        contains: Only rows containing this text in any column (case-insensitive), e.g. 'coreupdater'.
+        key: Registry key for windows.registry.printkey, e.g. 'Software\\Microsoft\\Windows\\CurrentVersion\\Run'.
+        recurse: With key: include subkeys.
+    """
+    from copilot import memory
+    options = {"pid": pid, "contains": contains, "key": key, "recurse": recurse}
+    try:
+        return _dump(memory.run(plugin, options, requested_by="agent"))
+    except memory.MemoryAnalysisError as e:
+        return f"Memory analysis not run: {e}"
+
+
+@tool
+def list_memory_plugins() -> str:
+    """Lists the Volatility plugins analyze_memory may run, what each shows, and its options."""
+    from copilot import memory
+    return _dump(memory.plugin_list())
+
+
+@tool
 def check_collection(flow_id: str) -> str:
     """
     Checks a collection started earlier. If it has finished, its results are ingested
@@ -106,6 +143,8 @@ def check_collection(flow_id: str) -> str:
     Args:
         flow_id: The flow ID returned by `collect_artifact` (e.g., 'F.CN3ABC...').
     """
+    if flow_id.startswith("MEM."):        # memory analyses finish before their tool call returns
+        return _dump(case_db.get_collection(flow_id) or {"error": f"No memory analysis {flow_id}."})
     try:
         return _dump(collection.check(flow_id))
     except CollectionError as e:
@@ -795,7 +834,7 @@ def generate_report(executive_summary: str, recommendations: str, correlations: 
 # ========================================================================
 tools = [
     search_clients, collect_artifact, check_collection, list_collections,
-    list_artifacts, describe_artifact,
+    list_artifacts, describe_artifact, analyze_memory, list_memory_plugins,
     activity_histogram, context_window, query_timeline, search_iocs, pivot_entity, get_event_detail,
     case_summary, record_finding, retract_finding, dfir_guide,
     generate_report, export_case, export_results, export_evidence,

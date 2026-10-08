@@ -10,6 +10,107 @@
 #
 # Add your own entries freely; no code changes needed.
 
+# ---------------------------------------------------------------- memory (Volatility 3)
+# Sources are "Memory.<volatility plugin>" (see copilot/memory.py). Memory shows the state at
+# capture time; times come from the host's clock like everything else.
+- pattern: Memory.*.pslist.*
+  what: Process list from memory (Volatility pslist)
+  location: memory image, kernel active process list (EPROCESS)
+  meaning: 'Processes running at capture time: PID, parent PID, name, start and exit time. Malware hides by unlinking from this list: compare with psscan.'
+  tips:
+    - Odd parents are red flags (e.g. cmd.exe or powershell.exe under a service or Office; svchost.exe not under services.exe).
+    - ImageFileName is cut to 14 characters (coreupdater.ex); use cmdline or dlllist for the full path.
+
+- pattern: Memory.*.psscan.*
+  what: Process scan of memory (Volatility psscan)
+  location: memory image, pool tag scan for process objects
+  meaning: Processes found by scanning, including exited ones and ones unlinked from the process list (hidden). A process here but not in pslist is either exited (has an exit time) or hidden.
+
+- pattern: Memory.*.pstree.*
+  what: Process tree from memory (Volatility pstree)
+  location: memory image, process list with parent links
+  meaning: Which process started which, with the full image path and command line on recent versions; TreeDepth gives the level.
+
+- pattern: Memory.*.psxview.*
+  what: Cross-view of process listings (Volatility psxview)
+  location: memory image, several kernel structures
+  meaning: A process missing from some listings but present in others was probably hidden on purpose.
+
+- pattern: Memory.*.cmdline.*
+  what: Process command lines from memory (Volatility cmdline)
+  location: memory image, each process' PEB
+  meaning: The full command line each running process was started with, including paths and arguments (encoded PowerShell, rundll32 targets, tool options).
+
+- pattern: Memory.*.netscan.*
+  what: Network connections from memory (Volatility netscan)
+  location: memory image, TCP/UDP endpoint objects
+  meaning: 'Connections and listening sockets with the owning process and PID, also closed ones still in memory: C2 servers, lateral movement, exfiltration targets. The Created time is when the socket was made.'
+  tips:
+    - Owner is the process name; join on PID with pslist/cmdline for the full path.
+    - Connections from unusual processes (not a browser) to external IPs on 443/80/8080 are typical C2.
+
+- pattern: Memory.*.netstat.*
+  what: Active network connections from memory (Volatility netstat)
+  location: memory image, kernel connection tables
+  meaning: Connections the system was tracking at capture time.
+
+- pattern: Memory.*.malfind.*
+  what: Possible code injection (Volatility malfind)
+  location: memory image, process virtual memory (VADs)
+  meaning: 'Private memory that is executable (PAGE_EXECUTE_READWRITE) and often starts with an MZ header or shellcode: a sign of injected code (Meterpreter, Cobalt Strike, process migration).'
+  tips:
+    - JIT engines (.NET, browsers) cause false positives; MZ headers or shellcode in system processes (spoolsv.exe, svchost.exe, explorer.exe) are strong evidence.
+
+- pattern: Memory.*.hollowprocesses.*
+  what: Process hollowing check (Volatility hollowprocesses)
+  location: memory image, process image mappings
+  meaning: A process whose in-memory image doesn't match its file on disk was probably hollowed.
+
+- pattern: Memory.*.dlllist.*
+  what: Loaded DLLs per process (Volatility dlllist)
+  location: memory image, PEB loader lists
+  meaning: Every DLL a process loaded, with full path and load time; DLLs from user-writable folders are suspicious.
+
+- pattern: Memory.*.ldrmodules.*
+  what: Loader list consistency (Volatility ldrmodules)
+  location: memory image, PEB lists versus VAD mappings
+  meaning: Modules mapped in memory but missing from the loader lists were unlinked or injected.
+
+- pattern: Memory.*.handles.*
+  what: Open handles per process (Volatility handles)
+  location: memory image, process handle tables
+  meaning: Files, registry keys, mutexes and processes a process had open.
+
+- pattern: Memory.*.svcscan.*
+  what: Services from memory (Volatility svcscan)
+  location: memory image, service control manager records
+  meaning: Services with binary path, state and start type, including ones created by an attacker for persistence.
+
+- pattern: Memory.*.filescan.*
+  what: File objects in memory (Volatility filescan)
+  location: memory image, file object pool scan
+  meaning: Paths of files that were open or recently used, even if since deleted from disk.
+
+- pattern: Memory.*.cmdscan.*
+  what: cmd.exe command history (Volatility cmdscan)
+  location: memory image, conhost command history buffers
+  meaning: Commands typed into cmd.exe consoles that were still in memory.
+
+- pattern: Memory.*.consoles.*
+  what: Console buffers (Volatility consoles)
+  location: memory image, conhost screen buffers
+  meaning: What was typed in consoles and what the commands printed.
+
+- pattern: Memory.*.registry.printkey.*
+  what: Registry key from memory (Volatility printkey)
+  location: memory image, registry hives cached in memory
+  meaning: Registry values as they were in memory (can include changes not yet flushed to disk).
+
+- pattern: Memory.*
+  what: Memory analysis result (Volatility 3)
+  location: memory image
+  meaning: State of the system at capture time, recovered from RAM.
+
 # ---------------------------------------------------------------- event logs
 - pattern: Windows.EventLogs.RDPAuth*
   what: Remote Desktop and logon events

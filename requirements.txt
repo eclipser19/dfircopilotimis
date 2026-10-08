@@ -6,3 +6,4 @@ pyyaml
 jinja2
 streamlit
 markdown-it-py
+volatility3          # memory analysis (optional: only needed for memory images)

@@ -26,6 +26,12 @@ REPORT_TEMPLATE = """# Digital Forensics & Incident Response Report
 {% if scope_description %}
 - **Background:** {{ scope_description | md }}
 {% endif %}
+{% if client_id %}
+- **Disk evidence:** Velociraptor client {{ client_id | md }}
+{% endif %}
+{% if memory_image %}
+- **Memory image:** {{ memory_image | md }}{% if memory_captured %}, captured {{ memory_captured | md }} (host clock){% endif %}
+{% endif %}
 {% if clock_skewed %}
 - **Clock correction:** the host clock ran {{ clock_offset | abs }} minutes {{ "ahead of" if clock_offset > 0 else "behind" }} true UTC. Times below are shown corrected (**UTC**) and as recorded on the host (**Recorded**).
 {% endif %}

@@ -512,3 +512,67 @@ def test_model_change_in_server_yaml_applies_without_reloading(app_env, tmp_path
     os.utime(settings_file, (time.time() + 2, time.time() + 2))
     at.run()
     assert built == ["first", "second"] and "Local model `second`" in _texts(at)
+
+
+# ---- Memory image (Volatility faked) ----
+
+@pytest.fixture
+def mem_app(app_env, tmp_path, monkeypatch):
+    from copilot import memory
+    from test_memory import FakeVolatility
+    images = tmp_path / "memory"
+    images.mkdir()
+    (images / "desktop.mem").write_bytes(b"\0" * 4096)
+    monkeypatch.setenv("DFIR_MEMORY_DIR", str(images))
+    case_config.data["memory"] = {"image": "desktop.mem"}
+    fake = FakeVolatility()
+    monkeypatch.setattr(memory, "_run_process", fake)
+    monkeypatch.setattr(memory, "available_plugins", lambda: {n for p in memory.PLUGINS.values() for n in p.names})
+    return fake
+
+
+def test_memory_triage_from_the_first_visit_prompt(mem_app, app_env):
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert "the memory image `desktop.mem` (Volatility)" in _texts(at)
+    at.checkbox(key="triage_analyze").uncheck().run()
+    next(b for b in at.button if b.key == "first_memory_triage").click().run()
+    assert not at.exception
+    assert "Memory.windows.pslist.PsList -> FINISHED: rows 2, new 2" in _texts(at)
+    assert len(mem_app.commands) == 8
+    assert app_env.search_events("203.78.103.109")["total"] == 1
+
+
+def test_memory_image_is_picked_from_the_server_folder(mem_app, app_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("DFIR_CASES_DIR", str(tmp_path / "cases"))
+    monkeypatch.setenv("DFIR_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("DFIR_CASE_DIR", raising=False)
+    monkeypatch.setattr(case_config, "path", case_config.path)
+    cases.create("m", "Memory case")
+    cases.switch("m")
+    cases.consume_switch()
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    picker = at.selectbox(key="cs_m_mem")
+    assert picker.options == ["(none)", "desktop.mem (4 KB)"]
+    picker.select("desktop.mem").run()
+    next(b for b in at.button if b.label == "Save settings").click().run()
+    assert not at.exception and "Saved" in _texts(at)
+    assert case_config.memory_image == "desktop.mem"
+    assert "Memory image: desktop.mem" in _texts(at)
+
+
+def test_agent_memory_request_waits_in_the_sidebar(mem_app, app_env):
+    at = AppTest.from_file(APP, default_timeout=30)
+    llm = ScriptedLLM(
+        AIMessage(content="", tool_calls=[{"name": "analyze_memory", "id": "1",
+                                           "args": {"plugin": "windows.netscan", "contains": "203.78"}}]),
+        AIMessage(content="Asked for netscan."))
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    at.chat_input[0].set_value("check connections").run()
+    assert not mem_app.commands
+    assert "**Analyze the memory image**" in [m.value for m in at.markdown]
+    next(b for b in at.button if b.label == "Approve").click().run()
+    assert not at.exception
+    assert len(mem_app.commands) == 1 and "Approved" in _texts(at)
+    assert app_env.search_events("203.78.103.109")["total"] == 1

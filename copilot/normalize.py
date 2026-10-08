@@ -35,6 +35,27 @@ _TIME_NAME_RE = re.compile(
 
 # (artifact pattern, event type): first match wins.
 EVENT_TYPES = [
+    # Memory images (Volatility, see memory.py): sources are "Memory.<plugin>".
+    ("Memory.*netscan*", "network"),
+    ("Memory.*netstat*", "network"),
+    ("Memory.*sockstat*", "network"),
+    ("Memory.*malfind*", "code_injection"),
+    ("Memory.*hollowprocesses*", "code_injection"),
+    ("Memory.*processghosting*", "code_injection"),
+    ("Memory.*suspicious_threads*", "code_injection"),
+    ("Memory.*ldrmodules*", "code_injection"),
+    ("Memory.*cmdscan*", "command_history"),
+    ("Memory.*consoles*", "command_history"),
+    ("Memory.linux.bash*", "command_history"),
+    ("Memory.*svcscan*", "persistence"),
+    ("Memory.*svcdiff*", "persistence"),
+    ("Memory.*scheduled_tasks*", "persistence"),
+    ("Memory.*userassist*", "user_activity"),
+    ("Memory.*amcache*", "execution"),
+    ("Memory.*shimcache*", "execution"),
+    ("Memory.*.ps*", "process"),
+    ("Memory.*cmdline*", "process"),
+    ("Memory.*", "memory"),
     ("Windows.EventLogs.RDPAuth*", "authentication"),
     ("Windows.EventLogs.*Logon*", "authentication"),
     ("Windows.EventLogs.Powershell*", "script_execution"),
@@ -85,7 +106,38 @@ ENTITY_FIELDS = {
     "ip": ["ipaddress", "sourceip", "sourceaddress", "sourcenetworkaddress", "remoteaddress", "clientaddress", "ip"],
     "event_id": ["eventid"],
 }
+# Volatility column names (memory images).
+ENTITY_FIELDS["process"] += ["imagefilename", "process", "comm"]
+ENTITY_FIELDS["command_line"] += ["args"]
+ENTITY_FIELDS["ip"] += ["foreignaddr"]
 _ENTITY_LOOKUP = {name: entity for entity, names in ENTITY_FIELDS.items() for name in names}
+
+# Per source, field names that mean something else there: (source pattern, {field: entity or None}).
+ENTITY_OVERRIDES = [
+    ("Memory.*netscan*", {"owner": "process"}),     # the owning process, not an account
+    ("Memory.*netstat*", {"owner": "process"}),
+    ("Memory.*filescan*", {"name": "path"}),
+]
+
+# Per source, a one-line description built from the row's fields ({Field}; missing ones are left out).
+DESCRIPTION_TEMPLATES = [
+    ("Memory.*.info.*", "memory image {Variable}: {Value}"),
+    ("Memory.*pslist*", "process {ImageFileName} PID {PID} PPID {PPID}"),
+    ("Memory.*psscan*", "process {ImageFileName} PID {PID} PPID {PPID} (found by scanning)"),
+    ("Memory.*pstree*", "process {ImageFileName} PID {PID} PPID {PPID} {Cmd}"),
+    ("Memory.*psxview*", "process {Name} PID {PID} pslist={pslist} psscan={psscan} thrdscan={thrdscan}"),
+    ("Memory.*cmdline*", "{Process} PID {PID}: {Args}"),
+    ("Memory.*netscan*", "{Proto} {LocalAddr}:{LocalPort} -> {ForeignAddr}:{ForeignPort} {State} owner {Owner} PID {PID}"),
+    ("Memory.*netstat*", "{Proto} {LocalAddr}:{LocalPort} -> {ForeignAddr}:{ForeignPort} {State} owner {Owner} PID {PID}"),
+    ("Memory.*malfind*", "possible injected code in {Process} PID {PID} at {Start VPN} ({Protection}) {Notes}"),
+    ("Memory.*svcscan*", "service {Name} ({Display}) {State} {Start} binary {Binary}"),
+    ("Memory.*dlllist*", "{Process} PID {PID} loaded {Path}"),
+    ("Memory.*handles*", "{Process} PID {PID} handle {Type} {Name}"),
+    ("Memory.*filescan*", "file object {Name}"),
+    ("Memory.linux.psaux*", "process {COMM} PID {PID} PPID {PPID}: {ARGS}"),
+    ("Memory.linux.pslist*", "process {COMM} PID {PID} PPID {PPID}"),
+]
+_FIELD_RE = re.compile(r"\{([^{}]+)\}")
 
 # Fields that make the best one-line description, in order of preference.
 DESCRIPTION_FIELDS = ["message", "commandline", "scriptblocktext", "line", "command", "description", "name", "ospath", "fullpath"]
@@ -200,13 +252,20 @@ def extract_timestamps(row: dict, now: datetime = None) -> list:
     return sorted((ts, ", ".join(fields)) for ts, fields in found.items())
 
 
-def extract_entities(row: dict, cap: int = 1000) -> dict:
+def _for_source(table: list, source: str):
+    source = (source or "").split("/", 1)[0].lower()
+    return next((value for pattern, value in table if fnmatch.fnmatchcase(source, pattern.lower())), None)
+
+
+def extract_entities(row: dict, cap: int = 1000, source: str = "") -> dict:
     """Entity values are capped for the database/LLM; pass cap=None for full values (reports)."""
     entities = {}
+    overrides = _for_source(ENTITY_OVERRIDES, source) or {}
     for key, value in flatten(row):
         if value in (None, "") or isinstance(value, (bool, dict, list)):
             continue
-        entity = _ENTITY_LOOKUP.get(_last_segment(key).lower())
+        field = _last_segment(key).lower()
+        entity = overrides[field] if field in overrides else _ENTITY_LOOKUP.get(field)
         if entity and entity not in entities:
             entities[entity] = str(value) if cap is None else str(value)[:cap]
     return entities
@@ -218,11 +277,24 @@ KEY_FIELDS = ["LogonType", "Reason", "ServiceName", "TaskName", "Channel"]
 DESCRIPTION_ENTITIES = ["event_id", "user", "ip", "process", "command_line", "hash"]
 
 
-def describe(row: dict, entities: dict, limit: int = 500) -> str:  # limit=None: no cap (reports)
+def _from_template(template: str, row: dict) -> str:
+    values = [row.get(name) for name in _FIELD_RE.findall(template)]
+    if not any(v not in (None, "") for v in values):
+        return ""
+    text = _FIELD_RE.sub(lambda m: "" if row.get(m.group(1)) in (None, "") else str(row.get(m.group(1))), template)
+    return " ".join(text.split())
+
+
+def describe(row: dict, entities: dict, limit: int = 500, source: str = "") -> str:  # limit=None: no cap
     """
     One line per record: identifying facts first (event ID, key fields, user, IP...),
     then the message, then the path, so truncated text still says what happened.
     """
+    template = _for_source(DESCRIPTION_TEMPLATES, source)
+    if template and isinstance(row, dict):
+        text = _from_template(template, row)
+        if text:
+            return text if limit is None else text[:limit]
     fields = {}
     for key, value in flatten(row):
         if value not in (None, "") and not isinstance(value, bool):
@@ -252,11 +324,11 @@ NO_TIMELINE_SOURCES = ["Generic.Client.Info/BasicInformation"]
 
 
 def normalize_row(row: dict, source: str, now: datetime = None) -> dict:
-    entities = extract_entities(row)
+    entities = extract_entities(row, source=source)
     on_timeline = not any(fnmatch.fnmatchcase(source, p) for p in NO_TIMELINE_SOURCES)
     return {
         "event_type": event_type_for(source),
         "entities": entities,
-        "description": describe(row, entities),
+        "description": describe(row, entities, source=source),
         "timestamps": extract_timestamps(row, now) if on_timeline else [],
     }

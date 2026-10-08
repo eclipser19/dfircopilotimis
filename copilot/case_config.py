@@ -240,6 +240,27 @@ class CaseConfig:
         formats = [f for f in formats if f in ("html", "md")]
         return formats or ["html"]
 
+    # --- Memory image (Volatility; see copilot/memory.py) ---
+    def _memory(self) -> dict:
+        memory = self.data.get("memory", {}) or {}
+        return memory if isinstance(memory, dict) else {}
+
+    @property
+    def memory_image(self) -> str:
+        """File name of the case's memory image inside the server's memory folder ("" = none)."""
+        return str(self._memory().get("image", "") or "").strip()
+
+    @property
+    def memory_os(self) -> str:
+        os_name = str(self._memory().get("os", "windows") or "windows").lower()
+        return os_name if os_name in ("windows", "linux") else "windows"
+
+    @property
+    def memory_plan(self) -> list:
+        """Memory triage plugins from the case file ([] = the defaults for memory.os)."""
+        plan = self._memory().get("collect")
+        return [str(p) for p in plan] if isinstance(plan, list) else []
+
     @property
     def allow_raw_vql(self) -> bool:
         return bool((self.data.get("agent", {}) or {}).get("allow_raw_vql", False))
@@ -249,6 +270,8 @@ class CaseConfig:
         lines = [f"Case: {self.case_name}", f"Analyst: {self.analyst}"]
         if self.client_id and not self.client_id_error:
             lines.append(f"Evidence client (dead-disk image): {self.client_id}")
+        if self.memory_image:
+            lines.append(f"Memory image: {self.memory_image} ({self.memory_os}; analyze with analyze_memory)")
 
         if self.has_scope:
             lines.append(f"\nINCIDENT SCOPE:")

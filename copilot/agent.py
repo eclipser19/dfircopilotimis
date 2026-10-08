@@ -29,9 +29,13 @@ def status_line(summary: dict) -> str:
     line = f"{summary.get('artifact')} -> {summary.get('state')}"
     if summary.get("time_window_applied"):
         line += f" (time window: {', '.join(summary['time_window_applied'])})"
-    if summary.get("state") == "FINISHED":
+    if summary.get("state") == "FINISHED" and "rows_collected_by_velociraptor" in summary:
         line += (f": Velociraptor rows {summary.get('rows_collected_by_velociraptor')}, "
                  f"read {summary.get('rows_read')}, new {summary.get('new_rows_ingested')}")
+    elif summary.get("state") == "FINISHED":
+        line += f": rows {summary.get('rows_read')}, new {summary.get('new_rows_ingested')}"
+        if summary.get("seconds") is not None:
+            line += f" ({summary['seconds']} s)"
     if summary.get("error"):
         line += f": {summary['error']}"
     if summary.get("note"):
@@ -66,8 +70,9 @@ def _confirm(request: dict) -> bool:
     from copilot import approvals
     print(f"\n[?] The agent wants to {approvals.ACTIONS.get(request['kind'], request['kind'])}:")
     print(f"    {request['summary']}")
-    if request["kind"] == "collect" and request["details"].get("params"):
-        print(f"    parameters: {json.dumps(request['details']['params'])}")
+    shown = request["details"].get("params") or request["details"].get("options")
+    if request["kind"] in ("collect", "memory") and shown:
+        print(f"    parameters: {json.dumps(shown)}")
     answer = input("    Allow? (y/N): ").strip().lower()
     return answer in ("y", "yes")
 
@@ -160,12 +165,19 @@ def run_agent_loop():
     elif input("\nDo you want to run the initial auto-collection based on case.yaml? (y/n) [y]: ").lower() in ['', 'y', 'yes']:
         print("\n[*] Starting automatic collection...")
         summaries = auto_collect(case_config)
+    if case_config.memory_image and input(f"\nRun the memory triage (Volatility) on {case_config.memory_image}? "
+                                          f"(y/n) [y]: ").lower() in ['', 'y', 'yes']:
+        from copilot import memory
+        results = memory.triage(progress=lambda plugin: print(f"[*] Volatility {plugin} ..."))
+        for summary in results:
+            print(f"    {status_line(summary)}")
+        summaries = (summaries or []) + results
     if summaries and all(s.get("state") == "NOT_STARTED" for s in summaries):
         print("\n[!] No collection could be started, so the agent was not run on them. "
               "Fix the error above (Velociraptor connection, client ID, artifact names), then retry.")
     elif summaries:
         auto_prompt = (
-            "The initial collection has been run for you. Results per artifact:\n"
+            "The initial collection has been run for you. Results per artifact (Memory.* = memory image):\n"
             f"{json.dumps(summaries, indent=2)}\n"
             "Follow up on any collection that is still RUNNING with check_collection. "
             "If IOCs are defined in the case, search for them. "

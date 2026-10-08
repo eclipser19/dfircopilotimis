@@ -193,9 +193,21 @@ def refresh() -> str:
     return ""
 
 
+def _check_memory_image(name: str) -> str:
+    """A memory image from the server's memory folder, or "" (none)."""
+    name = (name or "").strip()
+    if not name:
+        return ""
+    from copilot import memory
+    if name not in {i["name"] for i in memory.available_images()}:
+        raise CaseError(f"No memory image '{name}' in the server's memory folder"
+                        f"{'' if memory.images_dir() else ' (memory.images_dir is not set in server.yaml)'}.")
+    return name
+
+
 def create(case_id: str, name: str, client_id: str = "", start_time: str = "", end_time: str = "",
            description: str = "", clock_offset_minutes: int = 0, iocs: dict = None,
-           copy_from: str = None, dry_run: bool = False) -> str:
+           copy_from: str = None, dry_run: bool = False, memory_image: str = "", memory_os: str = "windows") -> str:
     """
     Creates cases/<case_id>/case.yaml from the template (does not switch to it); the current
     user owns it. Required: case_id and name. IOCs are validated; copy_from copies another
@@ -230,19 +242,21 @@ def create(case_id: str, name: str, client_id: str = "", start_time: str = "", e
             normalize_bound(value)
         except ValueError as e:
             raise CaseError(f"{label}: {e}")
+    memory_image = _check_memory_image(memory_image)
     data = {
         "case": {"name": name or case_id, "analyst": user or "Investigator", "created": date.today().isoformat()},
         "velociraptor": {"client_id": client_id or "", "collection_wait_seconds": 300},
         "scope": {"start_time": start_time or "", "end_time": end_time or "",
                   "clock_offset_minutes": int(clock_offset_minutes or 0), "description": description or ""},
         "iocs": clean(iocs or {}),
+        "memory": {"image": memory_image, "os": memory_os if memory_os in ("windows", "linux") else "windows"},
         "collect": ["Generic.Client.Info", "Windows.EventLogs.RDPAuth", "Windows.Sys.StartupItems",
                     "Windows.Timeline.Prefetch", "Windows.System.TaskScheduler"],
         "collection": {"max_rows": 50000, "apply_time_window": True, "agent_collections": "confirm"},
         "output": {"report_formats": ["html"]},
         "agent": {"allow_raw_vql": False, "max_steps": 15, "max_tokens_per_turn": 300000,
                   "approvals": {"retract_finding": "confirm", "update_case": "confirm",
-                                "switch_case": "confirm", "create_case": "confirm"}},
+                                "switch_case": "confirm", "create_case": "confirm", "memory": "confirm"}},
     }
     if user:
         data["access"] = {"owner": user, "members": []}
@@ -267,7 +281,8 @@ def _read(case_id: str) -> dict:
 
 
 # Settings the UI and the agent may change on an existing case.
-EDITABLE = {"name", "client_id", "start_time", "end_time", "description", "clock_offset_minutes", "iocs"}
+EDITABLE = {"name", "client_id", "start_time", "end_time", "description", "clock_offset_minutes", "iocs",
+            "memory_image", "memory_os"}
 
 
 def update(case_id: str, dry_run: bool = False, **changes) -> dict:
@@ -305,6 +320,12 @@ def update(case_id: str, dry_run: bool = False, **changes) -> dict:
         scope["clock_offset_minutes"] = int(changes["clock_offset_minutes"] or 0)
     if "iocs" in changes:
         data["iocs"] = clean(changes["iocs"])
+    if "memory_image" in changes:
+        data.setdefault("memory", {})["image"] = _check_memory_image(changes["memory_image"])
+    if "memory_os" in changes:
+        if changes["memory_os"] not in ("windows", "linux"):
+            raise CaseError("memory_os must be windows or linux.")
+        data.setdefault("memory", {})["os"] = changes["memory_os"]
     if dry_run:
         return data
     _write(case_id, data)

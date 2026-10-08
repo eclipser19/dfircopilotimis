@@ -9,7 +9,8 @@ own actions (sidebar buttons, /case, forms) bypass this module entirely.
 
 Per action, the case file decides: confirm (default) | auto | off
     agent:
-      approvals: {retract_finding: confirm, update_case: confirm, switch_case: confirm, create_case: confirm}
+      approvals: {retract_finding: confirm, update_case: confirm, switch_case: confirm, create_case: confirm,
+                  memory: confirm}
 Collections keep their own setting, collection.agent_collections.
 
 Every request and decision is written to the case's audit log.
@@ -25,6 +26,7 @@ ACTIONS = {
     "update_case": "change the case settings",
     "switch_case": "switch to another case",
     "create_case": "create a new case",
+    "memory": "analyze the memory image",
 }
 MODES = ("confirm", "auto", "off")
 
@@ -114,6 +116,9 @@ def execute(request: dict):
     kind, d = request["kind"], request["details"]
     if kind == "collect":
         return collection.collect(d["artifact"], d.get("params") or {})
+    if kind == "memory":
+        from copilot import memory
+        return memory.execute(d["plugin"], d.get("options") or {})
     if kind == "retract_finding":
         if request.get("approved_by") == "investigator":
             who = f"approved by {request.get('decided_by') or 'the investigator'}"

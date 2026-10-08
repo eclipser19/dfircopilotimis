@@ -7,7 +7,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
-from copilot import approvals, auth, cases, collection, commands, conversation, outputs, session
+from copilot import approvals, auth, cases, collection, commands, conversation, memory, outputs, session
 from copilot import llm as llm_config
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
@@ -160,6 +160,28 @@ def extract_iocs_cb(prefix: str, use_llm: bool):
         st.session_state[f"{prefix}ioc_{kind}"] = "\n".join(combined[kind])
 
 
+NO_IMAGE = "(none)"
+
+
+def memory_fields(prefix: str, image: str = "", os_name: str = "windows"):
+    """Memory image picker: the images in the server's memory folder (no local files needed)."""
+    images = {i["name"]: i["size"] for i in memory.available_images()}
+    if not memory.images_dir():
+        st.caption("🧠 Memory analysis: set `memory.images_dir` in server.yaml to pick an image here.")
+    options = [NO_IMAGE] + sorted(images) + ([image] if image and image not in images else [])
+    c1, c2 = st.columns([3, 1])
+    c1.selectbox("Memory image", options, index=options.index(image) if image else 0, key=prefix + "mem",
+                 format_func=lambda n: n if n == NO_IMAGE else
+                 f"{n} ({memory.human_size(images[n])})" if n in images else f"{n} (missing)",
+                 help="Analyzed with Volatility 3. Images are files in the server's memory folder.")
+    c2.selectbox("OS", ["windows", "linux"], index=1 if os_name == "linux" else 0, key=prefix + "mem_os")
+
+
+def _picked_image(prefix: str) -> str:
+    value = st.session_state.get(prefix + "mem", NO_IMAGE)
+    return "" if value in (None, NO_IMAGE) else value
+
+
 def create_case_cb():
     st.session_state.nc_error = ""
     case_id = st.session_state.get("nc_id", "").strip()
@@ -169,7 +191,8 @@ def create_case_cb():
                      st.session_state.get("nc_client", "").strip(), st.session_state.get("nc_start", "").strip(),
                      st.session_state.get("nc_end", "").strip(), st.session_state.get("nc_desc", "").strip(),
                      int(st.session_state.get("nc_offset", 0)), _ioc_values("nc_"),
-                     None if copy_from in (None, "(none)") else copy_from)
+                     None if copy_from in (None, "(none)") else copy_from,
+                     memory_image=_picked_image("nc_"), memory_os=st.session_state.get("nc_mem_os", "windows"))
         cases.switch(case_id)
     except cases.CaseError as e:
         st.session_state.nc_error = str(e)
@@ -197,7 +220,8 @@ def save_settings_cb(case_id: str):
         cases.update(case_id, name=st.session_state[p + "name"], client_id=st.session_state[p + "client"],
                      start_time=st.session_state[p + "start"], end_time=st.session_state[p + "end"],
                      clock_offset_minutes=int(st.session_state[p + "offset"]),
-                     description=st.session_state[p + "desc"], iocs=_ioc_values(p))
+                     description=st.session_state[p + "desc"], iocs=_ioc_values(p),
+                     memory_image=_picked_image(p), memory_os=st.session_state.get(p + "mem_os", "windows"))
     except cases.CaseError as e:
         st.session_state.cs_message = f"❌ {e}"
         return
@@ -216,6 +240,7 @@ def new_case_form():
     c2.text_input("Window end (UTC)", placeholder="2024-01-17T00:00:00Z", key="nc_end")
     st.number_input("Host clock ahead of UTC (minutes)", value=0, step=15, key="nc_offset")
     st.text_area("What happened / what to find out", key="nc_desc")
+    memory_fields("nc_")
     ioc_fields("nc_")
     sources = ["(none)"] + [c["id"] for c in cases.list_cases() if c["has_data"]]
     st.selectbox("Copy collected data from", sources, key="nc_copy",
@@ -370,6 +395,34 @@ def run_triage(analyze: bool):
         show_user=False)
 
 
+def run_memory_triage(analyze: bool):
+    """The case's memory triage plugins (Volatility, no LLM), then optionally an agent analysis turn."""
+    lines = []
+    with st.chat_message("assistant"):
+        status = st.status("Running memory triage (each plugin can take minutes)...", expanded=True)
+
+        def progress(plugin):
+            status.write(f"Running `{plugin}`...")
+
+        summaries = memory.triage(progress=progress)
+        for summary in summaries:
+            lines.append(status_line(summary))
+            status.text(lines[-1])
+        status.update(label="Memory triage finished", state="complete", expanded=False)
+    st.session_state.messages.append({"role": "assistant",
+                                      "content": "**Memory triage**\n\n```\n" + "\n".join(lines) + "\n```"})
+    if not (analyze and any(s.get("state") == "FINISHED" for s in summaries)):
+        st.rerun()
+    agent_turn(
+        "The memory triage has been run for you on the case's memory image. Results per plugin:\n"
+        f"{json.dumps(summaries, indent=2)}\n"
+        "Analyze the memory evidence: processes with odd names, parents or paths (pslist/pstree), processes "
+        "in psscan but not pslist, command lines, external network connections (netscan) and their owning "
+        "process, malfind hits, unusual services. Search for the case IOCs and correlate with the disk "
+        "timeline if there is one.",
+        show_user=False)
+
+
 def resolve_request(request: dict, approved: bool):
     """Runs (or declines) a queued agent request and tells the agent what happened."""
     st.session_state.pending = [r for r in st.session_state.pending if r["id"] != request["id"]]
@@ -472,6 +525,7 @@ with st.sidebar:
             st.number_input("Host clock ahead of UTC (minutes)", value=case_config.clock_offset_minutes,
                             step=15, key=p + "offset")
             st.text_area("Description", value=case_config.description, key=p + "desc")
+            memory_fields(p, case_config.memory_image, case_config.memory_os)
             ioc_fields(p, case_config.iocs)
             st.button("Save settings", on_click=save_settings_cb, args=(cid,))
             if st.session_state.get("cs_message"):
@@ -506,6 +560,8 @@ with st.sidebar:
         st.warning(case_config.client_id_error)
     else:
         st.text(f"Evidence client: {case_config.client_id}")
+    if case_config.memory_image:
+        st.text(f"Memory image: {case_config.memory_image}")
     if case_config.has_scope:
         st.text(f"Window: {case_config.start_time}\n     to {case_config.end_time}")
     if case_config.clock_offset_minutes:
@@ -519,6 +575,11 @@ with st.sidebar:
         analyze = st.checkbox("Analyze with the agent afterwards", value=True, key="triage_analyze")
         if st.button("Run triage collection", disabled=bool(case_config.client_id_error)):
             action = ("triage", analyze)
+        if case_config.memory_image:
+            st.markdown(f"**🧠 Memory triage** ({case_config.memory_image})")
+            st.caption(", ".join(memory.triage_plan()))
+            if st.button("Run memory triage"):
+                action = ("memory_triage", analyze)
 
     if pending_here():
         st.subheader("⏳ Awaiting your approval")
@@ -526,8 +587,9 @@ with st.sidebar:
         for req in pending_here():
             st.markdown(f"**{approvals.ACTIONS.get(req['kind'], req['kind']).capitalize()}**")
             st.caption(req["summary"])
-            if req["kind"] == "collect" and req["details"].get("params"):
-                st.code(json.dumps(req["details"]["params"], indent=1), language="json")
+            shown = req["details"].get("params") or req["details"].get("options")
+            if req["kind"] in ("collect", "memory") and shown:
+                st.code(json.dumps(shown, indent=1), language="json")
             c1, c2 = st.columns(2)
             if c1.button("Approve", key=f"approve-{req['id']}"):
                 action = ("approve", req)
@@ -582,14 +644,18 @@ for i, msg in enumerate(st.session_state.messages):
 
 # First visit to an empty case: offer the triage collection (the CLI asks the same question).
 if (not case_db.get_collections() and not st.session_state.triage_dismissed and action is None
-        and not case_config.client_id_error):
+        and (not case_config.client_id_error or case_config.memory_image)):
     with st.container(border=True):
-        st.markdown("**No data collected for this case yet.** Run the initial triage collection from "
-                    f"`{case_config.path}`? It needs no LLM; the agent can analyze the results afterwards.")
-        c1, c2 = st.columns([1, 4])
-        if c1.button("Run triage", type="primary"):
+        sources = (["the disk image (Velociraptor)"] if not case_config.client_id_error else []) + \
+                  ([f"the memory image `{case_config.memory_image}` (Volatility)"] if case_config.memory_image else [])
+        st.markdown(f"**No data collected for this case yet.** Run the initial triage of {' and '.join(sources)}? "
+                    f"It needs no LLM; the agent can analyze the results afterwards.")
+        c1, c2, c3 = st.columns([1, 1, 3])
+        if not case_config.client_id_error and c1.button("Run triage", type="primary"):
             action = ("triage", st.session_state.get("triage_analyze", True))
-        if c2.button("Skip"):
+        if case_config.memory_image and c2.button("Run memory triage", type="primary", key="first_memory_triage"):
+            action = ("memory_triage", st.session_state.get("triage_analyze", True))
+        if c3.button("Skip"):
             st.session_state.triage_dismissed = True
             st.rerun()
 
@@ -598,6 +664,9 @@ if action:
     if kind == "triage":
         st.session_state.triage_dismissed = True
         run_triage(analyze=arg)
+    elif kind == "memory_triage":
+        st.session_state.triage_dismissed = True
+        run_memory_triage(analyze=arg)
     elif kind in ("approve", "deny"):
         resolve_request(arg, approved=(kind == "approve"))
         st.rerun()

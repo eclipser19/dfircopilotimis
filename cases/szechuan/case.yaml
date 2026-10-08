@@ -53,6 +53,16 @@ collect:
       IocRegex: "."
       IdRegex: "^(4624|4625|4634|4647|4648|4688|4697|4698|4720|7045|1102|104|1149|21|22|23|24|25)$"
 
+# Memory image of the same desktop (Volatility 3; see server.yaml memory:). Pick it in the app
+# (Case settings > Memory image) or write its file name here, as it is in memory.images_dir.
+# The answer key has the C2 (203.78.103.109) and the migration into spoolsv.exe in memory.
+memory:
+  image: ""
+  os: windows
+  # Memory triage (default when left out: info, pslist, psscan, pstree, cmdline, netscan, svcscan, malfind)
+  # collect: [windows.info, windows.pslist, windows.psscan, windows.pstree, windows.cmdline,
+  #           windows.netscan, windows.svcscan, windows.malfind]
+
 # Collection limits (apply to every collection, investigator's or agent's).
 collection:
   max_rows: 50000            # rows per collection; results beyond are dropped and flagged as truncated
@@ -73,6 +83,7 @@ agent:
     update_case: confirm
     switch_case: confirm
     create_case: confirm
+    memory: confirm          # Volatility runs the agent asks for (the memory triage needs no approval)
   allow_raw_vql: false
   max_steps: 15
   max_tokens_per_turn: 300000

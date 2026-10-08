@@ -20,3 +20,35 @@ llm:
 login:
   # Refuse to run without accounts (python -m copilot.auth add <username> --admin).
   required: true
+
+memory:
+  # Memory analysis with Volatility 3. Install it once, with the Python that runs the copilot:
+  #     pip install volatility3
+  # Then check the setup (version, images, symbols, offline) with:
+  #     python -m copilot.memory check                  (add an image name to test reading it)
+
+  # 1. The folder with the memory images (.mem, .raw, .vmem, .dmp...). Each case picks its image
+  #    from this folder in the app (Case settings > Memory image). Nothing outside it can be opened.
+  images_dir: 'C:\dfir\memory'
+
+  # 2. The folder for Windows symbol tables. Volatility needs the table of the image's exact Windows
+  #    kernel to read it. It looks here first, and saves tables it downloads here.
+  symbols_dir: 'C:\dfir\symbols'
+
+  # 3. Offline. true = Volatility never goes online; each image's table must already be in
+  #    symbols_dir (or in Volatility's own symbols folder). Ways to get a table there:
+  #    a) Online once: set offline: false while the server has internet and run
+  #         python -m copilot.memory check <image name>
+  #       Volatility downloads the table from Microsoft into symbols_dir. Set offline: true again;
+  #       that image now works offline.
+  #    b) Copy it from a PC that already read the image: `windows.info` shows it as "Symbols"
+  #       (...\symbols\windows\ntkrnlmp.pdb\<ID>.json.xz). Copy the windows folder from there
+  #       into symbols_dir, keeping the sub-folders.
+  #    c) The symbol pack, for many Windows builds at once: on a PC with internet download
+  #         https://downloads.volatilityfoundation.org/volatility3/symbols/windows.zip
+  #       and put windows.zip into symbols_dir as it is (no need to unzip). Not every build is in it;
+  #       use a) or b) for the ones that are missing.
+  offline: true
+
+  # Seconds one plugin may run before it is stopped.
+  timeout: 3600

@@ -158,6 +158,55 @@ findings, the findings in sequence, and which indicators connect which findings)
 static SVG with a "Show data" table under each. It is self-contained and safe to open: evidence text is shown as text (never
 interpreted as HTML) and the page blocks scripts and external content.
 
+## Memory analysis (Volatility 3)
+
+A case can have a memory image next to (or instead of) the disk image. The copilot runs
+Volatility 3 on it and stores the results in the case database like collected artifacts, so the
+timeline, search, findings and the report include them (sources `Memory.<plugin>`, e.g.
+`Memory.windows.netscan.NetScan`).
+
+**Set up (once, on the server):**
+
+1. Install Volatility with the Python that runs the copilot: `pip install volatility3` (it is in
+   `requirements.txt`). The `vol` command doesn't need to be on PATH; the copilot starts
+   Volatility through Python itself.
+2. In `server.yaml`, fill in the `memory:` block (see `server.example.yaml`): `images_dir` (the
+   folder with the memory images), `symbols_dir`, `offline`.
+3. Check it: `python -m copilot.memory check` lists the Volatility version, the images and the
+   symbols. `python -m copilot.memory check <image name>` also reads the image (`windows.info`),
+   which proves the symbols for it are there.
+
+**Per case:** pick the image in the sidebar (**Case settings > Memory image**; the list shows the
+files in `images_dir`), or write `memory: {image: <file name>}` in the case file. Then:
+
+- **Run memory triage** (first visit, or the **Triage collection** panel; CLI: asked at start)
+  runs `windows.info, pslist, psscan, pstree, cmdline, netscan, svcscan, malfind` without the
+  LLM. Change the list with `memory.collect`; `memory.os: linux` picks Linux plugins.
+- The agent runs more plugins with `analyze_memory`, e.g. `windows.malfind` for one PID, `windows.handles`
+  filtered to a name, `windows.registry.printkey` for a key. Each request needs your approval
+  (`agent.approvals.memory: confirm`; `auto` lets it run them freely, `off` forbids them). Heavy
+  plugins (handles, dlllist, filescan, envars...) need a PID or text filter.
+- Only the plugins listed in `copilot/memory.py` can run, with only their listed options. Nothing
+  can dump files or open a file outside `images_dir`.
+- Each plugin run can take minutes on a large image. `memory.timeout` stops it (default 1 h).
+
+**Symbols and offline use.** To read a Windows image, Volatility needs the symbol table of that
+image's exact Windows kernel. With `offline: true` it never downloads anything, so the table must
+already be in `symbols_dir` (or in Volatility's own `symbols` folder). Three ways to get it there:
+
+- **Online once:** set `offline: false` while the server has internet and run
+  `python -m copilot.memory check <image name>`. Volatility downloads the table from Microsoft into
+  `symbols_dir`. Switch back to `offline: true`; that image now works offline.
+- **Copy from a PC that already read the image:** `windows.info` prints the table's path as
+  `Symbols` (`...\symbols\windows\ntkrnlmp.pdb\<ID>.json.xz`). Copy the `windows` folder from
+  there into `symbols_dir`, keeping the sub-folders.
+- **The symbol pack:** on a PC with internet, download
+  `https://downloads.volatilityfoundation.org/volatility3/symbols/windows.zip` and put
+  `windows.zip` into `symbols_dir` as it is. It covers many Windows builds, not all of them.
+
+If a table is missing, the copilot says so and names the folder. Linux images need a table built
+for their exact kernel (Volatility's `dwarf2json`), placed in `symbols_dir/linux`.
+
 ## Sign-in
 
 The web app uses local accounts stored on the server, so it works without internet access
@@ -203,7 +252,9 @@ only until an admin assigns them. The agent cannot change access.
 ## Offline / local model
 
 The copilot needs no internet access once its packages are installed: Velociraptor, the
-case data, the knowledge base and the reports are all local. Streamlit's usage statistics
+case data, the knowledge base and the reports are all local. Memory analysis needs the symbol
+tables of the images' Windows kernels; see [Memory analysis](#memory-analysis-volatility-3)
+for getting them onto an offline server. Streamlit's usage statistics
 are switched off in `.streamlit/config.toml` (start the app from this folder). Set
 `browser.serverAddress` there as well, so Streamlit doesn't look up its public IP at startup.
 

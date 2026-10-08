@@ -72,8 +72,8 @@ def _evidence(db, evidence_id: str, window: tuple) -> dict:
     except (ValueError, TypeError):
         pass
     if isinstance(raw, dict) and raw:
-        full_entities = extract_entities(raw, cap=None)
-        rec["description"] = describe(raw, full_entities, limit=None)
+        full_entities = extract_entities(raw, cap=None, source=rec["source"])
+        rec["description"] = describe(raw, full_entities, limit=None, source=rec["source"])
         rec.update(full_entities)
     stamps = [t for t in rec["timestamps"] if _in_window(t["timestamp_utc"], window)] or rec["timestamps"]
     return {"evidence_id": evidence_id, "source": rec["source"], "description": rec["description"],
@@ -135,6 +135,18 @@ def is_noise(field: str, value: str) -> bool:
 def _in_window(ts: str, window: tuple) -> bool:
     start, end = window
     return (not start or ts >= start) and (not end or ts <= end)
+
+
+def _memory_capture_time(db) -> str:
+    """SystemTime from windows.info, if the memory image was analysed."""
+    for row in db.conn.execute("SELECT raw_data FROM records WHERE source LIKE 'Memory.windows.info%'"):
+        try:
+            data = json.loads(row[0])
+        except (ValueError, TypeError):
+            continue
+        if isinstance(data, dict) and data.get("Variable") == "SystemTime":
+            return str(data.get("Value") or "")
+    return ""
 
 
 def build_report(db, config, executive_summary: str, recommendations: str, correlations: str = None,
@@ -263,6 +275,8 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
     env.filters["rec"] = clock.recorded
     env.filters["utc"] = clock.corrected
     text = env.from_string(REPORT_TEMPLATE).render(
+        client_id=config.client_id if not config.client_id_error else "",
+        memory_image=config.memory_image, memory_captured=_memory_capture_time(db),
         case_name=config.case_name, analyst=config.analyst,
         generated_at=now.strftime("%Y-%m-%d %H:%M:%S UTC"),
         executive_summary=executive_summary, recommendations=recommendations,

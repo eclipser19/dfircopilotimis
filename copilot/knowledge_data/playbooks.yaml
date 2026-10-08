@@ -65,3 +65,17 @@ timeline_basics:
     - 'MACB: Modified, Accessed, Changed ($MFT record), Born. $SI times are easy to forge; $FN times are harder.'
     - Prefetch keeps the last 8 run times; earlier runs are only counted.
     - Registry values have no time; the key LastWrite time is the only date.
+
+memory:
+  question: What does the memory image show?
+  check:
+    - 'Start with the memory triage results (list_collections): windows.info gives the capture time; the triage runs pslist, psscan, pstree, cmdline, netscan, svcscan and malfind.'
+    - 'Processes: names that imitate system binaries (scvhost.exe), wrong parents (svchost.exe not under services.exe), system binaries outside System32 (cmdline / pstree path), processes in psscan but not pslist without an exit time (hidden).'
+    - 'Network (netscan): connections from processes that should not talk to the internet, external IPs on 443/80/8080, listening ports opened by malware. Join on PID with cmdline.'
+    - 'Injection (malfind): executable private memory with an MZ header or shellcode, especially in spoolsv.exe, svchost.exe, explorer.exe, lsass.exe; then dlllist/ldrmodules for that PID.'
+    - 'Process migration (e.g. Meterpreter migrate): the original malware process exits (psscan exit time) and a system process (often spoolsv.exe) shows malfind hits and the C2 connection.'
+    - 'Persistence: svcscan (services with odd binary paths), printkey on Software\Microsoft\Windows\CurrentVersion\Run.'
+    - 'Typed commands: consoles / cmdscan; credential theft: handles or dlllist of lsass.exe, processes touching lsass.'
+    - 'Correlate with the disk timeline: the process create time (pslist) should match Prefetch/7045/4688 on disk; the C2 IP should appear in the firewall/proxy or other hosts.'
+    - 'Narrow heavy plugins (handles, dlllist, filescan, envars) with pid or contains from a lead you already have.'
+
