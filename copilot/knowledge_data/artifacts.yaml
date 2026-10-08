@@ -280,6 +280,51 @@
   location: 'C:\Windows\System32\config\{SYSTEM,SOFTWARE,SAM,SECURITY}, C:\Users\*\NTUSER.DAT, UsrClass.dat'
   meaning: System and user configuration, persistence keys and user activity traces.
 
+# Browsers. Verified on a dead-disk Velociraptor server (2020 Szechuan image): Chrome.History and
+# NirsoftBrowserViewer return nothing from an image. Internet Explorer / Edge Legacy history
+# (WebCacheV01.dat) has no parser artifact on a standard server: prove downloads with the
+# Zone.Identifier stream (Windows.NTFS.ADSHunter), Prefetch of the browser and LNK files.
+- pattern: Windows.Applications.Chrome.History*
+  what: Chrome browsing history
+  location: 'C:\Users\*\AppData\Local\Google\Chrome\User Data\*\History'
+  meaning: URLs visited and downloads in Chrome.
+  live_only: true
+  dead_disk_note: 'Calls lookupSID, which is disabled for disk images: it returns 0 rows with "Call to function lookupSID disabled" in the log.'
+
+- pattern: Windows.Applications.NirsoftBrowserViewer*
+  what: Browsing history via NirSoft BrowsingHistoryView
+  location: Runs an external NirSoft program on the endpoint
+  meaning: History of all browsers, but only on a running system with the tool available.
+  live_only: true
+
+- pattern: Windows.ETW.*
+  what: Event Tracing for Windows (live system only)
+  location: Running system
+  meaning: Live event streams (DNS, Edge URLs, sessions); nothing to read on a disk image.
+  live_only: true
+
+- pattern: Windows.Applications.Firefox.*
+  what: Firefox history and downloads
+  location: 'C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\places.sqlite'
+  meaning: URLs visited and files downloaded with Firefox, with times.
+  params: {userRegex: user filter, URLRegex: URL filter}
+  dead_disk_note: Not yet verified on an image; if it returns 0 rows with "lookupSID disabled" in the log, it cannot work here.
+
+- pattern: Windows.Applications.Edge.History*
+  what: Edge (Chromium) browsing history
+  location: 'C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\History'
+  meaning: URLs visited and downloads in the new (Chromium) Edge. Not Internet Explorer or Edge Legacy.
+  dead_disk_note: Not yet verified on an image; it may call lookupSID like Chrome.History.
+
+- pattern: Windows.NTFS.ADSHunter*
+  what: Alternate data streams, including Zone.Identifier (Mark of the Web)
+  location: 'NTFS alternate data streams, e.g. C:\Windows\System32\coreupdater.exe:Zone.Identifier'
+  meaning: 'A Zone.Identifier stream proves a file came from the internet: ZoneId=3, HostUrl (download URL) and ReferrerUrl (page it was linked from). The best disk evidence of a browser download when no browser history parser works.'
+  tips:
+    - 'The stream moves with the file: look at the file''s current path (e.g. System32), not only Downloads.'
+    - Filter by path and stream name (see describe_artifact for this server's parameter names); scanning every stream on a volume is slow.
+    - Copying a file through some tools, extracting archives or the attacker's cleanup can remove the stream; no stream is not proof of no download.
+
 - pattern: Windows.Applications.*
   what: Application artifacts (browsers etc.)
   location: 'Per-application profile folders under C:\Users\*'

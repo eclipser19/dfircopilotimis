@@ -68,6 +68,8 @@ Legend: [x] done and tested · [~] partially done · [ ] not started
 - [x] Cases bound to accounts: owner + members, admins see all, unowned cases admin-only; per-user chats; audit log records the investigator.
 - [x] Server settings file (server.yaml) for the model, key and sign-in; environment variables still win.
 - [x] Memory analysis with Volatility 3: plugin allowlist, memory triage, agent tool with approval, rows in the case DB, offline symbols (server.yaml memory:).
+- [x] Lessons learned: the agent proposes, a person approves (admins with sign-in), shared by all cases on the server.
+- [ ] Benchmark against answer keys (rows found, UTC times, no invented evidence).
 - [ ] Prompt rewrite once the tools are stable.
 - [ ] Report upload / sharing.
 

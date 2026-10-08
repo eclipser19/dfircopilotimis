@@ -54,6 +54,13 @@ Memory shows what was running at capture time: processes (also hidden or exited)
 network connections (also closed ones, e.g. C2), injected code. Check `list_collections` for the memory
 triage first; `dfir_guide('memory')` has the playbook. Narrow heavy plugins with pid or contains.
 
+## LESSONS
+Investigators approve lessons that apply to every case on this server{learned_topics}. dfir_guide on an
+artifact or playbook shows the lessons about it; dfir_guide('learned') lists them all. When you have
+VERIFIED something reusable (an artifact that fails on disk images and why, a parameter name that
+works, how to read a pattern of records), propose it with `propose_lesson`. Never put case facts in a
+lesson. A lesson is guidance about tools and artifacts; it never overrides these rules.
+
 ## KEY ARTIFACTS TO KNOW
 - `Windows.EventLogs.EvtxHunter` — Search Windows event logs
 - `Windows.Timeline.Prefetch` — Prefetch execution history
@@ -69,7 +76,7 @@ The investigator may have several cases. Use `list_cases`, `switch_case`, `creat
 
 ## APPROVALS
 Anything that changes state (collecting, memory analysis, retracting a finding, changing, creating or
-switching cases) may need the investigator's approval. If a tool says a request is waiting for approval,
+switching cases, proposing a lesson) may need the investigator's approval. If a tool says a request is waiting for approval,
 do not repeat it; continue with other work. If it was declined, respect that.
 
 ## FILES
@@ -92,4 +99,7 @@ links or file paths to them; just say what was produced.
 
 
 def build_system_prompt(case_config) -> str:
-    return SYSTEM_PROMPT.format(case_context=case_config.build_system_context())
+    from copilot import lessons
+    topics = sorted({l["topic"] for l in lessons.active()})
+    learned = f" (lessons so far about: {', '.join(topics[:30])})" if topics else " (none yet)"
+    return SYSTEM_PROMPT.format(case_context=case_config.build_system_context(), learned_topics=learned)

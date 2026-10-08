@@ -714,3 +714,57 @@ def test_triage_picker_runs_and_saves_the_chosen_artifacts(app_env, tmp_path, mo
     assert any("not valid JSON" in e.value for e in at.error)
     next(b for b in at.button if b.key == "tri_t_reset").click().run()
     assert at.multiselect(key="tri_t_art").value == ["Generic.Client.Info", "Windows.EventLogs.EvtxHunter"]
+
+
+# ---- Lessons learned ----
+
+def test_investigator_adds_and_removes_a_lesson(app_env):
+    from copilot import lessons
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert any(e.label.startswith("🧠 Knowledge · 0 lessons") for e in at.expander)
+    at.toggle(key="ln_open").set_value(True).run()
+    at.text_input(key="ln_topic").input("Windows.Applications.Chrome.History").run()
+    at.text_area(key="ln_text").input("Returns 0 rows from disk images because it calls lookupSID.").run()
+    at.checkbox(key="ln_unusable").check().run()
+    next(b for b in at.button if b.label == "Save lesson").click().run()
+    assert not at.exception and "Lesson saved" in _texts(at)
+    lesson = lessons.active()[0]
+    assert lesson["unusable_on_images"] and lesson["source"] == "investigator"
+    assert any(e.label.startswith("🧠 Knowledge · 1 lesson") for e in at.expander)
+    at.button(key=f"ln-del-{lesson['id']}").click().run()
+    assert lessons.all_lessons() == []
+
+
+def test_agent_lesson_is_approved_in_the_sidebar(app_env):
+    from copilot import lessons
+    at = AppTest.from_file(APP, default_timeout=30)
+    llm = ScriptedLLM(
+        AIMessage(content="", tool_calls=[{"name": "propose_lesson", "id": "1", "args": {
+            "topic": "Windows.Applications.Chrome.History",
+            "lesson": "Returns 0 rows from disk images: it calls lookupSID (flow log).",
+            "unusable_on_images": True}}]),
+        AIMessage(content="Proposed a lesson."), AIMessage(content="Noted."))
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    at.chat_input[0].set_value("remember that chrome history fails").run()
+    assert lessons.all_lessons() == []
+    assert any("Lessons apply to every case" in c.value for c in at.caption)
+    next(b for b in at.button if b.label == "Approve").click().run()
+    assert not at.exception
+    assert lessons.active()[0]["topic"] == "Windows.Applications.Chrome.History"
+
+
+def test_non_admin_lessons_wait_for_an_admin(team_app):
+    from copilot import lessons
+    bob = _browser("bob")
+    bob.toggle(key="ln_open").set_value(True).run()
+    bob.text_input(key="ln_topic").input("initial_access").run()
+    bob.text_area(key="ln_text").input("Check Prefetch for the browser that ran before the payload.").run()
+    next(b for b in bob.button if b.label == "Save lesson").click().run()
+    assert "an admin must accept it" in _texts(bob)
+    lesson = lessons.proposed()[0]
+    assert not [b for b in bob.button if b.key == f"ln-ok-{lesson['id']}"]   # bob can't accept
+    alice = _browser("alice")
+    alice.button(key=f"ln-ok-{lesson['id']}").click().run()
+    assert lessons.active()[0]["approved_by"] == "alice"

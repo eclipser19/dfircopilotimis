@@ -112,6 +112,7 @@ def isolated_server_settings(tmp_path, monkeypatch):
     from copilot import auth
     monkeypatch.setenv("DFIR_AUTH_FILE", str(tmp_path / "no_auth.yaml"))
     monkeypatch.setenv("DFIR_SETTINGS", str(tmp_path / "no_server.yaml"))
+    monkeypatch.setenv("DFIR_LEARNED_FILE", str(tmp_path / "learned_knowledge.yaml"))
     for var in ("DFIR_REQUIRE_LOGIN", "DFIR_LLM_BASE_URL", "DFIR_LLM_MODEL", "DFIR_LLM_API_KEY", "DFIR_LLM_LOCAL",
                 "DFIR_LLM_TIMEOUT", "OPENAI_API_KEY"):
         monkeypatch.delenv(var, raising=False)

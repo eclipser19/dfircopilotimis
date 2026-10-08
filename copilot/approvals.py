@@ -27,6 +27,7 @@ ACTIONS = {
     "switch_case": "switch to another case",
     "create_case": "create a new case",
     "memory": "analyze the memory image",
+    "lesson": "add a lesson to the agent's knowledge",
 }
 MODES = ("confirm", "auto", "off")
 
@@ -119,6 +120,18 @@ def execute(request: dict):
     if kind == "memory":
         from copilot import memory
         return memory.execute(d["plugin"], d.get("options") or {})
+    if kind == "lesson":
+        from copilot import lessons
+        try:
+            lesson = lessons.add(d["topic"], d["text"], d.get("unusable_on_images", False), source="agent",
+                                 approver=request.get("decided_by"),
+                                 auto_approved=request.get("approved_by") == "auto", case=request.get("case_id", ""))
+        except lessons.LessonError as e:
+            raise ApprovalError(str(e))
+        if lesson["status"] == "active":
+            return f"Lesson {lesson['id']} saved; it applies from now on, in every case."
+        return (f"Lesson {lesson['id']} saved as proposed: an admin must accept it before it applies "
+                f"(lessons change the agent for every case).")
     if kind == "retract_finding":
         if request.get("approved_by") == "investigator":
             who = f"approved by {request.get('decided_by') or 'the investigator'}"

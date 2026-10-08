@@ -45,13 +45,33 @@ def logon_type(value) -> str:
         return ""
 
 
-def artifact_info(source: str) -> dict:
-    """Reference entry for an artifact or 'Artifact/Source' name (first matching pattern)."""
+def _static_info(source: str) -> dict:
     artifact = source.split("/", 1)[0].lower()
     for entry in artifacts():
         if fnmatch.fnmatchcase(artifact, str(entry["pattern"]).lower()):
             return entry
     return UNKNOWN
+
+
+def artifact_info(source: str) -> dict:
+    """
+    Reference entry for an artifact or 'Artifact/Source' name (first matching pattern), with
+    the lessons investigators approved about it (copilot/lessons.py) added to its tips. A lesson
+    that marks it as unusable on disk images makes it live_only, so it is refused before anyone
+    is asked to approve its collection.
+    """
+    entry = _static_info(source)
+    from copilot import lessons
+    learned = lessons.for_topic(source)
+    if not learned:
+        return entry
+    entry = dict(entry)
+    entry["tips"] = list(entry.get("tips", [])) + [f"Learned ({l['id']}): {l['text']}" for l in learned]
+    unusable = next((l for l in learned if l.get("unusable_on_images")), None)
+    if unusable:
+        entry["live_only"] = True
+        entry["learned_unusable"] = unusable["text"]
+    return entry
 
 
 def triage_suggestions(os_name: str = None) -> list:
@@ -92,12 +112,19 @@ def event_info(event_id, channel: str = "") -> dict:
 
 def guide(topic: str) -> str:
     """Plain-text answer for the agent: a playbook, an event ID, or an artifact."""
+    from copilot import lessons
     topic = (topic or "").strip()
     books = playbooks()
     key = topic.lower().replace(" ", "_").replace("-", "_")
+    if key in ("learned", "lessons", "lessons_learned"):
+        found = lessons.active()
+        return ("Lessons approved by investigators on this server:\n" +
+                "\n".join(f"- ({l['id']}) {lessons.summary(l)}" for l in found)) if found else "No lessons yet."
     if key in books:
         book = books[key]
-        return f"{book['question']}\n" + "\n".join(f"- {line}" for line in book["check"])
+        learned = lessons.for_topic(key)
+        return (f"{book['question']}\n" + "\n".join(f"- {line}" for line in book["check"]) +
+                "".join(f"\n- Learned ({l['id']}): {l['text']}" for l in learned))
 
     m = re.match(r"(?i)^\s*(?:event(?:\s*id)?\s*:?\s*)?(\d+)\s*$", topic)
     if m:
@@ -120,5 +147,9 @@ def guide(topic: str) -> str:
         lines += [f"Tip: {t}" for t in info.get("tips", [])]
         return "\n".join(lines)
 
-    return ("Unknown topic. Playbooks: " + ", ".join(books) +
+    from copilot import lessons
+    learned = lessons.for_topic(topic)
+    if learned:
+        return "\n".join(f"Learned ({l['id']}): {lessons.summary(l)}" for l in learned)
+    return ("Unknown topic. Playbooks: " + ", ".join(books) + ", learned" +
             ". Or ask for an event ID (e.g. '4624') or an artifact name (e.g. 'Windows.NTFS.MFT').")

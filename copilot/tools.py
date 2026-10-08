@@ -542,11 +542,40 @@ def dfir_guide(topic: str) -> str:
     what an event ID means, or what an artifact shows and how to query it.
     Args:
         topic: A playbook (initial_access, execution, persistence, lateral_movement,
-               credential_access, collection_exfiltration, anti_forensics, timeline_basics),
-               an event ID (e.g. '4624'), or an artifact name (e.g. 'Windows.NTFS.MFT').
+               credential_access, collection_exfiltration, anti_forensics, timeline_basics, memory),
+               an event ID (e.g. '4624'), an artifact name (e.g. 'Windows.NTFS.MFT'), or 'learned'
+               for the lessons investigators approved on this server.
     """
     from copilot.knowledge import guide
     return guide(topic)
+
+
+@tool
+def propose_lesson(topic: str, lesson: str, unusable_on_images: Optional[bool] = None) -> str:
+    """
+    Proposes a lesson for the knowledge base, so this and future investigations (every case on this
+    server) avoid a mistake or reuse a method. Only for something you VERIFIED in this
+    investigation and that holds in general, e.g. "returns 0 rows on disk images because it calls
+    lookupSID (seen in the flow log)", "the parameter is FileNameRegex, not FileRegex", "a FILE_CREATE
+    and a RENAME_NEW_NAME with the same name in the same second are one file creation". Never case
+    facts (IPs, hashes, hosts, users, times). The investigator approves it first.
+    Args:
+        topic: What it is about: an artifact name (e.g. 'Windows.Applications.Chrome.History'), a
+               playbook (e.g. 'initial_access') or a short subject (e.g. 'Memory.windows.netscan').
+        lesson: The lesson in one to three sentences, with the evidence that showed it.
+        unusable_on_images: True if the artifact returns nothing from disk images (it is then refused).
+    """
+    from copilot import approvals, cases, lessons
+    try:
+        topic, lesson = lessons.check(topic, lesson, from_agent=True)
+    except lessons.LessonError as e:
+        return f"Lesson not proposed: {e}"
+    flag = " [does not work on disk images]" if unusable_on_images else ""
+    try:
+        return approvals.run("lesson", f"{topic}{flag}: {lesson}",
+                             {"topic": topic, "text": lesson, "unusable_on_images": bool(unusable_on_images)})
+    except (approvals.ApprovalError, cases.CaseError) as e:
+        return str(e)
 
 
 @tool
@@ -837,7 +866,7 @@ tools = [
     search_clients, collect_artifact, check_collection, list_collections,
     list_artifacts, describe_artifact, analyze_memory, list_memory_plugins,
     activity_histogram, context_window, query_timeline, search_iocs, pivot_entity, get_event_detail,
-    case_summary, record_finding, retract_finding, dfir_guide,
+    case_summary, record_finding, retract_finding, dfir_guide, propose_lesson,
     generate_report, export_case, export_results, export_evidence,
     list_cases, switch_case, create_case, update_case,
 ]

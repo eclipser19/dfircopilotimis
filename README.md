@@ -120,6 +120,28 @@ Patterns in `artifacts.yaml` are matched in order (first match wins), so put spe
 entries above general ones. Only list parameter names under `params` once a real
 collection has confirmed them.
 
+## Lessons learned
+
+The agent improves its own knowledge, with a person in the loop. When it has verified
+something reusable (an artifact that returns nothing from disk images and why, a parameter
+name that works, how to read a pattern of records), it proposes a **lesson** with
+`propose_lesson`. The proposal waits in **Awaiting your approval** like any other change:
+evidence is attacker-written, so nothing is learned without a person approving it.
+
+- Approved lessons are added to the knowledge base for **every case on this server**: they
+  show up in `dfir_guide` and `describe_artifact`, and an artifact a lesson marks as not
+  working on disk images is refused before anyone is asked to approve collecting it.
+- Lessons with case details (IPs, hashes, domains) are refused: they must be general.
+- With sign-in, a lesson approved by a non-admin stays **proposed** until an admin accepts it.
+  Lessons set to `auto` in a case file are always only proposed.
+- The sidebar's **🧠 Knowledge** section lists the lessons, lets admins accept or remove them,
+  and lets investigators write their own. On the server: `python -m copilot.lessons list`,
+  `accept <id>`, `remove <id>`.
+- They are stored in `learned_knowledge.yaml` (git-ignored; `knowledge.learned_file` in
+  server.yaml or `DFIR_LEARNED_FILE`), with the case, date and approver of each.
+- The built-in knowledge stays in `copilot/knowledge_data/*.yaml`; lessons that prove useful
+  everywhere can be moved there by hand.
+
 ## Run
 
 Check the Velociraptor side first (no LLM involved): connection, the case's

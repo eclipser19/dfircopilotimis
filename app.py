@@ -7,8 +7,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
-from copilot import (approvals, auth, cases, citations, collection, commands, conversation, knowledge, memory,
-                     outputs, session)
+from copilot import (approvals, auth, cases, citations, collection, commands, conversation, knowledge, lessons,
+                     memory, outputs, session)
 from copilot import llm as llm_config
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
@@ -353,6 +353,57 @@ def _keep(widget_key: str, key: str):
     """Copies an editor widget's value to a plain key, which outlives the widget (and the sidebar,
     drawn first, sees the new value in the same run)."""
     st.session_state[key] = st.session_state[widget_key]
+
+
+def lesson_cb(kind: str, lesson_id: str = None):
+    """Investigator actions on lessons: add, accept, remove (admins only when sign-in is used)."""
+    try:
+        if kind == "add":
+            lesson = lessons.add(st.session_state.get("ln_topic", ""), st.session_state.get("ln_text", ""),
+                                 st.session_state.get("ln_unusable", False), source="investigator", approver=USER,
+                                 case=cases.current_id())
+            for key in ("ln_topic", "ln_text", "ln_unusable"):
+                st.session_state.pop(key, None)
+            st.session_state.ln_message = ("✅ Lesson saved." if lesson["status"] == "active" else
+                                           "✅ Saved as proposed: an admin must accept it.")
+        elif kind == "accept":
+            lessons.accept(lesson_id, approver=USER)
+            st.session_state.ln_message = "✅ Accepted."
+        elif kind == "remove":
+            lessons.remove(lesson_id, approver=USER)
+            st.session_state.ln_message = "Removed."
+    except lessons.LessonError as e:
+        st.session_state.ln_message = f"❌ {e}"
+
+
+def knowledge_panel():
+    """Lessons learned on this server (shared by every case): review, add, remove."""
+    trusted = USER is None or auth.is_admin(USER)
+    active, waiting = lessons.active(), lessons.proposed()
+    with st.expander(f"🧠 Knowledge · {len(active)} lesson{'' if len(active) == 1 else 's'}"
+                     + (f" · {len(waiting)} proposed" if waiting else ""), expanded=False):
+        st.caption("Lessons apply to every case on this server. The agent proposes them; a person approves.")
+        for lesson in active:
+            st.caption(citations.md_literal(lessons.summary(lesson)) +
+                       f" · *{lesson.get('approved_by') or lesson.get('source')}*")
+            if trusted:
+                st.button("Remove", key=f"ln-del-{lesson['id']}", on_click=lesson_cb, args=("remove", lesson["id"]))
+        if waiting:
+            st.markdown("**Proposed, waiting for an admin**")
+            for lesson in waiting:
+                st.caption(citations.md_literal(lessons.summary(lesson)))
+                if trusted:
+                    c1, c2 = st.columns(2)
+                    c1.button("Accept", key=f"ln-ok-{lesson['id']}", on_click=lesson_cb, args=("accept", lesson["id"]))
+                    c2.button("Remove", key=f"ln-no-{lesson['id']}", on_click=lesson_cb, args=("remove", lesson["id"]))
+        if st.toggle("Add a lesson", key="ln_open"):
+            st.text_input("Topic", key="ln_topic", placeholder="Windows.Applications.Chrome.History")
+            st.text_area("Lesson", key="ln_text", height=80,
+                         placeholder="Returns 0 rows on disk images: it calls lookupSID (see the flow log).")
+            st.checkbox("This artifact does not work on disk images", key="ln_unusable")
+            st.button("Save lesson", on_click=lesson_cb, args=("add",))
+        if st.session_state.get("ln_message"):
+            st.caption(st.session_state.ln_message)
 
 
 def set_triage_editing(on: bool):
@@ -757,6 +808,8 @@ with st.sidebar:
             shown = req["details"].get("params") or req["details"].get("options")
             if req["kind"] in ("collect", "memory") and shown:
                 st.code(json.dumps(shown, indent=1), language="json")
+            if req["kind"] == "lesson":
+                st.caption("⚠️ Lessons apply to every case on this server. Approve only if it is general and true.")
             c1, c2 = st.columns(2)
             if c1.button("Approve", key=f"approve-{req['id']}"):
                 action = ("approve", req)
@@ -790,6 +843,8 @@ with st.sidebar:
                 st.session_state.chat_history.append(HumanMessage(
                     content=f"[Investigator] Retracted finding '{choice}': {reason.strip()}"))
                 st.rerun()
+
+    knowledge_panel()
 
     st.divider()
     st.subheader("📄 Report")

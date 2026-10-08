@@ -93,6 +93,9 @@ def _target_client() -> str:
 def _check_artifact(artifact: str):
     from copilot.knowledge import artifact_info
     info = artifact_info(artifact)
+    if info.get("learned_unusable"):
+        raise CollectionError(f"'{artifact}' does not work on disk images (lesson learned on this server: "
+                              f"{info['learned_unusable']}). Use another source.")
     if info.get("live_only"):
         raise CollectionError(
             f"'{artifact}' only works on a running system and returns nothing from a disk image. "

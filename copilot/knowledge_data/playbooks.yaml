@@ -6,7 +6,7 @@ initial_access:
   check:
     - 'Security 4625 bursts from one IP followed by 4624 from the same IP: brute force (RDP: LogonType 10, often preceded by 1149).'
     - 'RDP from external IPs: 4624 type 10, RemoteConnectionManager 1149, LocalSessionManager 21/22.'
-    - 'Downloads: browser history, Zone.Identifier streams (MFT shows ":Zone.Identifier"), files in Downloads.'
+    - 'Downloads, in this order: Prefetch shows WHICH browser ran just before the payload (IEXPLORE.EXE, MSEDGE.EXE, CHROME.EXE, FIREFOX.EXE); Windows.NTFS.ADSHunter on the payload''s current path gives its Zone.Identifier (HostUrl = download URL); then the history artifact of that browser if it works on images (see dfir_guide on the artifact). Internet Explorer history has no parser artifact on a standard server.'
     - Email attachments and Office files opened (LNK, JumpLists) shortly before the first malicious execution.
     - Exposed services (web servers) with new files in web roots (MFT/USN).
 

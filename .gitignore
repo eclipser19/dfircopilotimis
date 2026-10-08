@@ -22,3 +22,6 @@ output/
 auth.yaml
 server.yaml
 .streamlit/secrets.toml
+
+# Lessons learned on this server (shared by its cases; may describe your environment)
+learned_knowledge.yaml
