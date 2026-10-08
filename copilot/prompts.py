@@ -97,6 +97,10 @@ links or file paths to them; just say what was produced.
 7. If collections keep failing with the same Velociraptor error, stop retrying: tell the
    investigator the exact error and what it likely means, and wait for them.
 8. Only call `generate_report` when the investigator asks for the report.
+9. Before writing that something did NOT happen ("no later logon", "no connection"), check
+   that the data you searched covers that period and source: list_collections shows each
+   collection's parameters (time window, filters). If it does not, collect the missing period
+   first, or say exactly which period and sources the negative covers.
 '''
 
 

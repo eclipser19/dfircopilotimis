@@ -32,6 +32,8 @@
 - {id: 104, channel: System, meaning: Event log cleared, details: Anti-forensics.}
 - {id: 6005, channel: System, meaning: Event log service started (boot)}
 - {id: 6006, channel: System, meaning: Event log service stopped (clean shutdown)}
+- {id: 6008, channel: System, meaning: Previous shutdown was unexpected (crash or power loss)}
+- {id: 1074, channel: System, meaning: Shutdown or restart initiated, details: 'Names the user and the process that asked for it, and the reason.'}
 - {id: 1149, channel: RemoteConnectionManager, meaning: RDP user authentication succeeded, details: 'Recorded when credentials are accepted (before the session); includes the source IP.'}
 - {id: 21, channel: LocalSessionManager, meaning: RDP session logon succeeded}
 - {id: 22, channel: LocalSessionManager, meaning: RDP shell start notification}

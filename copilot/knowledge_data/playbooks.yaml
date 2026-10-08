@@ -47,6 +47,16 @@ indicator:
     - 'Memory image: analyze_memory strings with the value finds it anywhere in RAM, freed memory included, with the text around it (full URL, HTTP request); windows.memsearch with the value names the process that still holds it. netscan only lists connections still in memory, so a netscan miss alone proves little.'
     - 'In the answer, separate real negatives (searched, not there) from checks that could not run on this image (parser needs a live system): only the first kind is evidence of absence.'
 
+sessions:
+  question: When did someone log on or off, and did they come back?
+  triggers: ['log(ged)? ?(on|in|off|out)\b', 'logoff', 'logon', 'session', 'came back', 'come back', 'return(ed)?\b', '\bagain\b', 'reconnect', 'disconnect', 'restart', 'reboot', 'shut ?down']
+  check:
+    - 'A session is one Logon ID (TargetLogonId): 4624 (logon; LogonType 10 RDP, 2 console, 7 unlock/reconnect, 3 network) -> 4647 (user chose log off) -> 4634 (session ended). Pair them by Logon ID, not by time.'
+    - 'RDP (LocalSessionManager): 21 logon, 22 shell start, 24 disconnect, 25 reconnect, 23 logoff; Security 4779 disconnect / 4778 reconnect. A disconnect is not a logoff: the session and its programs (e.g. a backdoor) keep running until 23/4647.'
+    - 'Restarts: System 1074 (who asked for the restart and with which program), 6006 clean stop, 6008 unexpected shutdown, 6005 log service start = boot. A restart ends every session; logons after it are new sessions.'
+    - 'Did they come back: search the whole period AFTER the logoff up to the end of the evidence (the last records, or the memory capture time) for the same account and the same source IP: 4624 type 10 / 7, 1149, 21, 25, 4778. Check with list_collections that the collected logs cover that period; if not, collect it (e.g. Windows.EventLogs.RDPAuth, or EvtxHunter with these IDs and DateAfter = the logoff time).'
+    - 'Name the LAST interactive logoff (the latest 4647 / 4634 of type 2, 10 or 11, or 23) separately from the first one.'
+
 lateral_movement:
   question: Did the attacker move between machines?
   triggers: ['lateral', 'pivot', '\bmove[sd]? (to|between|from)', 'other (host|machine)s?', '\brdp\b', 'remote desktop', 'psexec']
