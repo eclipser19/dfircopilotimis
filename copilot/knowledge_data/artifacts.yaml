@@ -225,7 +225,8 @@
     - The journal rolls over; on busy systems it may only cover days.
     - 'Follow a file across renames by its MFT entry number (e.g. _FileMFTID / MFTId): search_iocs on the number finds every record of that file, including FILE_CREATE with its original name and RENAME_OLD_NAME with each previous name.'
     - 'To find files created next to it, also search the parent folder''s MFT entry (_ParentMFTID).'
-    - 'To see every file touched around an event (e.g. an archive created under another name), collect with only DateAfter/DateBefore a few minutes apart (recorded host time): a window of 60 minutes or less counts as a filter.' 
+    - 'To see every file touched around an event (e.g. an archive created under another name), collect with only DateAfter/DateBefore a few minutes apart (recorded host time): a window of 60 minutes or less counts as a filter.'
+    - 'Placeholder pattern: Explorer (Send to > Compressed folder), Office and many programs create the final name as a placeholder (FILE_CREATE on one MFT entry), build the content in another file and rename or move it over (RENAME_NEW_NAME with the same name on another entry) in the same second. Together that is one file creation at that time; say so, and look for the second entry''s RENAME_OLD_NAME (temporary name, often in a Temp folder) and the placeholder''s FILE_DELETE.' 
 
 - pattern: Windows.Forensics.Lnk*
   what: Shortcut (LNK) files
