@@ -9,7 +9,7 @@ os.environ.setdefault("DFIR_CASE_DIR", tempfile.mkdtemp(prefix="dfir_test_"))
 os.environ.setdefault("DFIR_CASE_FILE", os.path.join(os.path.dirname(__file__), "no_such_case.yaml"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from copilot import approvals, collection, outputs, tools  # noqa: E402
+from copilot import approvals, session  # noqa: E402
 from copilot.case_config import case_config  # noqa: E402
 from copilot.database import CaseDatabase  # noqa: E402
 
@@ -67,12 +67,29 @@ class FakeVQL:
         yield from self.rows.get(name, [])
 
 
+@pytest.fixture(autouse=True)
+def fresh_session(tmp_path, monkeypatch):
+    """Every test gets its own process session (the CLI's), opened on an empty case in tmp_path."""
+    monkeypatch.setattr(session, "_default", None)
+    monkeypatch.setattr(session, "PROVIDER", None)
+    monkeypatch.setenv("DFIR_CASE_DIR", str(tmp_path / "default_case"))
+    yield
+    if session._default is not None and session._default.db is not None:
+        session._default.db.conn.close()      # the config stays: monkeypatch restores attributes on it
+
+
+def use_db(monkeypatch, db):
+    """Makes db the current session's case database."""
+    current = session.default()
+    current.db.conn.close()
+    monkeypatch.setattr(current, "db", db)
+    return db
+
+
 @pytest.fixture
 def case(tmp_path, monkeypatch):
-    """Fresh database and a case pinned to CLIENT, patched into every module."""
-    db = CaseDatabase(str(tmp_path))
-    for module in (collection, tools, outputs, approvals):
-        monkeypatch.setattr(module, "case_db", db)
+    """Fresh database and a case pinned to CLIENT, as the session's active case."""
+    db = use_db(monkeypatch, CaseDatabase(str(tmp_path)))
     monkeypatch.setenv("DFIR_OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setattr(case_config, "data", {"velociraptor": {"client_id": CLIENT}})
     return db
@@ -90,8 +107,9 @@ def isolated_server_settings(tmp_path, monkeypatch):
     """No accounts and the default cloud endpoint, whatever the developer's shell or folder has."""
     from copilot import auth
     monkeypatch.setenv("DFIR_AUTH_FILE", str(tmp_path / "no_auth.yaml"))
+    monkeypatch.setenv("DFIR_SETTINGS", str(tmp_path / "no_server.yaml"))
     for var in ("DFIR_REQUIRE_LOGIN", "DFIR_LLM_BASE_URL", "DFIR_LLM_MODEL", "DFIR_LLM_API_KEY", "DFIR_LLM_LOCAL",
-                "OPENAI_API_KEY"):
+                "DFIR_LLM_TIMEOUT", "OPENAI_API_KEY"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setattr(auth, "_failures", {})
     monkeypatch.setattr(auth, "ITERATIONS", 1000)       # fast hashing in tests

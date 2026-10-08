@@ -45,10 +45,13 @@ pip install -r requirements.txt
      with `agent_collections: confirm` you approve each request (y/n).
    See `cases/szechuan/` for a complete example with an answer key.
 
-4. **LLM.** Any OpenAI-compatible endpoint: the default cloud one, or a model on your own
-   server (see [Offline / local model](#offline--local-model)). For a cloud endpoint, set
-   `DFIR_LLM_API_KEY` (or `OPENAI_API_KEY`) on the server, or let each investigator enter
-   their own key. Optional: `DFIR_LLM_MODEL`, `DFIR_LLM_BASE_URL`, `DFIR_LLM_TIMEOUT`.
+4. **Server settings and LLM.** Copy `server.example.yaml` to `server.yaml` and edit it: which
+   model to use (the cloud endpoint, or a local one, see
+   [Offline / local model](#offline--local-model)), its API key, and whether sign-in is
+   required. `server.yaml` is git-ignored. Environment variables still work and win over the
+   file (`DFIR_LLM_BASE_URL`, `DFIR_LLM_MODEL`, `DFIR_LLM_API_KEY` or `OPENAI_API_KEY`,
+   `DFIR_LLM_TIMEOUT`, `DFIR_REQUIRE_LOGIN`). Without a key on the server, each investigator
+   enters their own in the sidebar. The sidebar shows which model is in use.
 
 ## Cases
 
@@ -79,7 +82,9 @@ case_data/<case-id>/outputs/     reports and exports (unless output.dir is set)
   re-collecting (same client ID only; findings are not copied). Ask the agent or use the form.
 - `DFIR_CASES_DIR` and `DFIR_DATA_DIR` change the two root folders.
 
-The active case is process-wide: run one Streamlit app per investigator.
+Each browser session has its own active case, so several investigators can work at the same
+time; with sign-in, each sees only their own cases (see [Sign-in](#sign-in)). The CLI has
+one active case per process.
 
 ## Approvals
 
@@ -160,13 +165,15 @@ or an identity provider. Passwords are stored as salted PBKDF2-SHA256 hashes in 
 (`DFIR_AUTH_FILE`; git-ignored, readable only by its owner).
 
 ```bash
-python -m copilot.auth add alice      # asks for the password (12+ characters) twice
+python -m copilot.auth add alice --admin   # asks for the password (12+ characters) twice
+python -m copilot.auth add bob
+python -m copilot.auth admin bob on|off    # admins see every case
 python -m copilot.auth list
-python -m copilot.auth remove alice   # also signs out alice's open sessions
+python -m copilot.auth remove bob          # also signs out bob's open sessions
 ```
 
-- With no accounts, the app runs open and shows a warning. Set `DFIR_REQUIRE_LOGIN=1` on a
-  server so it refuses to run open.
+- With no accounts, the app runs open and shows a warning. Set `login.required: true` in
+  `server.yaml` (or `DFIR_REQUIRE_LOGIN=1`) on a server so it refuses to run open.
 - After 5 failed attempts an account is locked for 5 minutes.
 - Approvals and sidebar retractions record who made them, in the audit log and in the
   finding's retraction reason. In the CLI, this is the operating system user.
@@ -174,7 +181,24 @@ python -m copilot.auth remove alice   # also signs out alice's open sessions
 - Streamlit serves plain HTTP. Serve it over HTTPS (`server.sslCertFile` and
   `server.sslKeyFile` in `.streamlit/config.toml`, or a TLS reverse proxy), otherwise
   passwords cross the network in clear text.
-- One investigator at a time: the active case is shared by everyone signed in.
+
+**Cases belong to accounts.** Whoever creates a case owns it. The owner (or an admin) adds
+members under **👥 Access** in the sidebar; only an admin can change the owner. An
+investigator sees, opens, copies from and gets files of only the cases they own or are a
+member of. Admins see all. Cases made before sign-in have no owner and are visible to admins
+only until an admin assigns them. The agent cannot change access.
+
+- Someone without any case gets the New case form instead of the chat.
+- Members share the case's data, findings and files, but each keeps their own chat. On a
+  member's first visit they see the chat from before sign-in, if there was one.
+- Removing someone from a case takes effect on their next click.
+- The audit log records who was working for every entry (the report shows it as an
+  "Investigator" column).
+- With `DFIR_OUTPUT_DIR` set (a folder shared by all cases), each case writes into its own
+  sub-folder, e.g. `/uploads/<case-id>/`.
+- Two browser tabs of the same person are two sessions; each saves the chat when it is
+  used, so keep one tab per case.
+- The CLI (`python main.py`) runs on the server without sign-in and can open every case.
 
 ## Offline / local model
 
@@ -183,16 +207,20 @@ case data, the knowledge base and the reports are all local. Streamlit's usage s
 are switched off in `.streamlit/config.toml` (start the app from this folder). Set
 `browser.serverAddress` there as well, so Streamlit doesn't look up its public IP at startup.
 
-To use a model on your own hardware, point the copilot at any OpenAI-compatible server.
-Endpoints on localhost, a private IP address or a `.local` name need no API key
-(`DFIR_LLM_LOCAL=1` marks any other host as local):
+To use a model on your own hardware, point the copilot at any OpenAI-compatible server in
+`server.yaml`. Endpoints on localhost, a private IP address or a `.local` name need no API
+key (`local: true` marks any other host as local):
 
-```bash
-# Ollama
-export DFIR_LLM_BASE_URL=http://localhost:11434/v1
-export DFIR_LLM_MODEL=<model name>        # must support tool calling
-export DFIR_LLM_TIMEOUT=900               # local models can be slow
+```yaml
+llm:
+  base_url: http://localhost:11434/v1     # Ollama
+  model: <model name>                     # must support tool calling
+  timeout: 900                            # local models can be slow
 ```
+
+The same with environment variables, e.g. in PowerShell before `streamlit run app.py`:
+`$env:DFIR_LLM_BASE_URL = "http://localhost:11434/v1"`, `$env:DFIR_LLM_MODEL = "<model name>"`.
+To go back to the cloud model, remove those lines (or variables).
 
 - The agent works only through tool calls, so the model must support them. With vLLM,
   start the server with `--enable-auto-tool-choice` and the model's `--tool-call-parser`.

@@ -69,3 +69,26 @@ def test_cli(monkeypatch, capsys):
     assert auth.main(["frobnicate"]) == 1
     out = capsys.readouterr().out
     assert "User 'alice' saved" in out and "don't match" in out and "\nalice\n" in out and "Removed." in out
+
+
+def test_admin_role(monkeypatch, capsys):
+    auth.add_user("alice", PASSWORD, admin=True)
+    auth.add_user("bob", PASSWORD)
+    assert auth.is_admin("alice") and not auth.is_admin("bob") and not auth.is_admin("nobody")
+    auth.add_user("alice", PASSWORD + "!")                 # new password keeps the role
+    assert auth.is_admin("alice") and auth.verify("alice", PASSWORD + "!")
+    assert auth.main(["admin", "bob", "on"]) == 0 and auth.is_admin("bob")
+    assert auth.main(["admin", "bob", "off"]) == 0 and not auth.is_admin("bob")
+    assert auth.main(["admin", "nobody", "on"]) == 0 and "No such user" in capsys.readouterr().out
+    assert auth.main(["admin", "bob"]) == 1
+    auth.main(["list"])
+    assert "alice (admin)\nbob\n" in capsys.readouterr().out
+
+
+def test_cli_add_admin_and_hint_when_there_is_none(monkeypatch, capsys):
+    monkeypatch.setattr(auth.getpass, "getpass", lambda prompt="": PASSWORD)
+    assert auth.main(["add", "bob"]) == 0
+    assert "there is no admin yet" in capsys.readouterr().out
+    assert auth.main(["add", "alice", "--admin"]) == 0
+    out = capsys.readouterr().out
+    assert "as an admin" in out and "no admin yet" not in out and auth.is_admin("alice")

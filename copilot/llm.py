@@ -2,17 +2,20 @@
 The chat model. Any OpenAI-compatible endpoint works: Azure OpenAI / OpenAI, or a local
 server (Ollama, vLLM, LM Studio, llama.cpp server) for fully offline use.
 
-    DFIR_LLM_BASE_URL   endpoint, e.g. http://localhost:11434/v1 for Ollama
-    DFIR_LLM_MODEL      model name on that endpoint (it must support tool calling)
-    DFIR_LLM_API_KEY    key (OPENAI_API_KEY also works); local endpoints need none
-    DFIR_LLM_LOCAL=1    treat the endpoint as local even if it isn't on a private address
-    DFIR_LLM_TIMEOUT    seconds per call (default 300; local models can be slow)
+Set in server.yaml under `llm:` (see copilot/settings.py), or with environment variables:
+    base_url  / DFIR_LLM_BASE_URL   endpoint, e.g. http://localhost:11434/v1 for Ollama
+    model     / DFIR_LLM_MODEL      model name on that endpoint (it must support tool calling)
+    api_key   / DFIR_LLM_API_KEY    key (OPENAI_API_KEY also works); local endpoints need none
+    local     / DFIR_LLM_LOCAL      treat the endpoint as local even if it isn't on a private address
+    timeout   / DFIR_LLM_TIMEOUT    seconds per call (default 300; local models can be slow)
 """
 import ipaddress
 import os
 from urllib.parse import urlparse
 
 from langchain_openai import ChatOpenAI
+
+from copilot import settings
 
 # Defaults match the original deployment.
 DEFAULT_MODEL = "gpt-5.6-luna"
@@ -21,16 +24,16 @@ NO_KEY = "not-needed"  # OpenAI-compatible local servers ignore the key, but the
 
 
 def base_url() -> str:
-    return os.environ.get("DFIR_LLM_BASE_URL", DEFAULT_BASE_URL)
+    return str(settings.get("llm", "base_url", "DFIR_LLM_BASE_URL", DEFAULT_BASE_URL))
 
 
 def model_name() -> str:
-    return os.environ.get("DFIR_LLM_MODEL", DEFAULT_MODEL)
+    return str(settings.get("llm", "model", "DFIR_LLM_MODEL", DEFAULT_MODEL))
 
 
 def is_local() -> bool:
     """A model on this machine or the private network: no API key, no internet needed."""
-    if os.environ.get("DFIR_LLM_LOCAL", "").lower() in ("1", "true", "yes"):
+    if settings.flag("llm", "local", "DFIR_LLM_LOCAL"):
         return True
     host = urlparse(base_url()).hostname or ""
     if host == "localhost" or host.endswith(".localhost") or host.endswith(".local"):
@@ -44,7 +47,8 @@ def is_local() -> bool:
 
 def server_key() -> str:
     """A key configured on the server (never shown in the UI)."""
-    return os.environ.get("DFIR_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY") or ""
+    return (os.environ.get("DFIR_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
+            or str(settings.get("llm", "api_key", default="")))
 
 
 def needs_user_key() -> bool:
@@ -59,5 +63,5 @@ def make_llm(api_key: str = None) -> ChatOpenAI:
         temperature=0,
         api_key=api_key or server_key() or (NO_KEY if is_local() else None),
         base_url=base_url(),
-        timeout=float(os.environ.get("DFIR_LLM_TIMEOUT", "300")),
+        timeout=float(settings.get("llm", "timeout", "DFIR_LLM_TIMEOUT", 300)),
     )

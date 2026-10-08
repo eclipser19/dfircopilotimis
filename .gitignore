@@ -18,6 +18,7 @@ case_data/
 reports/
 output/
 
-# Accounts (password hashes) and Streamlit secrets — server-local, never commit
+# Accounts (password hashes), server settings (may hold an API key) and Streamlit secrets — never commit
 auth.yaml
+server.yaml
 .streamlit/secrets.toml

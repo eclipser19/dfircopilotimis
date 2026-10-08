@@ -735,10 +735,6 @@ def update_case(client_id: Optional[str] = None, start_time: Optional[str] = Non
     return f"{result} Case context now: {case_config.build_system_context()}"
 
 
-# Set by the Streamlit sidebar for the session; otherwise the case file decides.
-REPORT_FORMATS = None
-
-
 @tool
 def generate_report(executive_summary: str, recommendations: str, correlations: Optional[str] = None) -> str:
     """
@@ -767,7 +763,9 @@ def generate_report(executive_summary: str, recommendations: str, correlations: 
     report_with_slots, charts = build_report(case_db, case_config, executive_summary, recommendations,
                                              correlations, with_charts=True)
     report_md = re.sub(r"\n\[\[chart:[a-z_]+\]\]\n", "\n", report_with_slots)  # charts are HTML-only
-    wanted = [f for f in (REPORT_FORMATS or []) if f in ("html", "md")] or case_config.report_formats
+    from copilot import session
+    # The Streamlit sidebar sets the formats per session; otherwise the case file decides.
+    wanted = [f for f in (session.current().report_formats or []) if f in ("html", "md")] or case_config.report_formats
     stem = f"dfir_report_{case_config.case_name}"
     written = []
     base = outputs.new_path(stem, "md")[:-3]

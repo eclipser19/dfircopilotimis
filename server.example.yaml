@@ -1,0 +1,22 @@
+# DFIR Copilot server settings. Copy to server.yaml (git-ignored) and edit.
+# Environment variables, when set, win over this file (DFIR_LLM_MODEL etc.).
+# The app re-reads the file when it changes: reload the page after editing.
+
+llm:
+  # --- Cloud model (the default) ---
+  base_url: https://tag-news-resource.services.ai.azure.com/openai/v1
+  model: gpt-5.6-luna
+  # API key for the cloud endpoint. Leave empty to have each investigator enter their own
+  # in the sidebar. Never commit a filled-in server.yaml.
+  api_key: ""
+
+  # --- Local model instead (no key, no internet) ---
+  # base_url: http://localhost:11434/v1     # Ollama; vLLM / LM Studio / llama.cpp work too
+  # model: <model name>                     # must support tool calling
+  # timeout: 900                            # seconds per call; local models can be slow
+  # local: true                             # only needed for a host that isn't localhost,
+  #                                         # a private IP or a .local name
+
+login:
+  # Refuse to run without accounts (python -m copilot.auth add <username> --admin).
+  required: true

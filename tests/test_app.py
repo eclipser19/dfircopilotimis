@@ -7,11 +7,10 @@ from langchain_core.messages import AIMessage
 pytest.importorskip("streamlit")
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
-import copilot.database as database  # noqa: E402
-from copilot import approvals, cases, collection, outputs, tools  # noqa: E402
+from copilot import approvals, cases, collection, session  # noqa: E402
 from copilot.case_config import case_config  # noqa: E402
 from copilot.database import CaseDatabase  # noqa: E402
-from conftest import CLIENT, FakeVQL  # noqa: E402
+from conftest import CLIENT, FakeVQL, use_db  # noqa: E402
 
 APP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "app.py")
 
@@ -28,17 +27,21 @@ class ScriptedLLM:
 
 @pytest.fixture
 def app_env(tmp_path, monkeypatch):
-    db = CaseDatabase(str(tmp_path))
-    for module in (database, collection, tools, outputs, cases, approvals):
-        monkeypatch.setattr(module, "case_db", db)
+    """The browser session works on the test's session (the process one), so tests can set it up."""
+    db = use_db(monkeypatch, CaseDatabase(str(tmp_path)))
     monkeypatch.setenv("DFIR_OUTPUT_DIR", str(tmp_path / "outputs"))
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(case_config, "data", {
         "velociraptor": {"client_id": CLIENT},
         "collect": ["Generic.Client.Info"],
         "collection": {"agent_collections": "confirm"}})
+    shared = session.default()
+
+    def as_user(user=None):
+        shared.user = user
+        return shared
+
+    monkeypatch.setattr(cases, "new_session", as_user)
     monkeypatch.setattr(collection, "get_vql", lambda: FakeVQL())
-    monkeypatch.setattr(tools, "REPORT_FORMATS", None)      # the app sets it process-wide
     monkeypatch.setattr(approvals, "ASK", None)
     monkeypatch.setattr(collection, "time", __import__("types").SimpleNamespace(
         monotonic=lambda: 0, sleep=lambda s: None))
@@ -114,7 +117,7 @@ def test_retract_finding_from_the_sidebar(app_env):
 def test_sidebar_report_format_reaches_the_tool(app_env):
     at = AppTest.from_file(APP, default_timeout=30).run()
     at.multiselect(key="report_formats").select("md").run()
-    assert tools.REPORT_FORMATS == ["html", "md"]
+    assert session.default().report_formats == ["html", "md"]
 
 
 def test_chat_command_switches_case_without_llm(app_env, tmp_path, monkeypatch):
@@ -260,7 +263,7 @@ def test_server_api_key_never_reaches_the_browser(app_env, monkeypatch):
     at = AppTest.from_file(APP, default_timeout=30).run()
     assert not at.exception
     assert not [w for w in at.text_input if w.value == "sk-SECRET-123"]       # no pre-filled field
-    assert "Using the server's API key" in _texts(at)
+    assert "using the server's API key" in _texts(at)
     assert "llm_with_tools" in at.session_state                              # and it is used
 
 
@@ -318,7 +321,7 @@ def _sign_in(at, username, password):
 
 def test_sign_in_gates_the_whole_app(app_env):
     from copilot import auth
-    auth.add_user("alice", "correct horse battery")
+    auth.add_user("alice", "correct horse battery", admin=True)
     at = AppTest.from_file(APP, default_timeout=30).run()
     assert not at.exception
     assert "Interactive Investigation" not in [t.value for t in at.title]   # nothing of the case is shown
@@ -335,7 +338,7 @@ def test_sign_in_gates_the_whole_app(app_env):
 
 def test_locked_account_is_told_so(app_env):
     from copilot import auth
-    auth.add_user("alice", "correct horse battery")
+    auth.add_user("alice", "correct horse battery", admin=True)
     at = AppTest.from_file(APP, default_timeout=30).run()
     for _ in range(auth.MAX_FAILURES):
         _sign_in(at, "alice", "wrong password!")
@@ -346,7 +349,7 @@ def test_locked_account_is_told_so(app_env):
 
 def test_removed_account_is_signed_out(app_env):
     from copilot import auth
-    auth.add_user("alice", "correct horse battery")
+    auth.add_user("alice", "correct horse battery", admin=True)
     auth.add_user("bob", "another long password")
     at = _sign_in(AppTest.from_file(APP, default_timeout=30).run(), "alice", "correct horse battery")
     assert "Interactive Investigation" in [t.value for t in at.title]
@@ -369,7 +372,7 @@ def test_open_app_warns_that_anyone_can_use_it(app_env):
 
 def test_approvals_record_the_signed_in_investigator(app_env):
     from copilot import auth
-    auth.add_user("alice", "correct horse battery")
+    auth.add_user("alice", "correct horse battery", admin=True)
     app_env.ingest_artifact_results([{"EventTime": "2020-09-19T03:42:42Z", "Message": "coreupdater"}],
                                     "S", "D", "C.1")
     eid = app_env.search_events("coreupdater")["records"][0]["evidence_id"]
@@ -410,3 +413,80 @@ def test_cloud_endpoint_without_server_key_asks_for_one(app_env):
     at = AppTest.from_file(APP, default_timeout=30).run()
     assert [w for w in at.text_input if w.label == "API key for the LLM endpoint"]
     assert "llm_with_tools" not in at.session_state
+
+
+# ---- Several investigators, each with their own browser session and cases ----
+
+@pytest.fixture
+def team_app(tmp_path, monkeypatch):
+    """Real per-browser sessions: alice (admin), bob and carol each own a case; dave has none."""
+    from copilot import auth
+    monkeypatch.setenv("DFIR_CASES_DIR", str(tmp_path / "cases"))
+    monkeypatch.setenv("DFIR_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("DFIR_CASE_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(collection, "get_vql", lambda: FakeVQL())
+    for user in ("alice", "bob", "carol", "dave"):
+        auth.add_user(user, "correct horse battery", admin=(user == "alice"))
+    for user, case_id in (("bob", "bob-case"), ("carol", "carol-case")):
+        monkeypatch.setattr(session, "PROVIDER", lambda u=user: session.Session(u))
+        cases.create(case_id, f"{user.title()}'s case")
+    monkeypatch.setattr(session, "PROVIDER", None)
+    return tmp_path
+
+
+def _browser(user):
+    return _sign_in(AppTest.from_file(APP, default_timeout=30).run(), user, "correct horse battery")
+
+
+def _case_choices(at):
+    return next(s for s in at.selectbox if s.label == "Active case").options
+
+
+def test_each_investigator_sees_only_their_cases(team_app):
+    bob, carol, alice = _browser("bob"), _browser("carol"), _browser("alice")
+    assert not bob.exception and not carol.exception
+    assert [o.split(" — ")[0] for o in _case_choices(bob)] == ["bob-case"]
+    assert [o.split(" — ")[0] for o in _case_choices(carol)] == ["carol-case"]
+    assert {o.split(" — ")[0] for o in _case_choices(alice)} == {"bob-case", "carol-case"}
+    bob.chat_input[0].set_value("/case carol-case").run()
+    assert "No case 'carol-case'" in _texts(bob)
+    assert "Bob's case" in _texts(bob)
+
+
+def test_switching_in_one_browser_leaves_the_others_alone(team_app):
+    bob, alice = _browser("bob"), _browser("alice")
+    alice.chat_input[0].set_value("/case carol-case").run()
+    alice.chat_input[0].set_value("/case bob-case").run()
+    alice.chat_input[0].set_value("/case carol-case").run()
+    assert "Carol's case" in [c.value for c in alice.caption if "Case `" in c.value][0]
+    bob.run()
+    assert "Bob's case" in [c.value for c in bob.caption if "Case `" in c.value][0]
+
+
+def test_investigator_without_cases_can_create_one(team_app):
+    dave = _browser("dave")
+    assert not dave.exception
+    assert any("You have no case yet" in i.value for i in dave.info)
+    assert not dave.chat_input
+    dave.text_input(key="nc_id").input("dave-case")
+    dave.text_input(key="nc_name").input("Dave's case")
+    next(b for b in dave.button if b.label == "Create and open").click().run()
+    assert not dave.exception
+    assert "Dave's case" in _texts(dave) and dave.chat_input
+    import yaml
+    data = yaml.safe_load(open(team_app / "cases" / "dave-case" / "case.yaml"))
+    assert data["access"]["owner"] == "dave"
+
+
+def test_owner_shares_a_case_from_the_sidebar(team_app):
+    bob = _browser("bob")
+    bob.multiselect(key="ac_bob-case_members").select("carol")
+    next(b for b in bob.button if b.label == "Save access").click().run()
+    assert not bob.exception and "Access saved" in _texts(bob)
+    carol = _browser("carol")
+    assert {o.split(" — ")[0] for o in _case_choices(carol)} == {"bob-case", "carol-case"}
+    carol.chat_input[0].set_value("/case bob-case").run()
+    assert "Bob's case" in _texts(carol)
+    assert not [m for m in carol.multiselect if m.key == "ac_bob-case_members"]   # carol can't re-share it
+    assert "The owner or an admin can change this" in _texts(carol)

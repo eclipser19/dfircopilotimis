@@ -2,7 +2,7 @@ import csv
 import json
 import os
 
-from copilot import outputs, tools
+from copilot import outputs, session, tools
 from copilot.case_config import case_config
 from copilot.report_html import to_html
 from conftest import CLIENT
@@ -42,7 +42,7 @@ def test_report_formats_from_case_file(case, monkeypatch):
 def test_report_format_set_by_the_ui_not_the_agent(case, monkeypatch):
     _seed(case, monkeypatch)
     assert "formats" not in tools.generate_report.args
-    monkeypatch.setattr(tools, "REPORT_FORMATS", ["md"])
+    monkeypatch.setattr(session.default(), "report_formats", ["md"])
     tools.generate_report.invoke({"executive_summary": "S", "recommendations": "- R"})
     assert _report_exts() == [".md"]
 

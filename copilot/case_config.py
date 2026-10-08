@@ -278,5 +278,6 @@ class CaseConfig:
         return "\n".join(lines)
 
 
-# Global instance
-case_config = CaseConfig()
+# The active case of the current session (see copilot/session.py).
+from copilot.session import CaseView  # noqa: E402
+case_config = CaseView("config")

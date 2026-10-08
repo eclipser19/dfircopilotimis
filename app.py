@@ -5,7 +5,9 @@ import re
 import streamlit as st
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from copilot import approvals, auth, cases, collection, commands, conversation, outputs, tools as copilot_tools
+from streamlit.runtime.scriptrunner import get_script_run_ctx
+
+from copilot import approvals, auth, cases, collection, commands, conversation, outputs, session
 from copilot import llm as llm_config
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
@@ -30,8 +32,8 @@ def login_gate():
         return
     st.title("🕵️ DFIR Copilot")
     if not auth.configured():
-        st.error("Sign-in is required (DFIR_REQUIRE_LOGIN) but no accounts exist yet. On the server, run "
-                 "`python -m copilot.auth add <username>`.")
+        st.error("Sign-in is required (login.required) but no accounts exist yet. On the server, run "
+                 "`python -m copilot.auth add <username> --admin`.")
         st.stop()
     with st.form("login"):
         username = st.text_input("Username")
@@ -49,6 +51,25 @@ def login_gate():
 
 
 login_gate()
+USER = st.session_state.get("user")      # None when the app runs without accounts
+
+
+# ==========================================
+# This browser session's own active case (see copilot/session.py)
+# ==========================================
+def _browser_session():
+    """The copilot session of the browser session running this code (None outside a browser run)."""
+    if get_script_run_ctx(suppress_warning=True) is None:
+        return None
+    current = st.session_state.get("dfir")
+    if current is None:
+        raise session.NoCase("No case is open in this browser session.")
+    return current
+
+
+session.PROVIDER = _browser_session
+if "dfir" not in st.session_state:
+    st.session_state.dfir = cases.new_session(USER)
 
 MAX_DOWNLOAD_MB = 50  # larger files are listed with their path instead of loaded into the page
 MIME = {"html": "text/html", "md": "text/markdown", "csv": "text/csv", "json": "application/json",
@@ -67,7 +88,7 @@ if "usage" not in st.session_state:
 def open_case_chat(note: str = ""):
     """Shows the active case's saved conversation (or a new one) and gives the agent its memory back."""
     case_id = cases.current_id()
-    messages, history = conversation.load(case_id, build_system_prompt(case_config))
+    messages, history = conversation.load(case_id, build_system_prompt(case_config), user=USER)
     st.session_state.case_id = case_id
     st.session_state.messages = messages      # [{role, content, log: [str], files: [output rows]}]
     st.session_state.chat_history = history
@@ -79,23 +100,8 @@ def open_case_chat(note: str = ""):
 def persist():
     """Saves this session's conversation to the case it belongs to."""
     if "case_id" in st.session_state:
-        conversation.save(st.session_state.case_id, st.session_state.messages, st.session_state.chat_history)
-
-
-# Every run: save the conversation to its own case, then follow the active case if it changed
-# (sidebar, /case, the agent, the New case form, or another tab).
-if "case_id" not in st.session_state:
-    open_case_chat()
-else:
-    persist()
-    if st.session_state.case_id != cases.current_id():
-        previous = st.session_state.case_id
-        restored = bool(conversation.load(cases.current_id(), "")[0])
-        open_case_chat((f"📁 **Back in case `{cases.current_id()}` — {case_config.case_name}.** Conversation restored."
-                        if restored else
-                        f"📁 **Now in case `{cases.current_id()}` — {case_config.case_name}.** New conversation.")
-                       + f" (`{previous}` was saved.)" + st.session_state.pop("case_note", ""))
-cases.consume_switch()
+        conversation.save(st.session_state.case_id, st.session_state.messages, st.session_state.chat_history,
+                          user=USER)
 
 
 def queue_request(request: dict):
@@ -174,6 +180,17 @@ def create_case_cb():
         st.session_state.case_note = f" Collected data copied from `{copy_from}`."
 
 
+def save_access_cb(case_id: str):
+    p = f"ac_{case_id}_"
+    try:
+        cases.set_access(case_id, members=st.session_state.get(p + "members", []),
+                         owner=st.session_state.get(p + "owner") if auth.is_admin(USER) else None)
+    except cases.CaseError as e:
+        st.session_state.ac_message = f"❌ {e}"
+        return
+    st.session_state.ac_message = "✅ Access saved."
+
+
 def save_settings_cb(case_id: str):
     p = f"cs_{case_id}_"
     try:
@@ -189,7 +206,60 @@ def save_settings_cb(case_id: str):
     st.session_state.cs_message = "✅ Saved. The agent now works with the new settings."
 
 
-# This app is meant for one investigator at a time: the approval hook and the active case are process-wide.
+def new_case_form():
+    st.caption("Fields marked * are required. The client ID can be added later, but is needed to collect.")
+    st.text_input("Case ID *", placeholder="acme-ws42", key="nc_id", help="Folder name: letters, digits, - and _")
+    st.text_input("Name *", placeholder="ACME workstation 42", key="nc_name")
+    st.text_input("Velociraptor client ID", placeholder="C.1234abcd...", key="nc_client")
+    c1, c2 = st.columns(2)
+    c1.text_input("Window start (UTC)", placeholder="2024-01-15T00:00:00Z", key="nc_start")
+    c2.text_input("Window end (UTC)", placeholder="2024-01-17T00:00:00Z", key="nc_end")
+    st.number_input("Host clock ahead of UTC (minutes)", value=0, step=15, key="nc_offset")
+    st.text_area("What happened / what to find out", key="nc_desc")
+    ioc_fields("nc_")
+    sources = ["(none)"] + [c["id"] for c in cases.list_cases() if c["has_data"]]
+    st.selectbox("Copy collected data from", sources, key="nc_copy",
+                 help="Only cases on the same evidence client. Findings are not copied.")
+    st.button("Create and open", type="primary", on_click=create_case_cb)
+    if st.session_state.get("nc_error"):
+        st.error(st.session_state.nc_error)
+
+
+def account_box():
+    if USER:
+        c1, c2 = st.columns([3, 2])
+        c1.caption(f"👤 Signed in as **{USER}**" + (" (admin)" if auth.is_admin(USER) else ""))
+        if c2.button("Sign out"):
+            persist()
+            st.session_state.clear()      # drops this browser's case session (and its connection)
+            st.rerun()
+    else:
+        st.warning("No sign-in configured: anyone who can reach this page can use it. "
+                   "Add an account with `python -m copilot.auth add <username> --admin`.")
+
+
+def llm_box():
+    # A server-side key is used directly and never sent to the browser (a pre-filled password
+    # field is readable by every visitor). A local model needs no key at all. Only a cloud
+    # endpoint without a server key asks each investigator for theirs.
+    user_key = ""
+    if llm_config.needs_user_key():
+        user_key = st.text_input("API key for the LLM endpoint", type="password")
+    elif llm_config.is_local():
+        st.caption(f"🖥️ Local model `{llm_config.model_name()}` at {llm_config.base_url()}")
+    else:
+        st.caption(f"🔑 Model `{llm_config.model_name()}`, using the server's API key.")
+    key_id = user_key or ("" if llm_config.needs_user_key() else "server")
+    if key_id and ("llm_with_tools" not in st.session_state or st.session_state.get("current_api_key") != key_id):
+        # Kept in this browser session only; never written to os.environ.
+        st.session_state.current_api_key = key_id
+        llm = llm_config.make_llm(user_key or None)
+        st.session_state.llm = llm
+        st.session_state.llm_with_tools = llm.bind_tools(tools)
+        st.session_state.finalizer = llm.bind_tools(tools, tool_choice="none")
+
+
+# The hook is process-wide, but queue_request stores each request in the session that made it.
 approvals.ASK = queue_request
 
 
@@ -303,14 +373,14 @@ def resolve_request(request: dict, approved: bool):
     st.session_state.pending = [r for r in st.session_state.pending if r["id"] != request["id"]]
     label = approvals.describe(request)
     if not approved:
-        approvals.resolve(request, False, actor=st.session_state.get("user"))
+        approvals.resolve(request, False, actor=USER)
         st.session_state.chat_history.append(HumanMessage(content=f"[Investigator] Declined: {label}."))
         st.session_state.messages.append({"role": "assistant", "content": f"❌ Declined — {label}"})
         return
     with st.chat_message("assistant"):
         with st.spinner(f"{label}..."):
             try:
-                result = approvals.resolve(request, True, actor=st.session_state.get("user"))
+                result = approvals.resolve(request, True, actor=USER)
             except (approvals.ApprovalError, collection.CollectionError, cases.CaseError) as e:
                 result = f"Failed: {e}"
     shown = f"```\n{status_line(result)}\n```" if isinstance(result, dict) else str(result)
@@ -324,41 +394,55 @@ def resolve_request(request: dict, approved: bool):
 
 
 # ==========================================
+# Every run: follow this session's active case
+# ==========================================
+lost = cases.refresh()          # reloads settings changed elsewhere; closes a case this user lost access to
+if lost:
+    st.session_state.pop("case_id", None)        # nothing more is saved to a case they can't open
+    remaining = cases.list_cases()
+    if remaining:
+        cases.switch(remaining[0]["id"])
+    st.session_state.case_note = f" ⚠️ {lost}"
+
+if not st.session_state.dfir.has_case:
+    # No case this user may open: offer to create one (or wait to be added to one).
+    with st.sidebar:
+        st.title("🕵️ DFIR Copilot")
+        account_box()
+        llm_box()
+    st.title("Interactive Investigation")
+    if lost:
+        st.warning(lost)
+    st.info("You have no case yet. Create one here, or ask a case owner or an admin to add you to theirs.")
+    with st.container(border=True):
+        new_case_form()
+    st.stop()
+
+# Save the conversation to its own case, then follow the active case if it changed
+# (sidebar, /case, the agent, the New case form).
+if "case_id" not in st.session_state:
+    open_case_chat(st.session_state.pop("case_note", "").strip())
+else:
+    persist()
+    if st.session_state.case_id != cases.current_id():
+        previous = st.session_state.case_id
+        restored = bool(conversation.load(cases.current_id(), "", user=USER)[0])
+        open_case_chat((f"📁 **Back in case `{cases.current_id()}` — {case_config.case_name}.** Conversation restored."
+                        if restored else
+                        f"📁 **Now in case `{cases.current_id()}` — {case_config.case_name}.** New conversation.")
+                       + f" (`{previous}` was saved.)" + st.session_state.pop("case_note", ""))
+cases.consume_switch()
+if cases.consume_settings_change():
+    st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
+
+# ==========================================
 # Sidebar
 # ==========================================
 action = None
 with st.sidebar:
     st.title("🕵️ DFIR Copilot")
-
-    if st.session_state.get("user"):
-        c1, c2 = st.columns([3, 2])
-        c1.caption(f"👤 Signed in as **{st.session_state.user}**")
-        if c2.button("Sign out"):
-            persist()
-            st.session_state.clear()
-            st.rerun()
-    else:
-        st.warning("No sign-in configured: anyone who can reach this page can use it. "
-                   "Add an account with `python -m copilot.auth add <username>`.")
-
-    # A server-side key is used directly and never sent to the browser (a pre-filled password
-    # field is readable by every visitor). A local model needs no key at all. Only a cloud
-    # endpoint without a server key asks each investigator for theirs.
-    user_key = ""
-    if llm_config.needs_user_key():
-        user_key = st.text_input("API key for the LLM endpoint", type="password")
-    elif llm_config.is_local():
-        st.caption(f"🖥️ Local model `{llm_config.model_name()}` at {llm_config.base_url()}")
-    else:
-        st.caption("🔑 Using the server's API key.")
-    key_id = user_key or ("" if llm_config.needs_user_key() else "server")
-    if key_id and ("llm_with_tools" not in st.session_state or st.session_state.get("current_api_key") != key_id):
-        # Kept in this browser session only; never written to os.environ.
-        st.session_state.current_api_key = key_id
-        llm = llm_config.make_llm(user_key or None)
-        st.session_state.llm = llm
-        st.session_state.llm_with_tools = llm.bind_tools(tools)
-        st.session_state.finalizer = llm.bind_tools(tools, tool_choice="none")
+    account_box()
+    llm_box()
 
     st.divider()
     st.subheader("📁 Case")
@@ -372,23 +456,7 @@ with st.sidebar:
         cases.switch(picked)
         after_possible_switch()
     with st.expander("➕ New case", expanded=False):
-        st.caption("Fields marked * are required. The client ID can be added later, but is needed to collect.")
-        st.text_input("Case ID *", placeholder="acme-ws42", key="nc_id",
-                      help="Folder name: letters, digits, - and _")
-        st.text_input("Name *", placeholder="ACME workstation 42", key="nc_name")
-        st.text_input("Velociraptor client ID", placeholder="C.1234abcd...", key="nc_client")
-        c1, c2 = st.columns(2)
-        c1.text_input("Window start (UTC)", placeholder="2024-01-15T00:00:00Z", key="nc_start")
-        c2.text_input("Window end (UTC)", placeholder="2024-01-17T00:00:00Z", key="nc_end")
-        st.number_input("Host clock ahead of UTC (minutes)", value=0, step=15, key="nc_offset")
-        st.text_area("What happened / what to find out", key="nc_desc")
-        ioc_fields("nc_")
-        sources = ["(none)"] + [c["id"] for c in case_rows if c["has_data"]]
-        st.selectbox("Copy collected data from", sources, key="nc_copy",
-                     help="Only cases on the same evidence client. Findings are not copied.")
-        st.button("Create and open", type="primary", on_click=create_case_cb)
-        if st.session_state.get("nc_error"):
-            st.error(st.session_state.nc_error)
+        new_case_form()
 
     if cases.current_id() != cases.LEGACY_ID:
         with st.expander("⚙️ Case settings", expanded=False):
@@ -406,9 +474,29 @@ with st.sidebar:
             st.button("Save settings", on_click=save_settings_cb, args=(cid,))
             if st.session_state.get("cs_message"):
                 st.caption(st.session_state.cs_message)
+    if USER:
+        here = next((c for c in case_rows if c["id"] == current), {"owner": "", "members": []})
+        with st.expander("👥 Access", expanded=False):
+            st.caption(f"Owner: {here['owner'] or 'nobody (admins only)'}")
+            p = f"ac_{current}_"
+            if cases.can_manage(current):
+                accounts = auth.usernames()
+                if auth.is_admin(USER):
+                    owners = [""] + accounts
+                    st.selectbox("Owner", owners, index=owners.index(here["owner"]) if here["owner"] in owners else 0,
+                                 format_func=lambda u: u or "(nobody: admins only)", key=p + "owner")
+                st.multiselect("Members", [u for u in accounts if u != here["owner"]],
+                               default=[m for m in here["members"] if m in accounts], key=p + "members",
+                               help="They can open this case, its data, findings and files. "
+                                    "Each keeps their own chat.")
+                st.button("Save access", on_click=save_access_cb, args=(current,))
+            else:
+                st.caption(f"Members: {', '.join(here['members']) or 'none'}. The owner or an admin can change this.")
+            if st.session_state.get("ac_message"):
+                st.caption(st.session_state.ac_message)
     if st.button("🧹 New conversation", help="Clears this case's chat and the agent's memory of it. "
                                           "Collected data and findings stay."):
-        conversation.clear(cases.current_id())
+        conversation.clear(cases.current_id(), user=USER)
         open_case_chat()
         st.rerun()
     st.text(f"{case_config.case_name}\nAnalyst: {case_config.analyst}")
@@ -461,8 +549,7 @@ with st.sidebar:
             choice = st.selectbox("Finding", list(labels), key="retract_choice")
             reason = st.text_input("Reason (e.g. the contradicting evidence)", key="retract_reason")
             if st.button("Retract", disabled=not reason.strip()):
-                who = st.session_state.get("user")
-                case_db.retract_finding(labels[choice], reason.strip() + (f" (retracted by {who})" if who else ""))
+                case_db.retract_finding(labels[choice], reason.strip() + (f" (retracted by {USER})" if USER else ""))
                 st.session_state.chat_history.append(HumanMessage(
                     content=f"[Investigator] Retracted finding '{choice}': {reason.strip()}"))
                 st.rerun()
@@ -470,7 +557,7 @@ with st.sidebar:
     st.subheader("📄 Report")
     chosen = st.multiselect("Report formats", ["html", "md"], default=case_config.report_formats,
                             key="report_formats", help="Formats cost no extra LLM tokens.")
-    copilot_tools.REPORT_FORMATS = chosen or None
+    st.session_state.dfir.report_formats = chosen or None
 
     files = outputs.produced_since(0)
     if files:

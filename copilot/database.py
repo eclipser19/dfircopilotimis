@@ -41,8 +41,14 @@ class CaseDatabase:
             self.conn.close()
         self.case_dir = case_dir
         self.db_path = os.path.join(case_dir, "case.db")
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        # Several sessions can use the same case, each with its own connection: wait for a
+        # writer instead of failing, and let readers work alongside it (WAL).
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=60)
         self.conn.row_factory = sqlite3.Row
+        try:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            pass  # e.g. a file system without shared memory: keep the default journal
         self._check_schema()
         self._init_tables()
 
@@ -138,6 +144,9 @@ class CaseDatabase:
         if "status" not in cols:
             cur.execute("ALTER TABLE findings ADD COLUMN status TEXT DEFAULT 'active'")
             cur.execute("ALTER TABLE findings ADD COLUMN status_reason TEXT")
+        # Added with sign-in: who was working when the entry was written.
+        if "actor" not in {r[1] for r in cur.execute("PRAGMA table_info(audit_log)")}:
+            cur.execute("ALTER TABLE audit_log ADD COLUMN actor TEXT")
         # Trigram FTS gives case-insensitive substring search; needs SQLite >= 3.34.
         try:
             cur.execute("CREATE VIRTUAL TABLE IF NOT EXISTS records_fts "
@@ -392,12 +401,14 @@ class CaseDatabase:
 
     # --- Audit Log ---
     def log_query(self, tool_name: str, query: str, row_count: int, artifact: str = None):
+        from copilot import session
         log_id = str(uuid.uuid4())[:12]
         now = datetime.now(timezone.utc).isoformat()
         cur = self.conn.cursor()
         cur.execute(
-            "INSERT INTO audit_log VALUES (?,?,?,?,?,?)",
-            (log_id, now, tool_name, query, row_count, artifact)
+            "INSERT INTO audit_log (log_id, timestamp_utc, tool_name, query, row_count, artifact, actor) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (log_id, now, tool_name, query, row_count, artifact, session.current_user())
         )
         self.conn.commit()
 
@@ -465,6 +476,6 @@ def data_dir_for(case_file: str) -> str:
     return root
 
 
-# Global instance
-from copilot.case_config import initial_case_file  # noqa: E402
-case_db = CaseDatabase(data_dir_for(initial_case_file()))
+# The active case's database in the current session (see copilot/session.py).
+from copilot.session import CaseView  # noqa: E402
+case_db = CaseView("db")

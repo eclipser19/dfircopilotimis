@@ -5,7 +5,8 @@ They are written to one output directory, configurable for deployments (e.g. a h
 folder like /uploads), and registered in the case database so the Streamlit app can
 offer each new file as a download in the chat.
 
-Directory: DFIR_OUTPUT_DIR, else case.yaml `output.dir`, else <case dir>/outputs.
+Directory: <DFIR_OUTPUT_DIR>/<case id>, else case.yaml `output.dir`, else <case dir>/outputs.
+DFIR_OUTPUT_DIR is shared by all cases, so each case gets its own folder in it.
 """
 import os
 import re
@@ -21,9 +22,10 @@ def default_dir() -> str:
 
 def output_dir() -> str:
     """Absolute path (on Windows '/uploads' means C:\\uploads, so show what it really is)."""
-    path = (os.environ.get("DFIR_OUTPUT_DIR")
-            or str((case_config.data.get("output", {}) or {}).get("dir", "") or "")
-            or default_dir())
+    from copilot import cases
+    shared = os.environ.get("DFIR_OUTPUT_DIR")
+    path = (os.path.join(shared, cases.current_id()) if shared
+            else str((case_config.data.get("output", {}) or {}).get("dir", "") or "") or default_dir())
     path = os.path.abspath(path)
     os.makedirs(path, exist_ok=True)
     return path
@@ -39,7 +41,10 @@ def locate(entry: dict) -> str:
     if os.path.isfile(path):
         return path
     name = os.path.basename(path.replace("\\", "/"))
-    for folder in dict.fromkeys([output_dir(), default_dir()]):
+    folders = [output_dir(), default_dir()]
+    if os.environ.get("DFIR_OUTPUT_DIR"):
+        folders.append(os.path.abspath(os.environ["DFIR_OUTPUT_DIR"]))   # files made before per-case folders
+    for folder in dict.fromkeys(folders):
         candidate = os.path.join(folder, name)
         if os.path.isfile(candidate):
             if entry.get("output_id") is not None:

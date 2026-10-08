@@ -244,10 +244,11 @@ The complete original record of every evidence ID cited above, as collected from
 ## Appendix D: Query Audit Log
 
 {% if audit_log %}
-| Time (analysis) | Tool | Query | Rows |
-|---|---|---|---|
+{% set by_user = audit_log | selectattr("actor") | list %}
+| Time (analysis) |{% if by_user %} Investigator |{% endif %} Tool | Query | Rows |
+|---|{% if by_user %}---|{% endif %}---|---|---|
 {% for log in audit_log %}
-| {{ log.timestamp_utc[:19] }} | {{ log.tool_name }} | {{ log.query | md }} | {{ log.row_count }} |
+| {{ log.timestamp_utc[:19] }} |{% if by_user %} {{ (log.actor or "") | md }} |{% endif %} {{ log.tool_name }} | {{ log.query | md }} | {{ log.row_count }} |
 {% endfor %}
 {% else %}
 *No queries recorded.*

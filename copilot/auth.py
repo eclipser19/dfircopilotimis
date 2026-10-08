@@ -4,12 +4,14 @@ Local accounts for the Streamlit app. Works offline: no identity provider needed
 Users live in auth.yaml (DFIR_AUTH_FILE), git-ignored, with salted PBKDF2-SHA256 hashes
 (standard library only). Manage them on the server:
 
-    python -m copilot.auth add <username>      # asks for the password twice
+    python -m copilot.auth add <username> [--admin]   # asks for the password twice
+    python -m copilot.auth admin <username> on|off
     python -m copilot.auth remove <username>
     python -m copilot.auth list
 
-With no users configured the app runs open (for local testing) and says so; set
-DFIR_REQUIRE_LOGIN=1 on a server so it refuses to run open instead.
+Admins see every case; other users see the cases they own or are members of (see
+copilot/cases.py). With no users configured the app runs open (for local testing) and
+says so; set login.required in server.yaml (or DFIR_REQUIRE_LOGIN=1) so it refuses to.
 """
 import base64
 import getpass
@@ -22,6 +24,8 @@ import sys
 import time
 
 import yaml
+
+from copilot import settings
 
 ITERATIONS = 600_000
 MAX_FAILURES = 5          # per username, then locked for LOCKOUT_SECONDS
@@ -81,7 +85,15 @@ def is_user(username: str) -> bool:
 
 
 def login_required() -> bool:
-    return configured() or os.environ.get("DFIR_REQUIRE_LOGIN", "").lower() in ("1", "true", "yes")
+    return configured() or settings.flag("login", "required", "DFIR_REQUIRE_LOGIN")
+
+
+def usernames() -> list:
+    return sorted(_load())
+
+
+def is_admin(username: str) -> bool:
+    return bool((_load().get(username) or {}).get("admin"))
 
 
 def locked_for(username: str) -> int:
@@ -113,14 +125,29 @@ def verify(username: str, password: str) -> bool:
     return ok
 
 
-def add_user(username: str, password: str):
+def add_user(username: str, password: str, admin: bool = None):
+    """Creates the account or sets a new password. admin=None keeps an existing account's role."""
     if not USERNAME_RE.match(username or ""):
         raise ValueError("Username: 1-64 letters, digits, '.', '_' or '-'.")
     if len(password or "") < 12:
         raise ValueError("Password: at least 12 characters.")
     users = _load()
-    users[username] = {"hash": hash_password(password)}
+    entry = dict(users.get(username) or {})
+    entry["hash"] = hash_password(password)
+    if admin is not None:
+        entry["admin"] = bool(admin)
+    entry.setdefault("admin", False)
+    users[username] = entry
     _save(users)
+
+
+def set_admin(username: str, admin: bool) -> bool:
+    users = _load()
+    if username not in users:
+        return False
+    users[username]["admin"] = bool(admin)
+    _save(users)
+    return True
 
 
 def remove_user(username: str) -> bool:
@@ -134,29 +161,43 @@ def remove_user(username: str) -> bool:
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if not argv or argv[0] not in ("add", "remove", "list"):
+    if not argv or argv[0] not in ("add", "admin", "remove", "list"):
         print(__doc__)
         return 1
-    if argv[0] == "list":
-        users = sorted(_load())
-        print("\n".join(users) if users else "No users configured (the app runs without login).")
+    command, args = argv[0], argv[1:]
+    if command == "list":
+        users = _load()
+        print("\n".join(f"{u}{' (admin)' if users[u].get('admin') else ''}" for u in sorted(users))
+              if users else "No users configured (the app runs without login).")
         return 0
-    if len(argv) != 2:
-        print(f"Usage: python -m copilot.auth {argv[0]} <username>")
+    if command == "admin":
+        if len(args) != 2 or args[1] not in ("on", "off"):
+            print("Usage: python -m copilot.auth admin <username> on|off")
+            return 1
+        print("Saved." if set_admin(args[0], args[1] == "on") else "No such user.")
+        return 0
+    make_admin = "--admin" in args
+    args = [a for a in args if a != "--admin"]
+    if len(args) != 1 or (command == "remove" and make_admin):
+        print(f"Usage: python -m copilot.auth {command} <username>{' [--admin]' if command == 'add' else ''}")
         return 1
-    if argv[0] == "remove":
-        print("Removed." if remove_user(argv[1]) else "No such user.")
+    if command == "remove":
+        print("Removed." if remove_user(args[0]) else "No such user.")
         return 0
     password = getpass.getpass("Password (12+ characters): ")
     if password != getpass.getpass("Repeat password: "):
         print("Passwords don't match.")
         return 1
     try:
-        add_user(argv[1], password)
+        add_user(args[0], password, admin=True if make_admin else None)
     except ValueError as e:
         print(e)
         return 1
-    print(f"User '{argv[1]}' saved in {os.path.abspath(auth_file())}.")
+    print(f"User '{args[0]}' saved in {os.path.abspath(auth_file())}"
+          f"{' as an admin (sees every case)' if is_admin(args[0]) else ''}.")
+    if not any(u.get("admin") for u in _load().values()):
+        print("Note: there is no admin yet. Cases nobody owns (e.g. ones made before sign-in) are visible "
+              "to admins only: python -m copilot.auth admin <username> on")
     return 0
 
 

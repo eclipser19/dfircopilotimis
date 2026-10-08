@@ -183,3 +183,13 @@ def test_markdown_report_carries_no_live_html(skewed_case):
     for tag in ("<img", "<script", "<svg", "<iframe", "<b>", "<i>"):
         assert tag not in body, tag
     assert "&lt;img src=x onerror=alert(1)&gt;" in body or "&lt;img src=x onerror=alert(1)>" in body
+
+
+def test_audit_log_names_the_investigator_once_sign_in_is_used(skewed_case, monkeypatch):
+    from copilot import session
+    skewed_case.log_query("query_timeline", "before sign-in", 2)
+    assert "| Investigator |" not in build_report(skewed_case, case_config, "ES", "- R")
+    monkeypatch.setattr(session.default(), "user", "bob")
+    skewed_case.log_query("query_timeline", "window 02:30-03:00", 5)
+    report = build_report(skewed_case, case_config, "ES", "- R")
+    assert "| Investigator |" in report and re.search(r"\| bob \| query_timeline \| window 02:30-03:00 \| 5 \|", report)

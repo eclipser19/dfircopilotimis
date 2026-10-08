@@ -64,7 +64,9 @@ Legend: [x] done and tested · [~] partially done · [ ] not started
 - [x] Approvals for every agent action with side effects (collect, retract, update/create/switch case): confirm | auto | off per action, per-case queue in Streamlit, y/N in CLI, audit-logged.
 - [x] Login for the Streamlit app: local accounts (PBKDF2, lockout), works offline; approver recorded in the audit log.
 - [x] Offline / local model: any OpenAI-compatible endpoint, no key for local ones, token estimate when usage isn't reported, Streamlit telemetry off.
-- [ ] Per-session case for several simultaneous Streamlit users.
+- [x] Per-session active case for several simultaneous Streamlit users (own config and DB connection per session, WAL).
+- [x] Cases bound to accounts: owner + members, admins see all, unowned cases admin-only; per-user chats; audit log records the investigator.
+- [x] Server settings file (server.yaml) for the model, key and sign-in; environment variables still win.
 - [ ] Memory analysis with Volatility 3 (offline symbols).
 - [ ] Prompt rewrite once the tools are stable.
 - [ ] Report upload / sharing.
