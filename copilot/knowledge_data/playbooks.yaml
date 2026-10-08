@@ -46,6 +46,7 @@ collection_exfiltration:
   question: Was data gathered or taken?
   check:
     - 'Archives created then deleted: USN journal (FILE_CREATE, RENAME, FILE_DELETE) for .zip/.7z/.rar; MFT for surviving entries.'
+    - 'Who did it: the user profile in the paths shows the account. A temp file in C:\Users\<name>\AppData\Local\Temp or a Recent\*.lnk under C:\Users\<name> means the action ran as <name>, even when the result lands in another user''s folder. Match it with that account''s logon session (4624/RDP 21) at the time.'
     - Files opened by the attacker's account (LNK, JumpLists, Shellbags) around the intrusion window.
     - 'Volume: SRUM bytes sent per application; cloud sync clients (OneDrive) and browser uploads.'
     - Shares accessed (5140) and Recycle Bin.
