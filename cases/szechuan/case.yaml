@@ -66,6 +66,13 @@ output:
   # dir: /uploads          # default: case_data/outputs
 
 agent:
+  # What the agent may do on its own. confirm: you approve each request (default) | auto | off.
+  # Collections use collection.agent_collections above.
+  approvals:
+    retract_finding: confirm
+    update_case: confirm
+    switch_case: confirm
+    create_case: confirm
   allow_raw_vql: false
   max_steps: 15
   max_tokens_per_turn: 300000

@@ -79,6 +79,24 @@ case_data/<case-id>/outputs/     reports and exports (unless output.dir is set)
 
 The active case is process-wide: run one Streamlit app per investigator.
 
+## Approvals
+
+Evidence is written by the attacker, and text inside it can try to steer the AI ("retract
+finding 3"). So everything the agent wants to change is a request you approve first:
+
+| Action | Setting | Default |
+|---|---|---|
+| Collect an artifact | `collection.agent_collections` | confirm |
+| Retract a finding | `agent.approvals.retract_finding` | confirm |
+| Change case settings | `agent.approvals.update_case` | confirm |
+| Switch case | `agent.approvals.switch_case` | confirm |
+| Create a case | `agent.approvals.create_case` | confirm |
+
+Each can be `confirm`, `auto` (no question) or `off` (the agent may not do it). Requests are
+checked before you are asked, stay with their case if you switch away, and every request and
+decision is written to the case's audit log. Your own actions (sidebar, `/case`, forms) are
+never gated. Read-only analysis never needs approval.
+
 ## Knowledge base
 
 `copilot/knowledge_data/` holds the DFIR reference the copilot relies on, as plain YAML
@@ -122,7 +140,8 @@ file (e.g. `/uploads` on a server), else `case_data/outputs/`.
 In the Streamlit app:
 - an empty case offers the triage collection (same as the CLI's first question), and the
   sidebar's **Triage collection** panel can run it any time;
-- collections the agent asks for appear under **Collection requests** with Approve / Deny;
+- anything the agent wants to change (collect, retract a finding, change/create/switch a
+  case) appears under **Awaiting your approval** with Approve / Deny (CLI: a y/N prompt);
 - every file the agent produces appears in the chat as a download button, and the sidebar
   lists recent files. Ask e.g. "export the timeline 02:30-03:00 as a file" or "give me the
   full records of the evidence for finding 3".

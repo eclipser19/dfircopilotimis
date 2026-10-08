@@ -5,7 +5,7 @@ import re
 import streamlit as st
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from copilot import cases, collection, commands, conversation, outputs, tools as copilot_tools
+from copilot import approvals, cases, collection, commands, conversation, outputs, tools as copilot_tools
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
 from copilot.database import case_db
@@ -24,7 +24,7 @@ MIME = {"html": "text/html", "md": "text/markdown", "csv": "text/csv", "json": "
 # ==========================================
 if "usage" not in st.session_state:
     st.session_state.usage = TokenUsage()
-    st.session_state.pending = []       # agent collection requests awaiting approval
+    st.session_state.pending = []       # agent requests awaiting approval (each tied to its case)
     st.session_state.next_request = 1
     st.session_state.triage_dismissed = False
 
@@ -36,7 +36,6 @@ def open_case_chat(note: str = ""):
     st.session_state.case_id = case_id
     st.session_state.messages = messages      # [{role, content, log: [str], files: [output rows]}]
     st.session_state.chat_history = history
-    st.session_state.pending = []
     st.session_state.triage_dismissed = False
     if note:
         st.session_state.messages.append({"role": "assistant", "content": note})
@@ -64,11 +63,16 @@ else:
 cases.consume_switch()
 
 
-def queue_request(artifact: str, params: dict):
-    """Agent collection requests wait for the investigator's Approve/Deny in the sidebar."""
-    st.session_state.pending.append({"id": st.session_state.next_request, "artifact": artifact, "params": params})
+def queue_request(request: dict):
+    """Agent requests wait for the investigator's Approve/Deny in the sidebar (per case)."""
+    request["id"] = st.session_state.next_request
     st.session_state.next_request += 1
+    st.session_state.pending.append(request)
     return "queued"
+
+
+def pending_here() -> list:
+    return [r for r in st.session_state.pending if r.get("case_id") == cases.current_id()]
 
 
 def after_possible_switch():
@@ -151,7 +155,7 @@ def save_settings_cb(case_id: str):
 
 
 # This app is meant for one investigator at a time: the approval hook and the active case are process-wide.
-collection.CONFIRM = queue_request
+approvals.ASK = queue_request
 
 
 # ==========================================
@@ -260,24 +264,28 @@ def run_triage(analyze: bool):
 
 
 def resolve_request(request: dict, approved: bool):
+    """Runs (or declines) a queued agent request and tells the agent what happened."""
     st.session_state.pending = [r for r in st.session_state.pending if r["id"] != request["id"]]
+    label = approvals.describe(request)
     if not approved:
-        note = f"[Investigator] Declined the requested collection of {request['artifact']}."
-        st.session_state.chat_history.append(HumanMessage(content=note))
-        st.session_state.messages.append({"role": "assistant", "content": f"❌ Declined `{request['artifact']}`."})
+        approvals.resolve(request, False)
+        st.session_state.chat_history.append(HumanMessage(content=f"[Investigator] Declined: {label}."))
+        st.session_state.messages.append({"role": "assistant", "content": f"❌ Declined — {label}"})
         return
     with st.chat_message("assistant"):
-        with st.spinner(f"Collecting {request['artifact']}..."):
+        with st.spinner(f"{label}..."):
             try:
-                summary = collection.collect(request["artifact"], request["params"])
-            except collection.CollectionError as e:
-                summary = {"artifact": request["artifact"], "state": "NOT_STARTED", "error": str(e)}
+                result = approvals.resolve(request, True)
+            except (approvals.ApprovalError, collection.CollectionError, cases.CaseError) as e:
+                result = f"Failed: {e}"
+    shown = f"```\n{status_line(result)}\n```" if isinstance(result, dict) else str(result)
     st.session_state.chat_history.append(HumanMessage(
-        content=f"[Investigator] Approved and ran the requested collection. Result: {json.dumps(summary)}"))
-    st.session_state.messages.append({
-        "role": "assistant",
-        "content": f"✅ Approved `{request['artifact']}`\n\n```\n{status_line(summary)}\n```\n\n"
-                   f"Ask the copilot to continue when ready."})
+        content=f"[Investigator] Approved: {label}. Result: {json.dumps(result, default=str)}"))
+    st.session_state.messages.append({"role": "assistant",
+                                      "content": f"✅ Approved — {label}\n\n{shown}\n\n"
+                                                 f"Ask the copilot to continue when ready."})
+    if cases.consume_settings_change():
+        st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
 
 
 # ==========================================
@@ -374,12 +382,14 @@ with st.sidebar:
         if st.button("Run triage collection", disabled=bool(case_config.client_id_error)):
             action = ("triage", analyze)
 
-    if st.session_state.pending:
-        st.subheader("⏳ Collection requests")
-        for req in st.session_state.pending:
-            st.markdown(f"**{req['artifact']}**")
-            if req["params"]:
-                st.code(json.dumps(req["params"], indent=1), language="json")
+    if pending_here():
+        st.subheader("⏳ Awaiting your approval")
+        st.caption("The agent asked to change something. Nothing happens until you approve.")
+        for req in pending_here():
+            st.markdown(f"**{approvals.ACTIONS.get(req['kind'], req['kind']).capitalize()}**")
+            st.caption(req["summary"])
+            if req["kind"] == "collect" and req["details"].get("params"):
+                st.code(json.dumps(req["details"]["params"], indent=1), language="json")
             c1, c2 = st.columns(2)
             if c1.button("Approve", key=f"approve-{req['id']}"):
                 action = ("approve", req)
@@ -463,7 +473,7 @@ if prompt := st.chat_input("Ask the copilot to investigate... (/help for command
         st.rerun()
     agent_turn(prompt)
     after_possible_switch()
-    if st.session_state.pending:
+    if pending_here():
         st.rerun()  # show the new approval requests in the sidebar
 
 persist()  # runs that end normally save here; runs ending in st.rerun() are saved at the top of the next run

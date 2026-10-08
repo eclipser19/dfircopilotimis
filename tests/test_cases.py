@@ -62,7 +62,7 @@ def test_free_chat_commands(two_cases):
     assert "Unknown command" in commands.handle("/frobnicate")
 
 
-def test_agent_switch_restarts_the_conversation(two_cases):
+def test_agent_switch_restarts_the_conversation(two_cases, approve_all):
     cases.switch("alpha")
     cases.consume_switch()
 
@@ -79,7 +79,7 @@ def test_agent_switch_restarts_the_conversation(two_cases):
     assert cases.consume_switch() is True             # the UI must now restart the conversation
 
 
-def test_agent_can_create_cases(two_cases):
+def test_agent_can_create_cases(two_cases, approve_all):
     out = tools.create_case.invoke({"case_id": "gamma", "name": "Gamma", "description": "phishing"})
     assert "Created case 'gamma'" in out
     assert "gamma" in {c["id"] for c in cases.list_cases()}
@@ -105,18 +105,18 @@ def test_create_with_iocs_and_required_fields(two_cases):
     assert case_config.iocs["ips"] == ["194.61.24.102"]
 
 
-def test_agent_create_extracts_iocs_from_description(two_cases):
+def test_agent_create_extracts_iocs_from_description(two_cases, approve_all):
     out = tools.create_case.invoke({"case_id": "delta", "name": "Delta",
                                     "description": "Beacon to 203[.]78[.]103[.]109 by user mortysmith"})
     assert "203.78.103.109" in out and "mortysmith" in out
 
 
-def test_update_settings_and_iocs(two_cases):
+def test_update_settings_and_iocs(two_cases, approve_all):
     cases.switch("alpha")
     cases.consume_switch()
     cases.consume_settings_change()
     out = tools.update_case.invoke({"add_iocs": {"ips": ["194.61.24.102"]}, "clock_offset_minutes": 60})
-    assert "Updated the active case" in out
+    assert "Updated case settings" in out
     assert case_config.iocs["ips"] == ["194.61.24.102"] and case_config.clock_offset_minutes == 60
     assert cases.consume_settings_change() is True
     tools.update_case.invoke({"remove_iocs": {"ips": ["194.61.24.102"]}})

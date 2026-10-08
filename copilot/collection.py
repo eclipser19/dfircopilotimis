@@ -359,36 +359,21 @@ def check(flow_id: str, vql=None) -> dict:
     return _finish(flow_id, poll(flow_id, vql), vql)
 
 
-# Set by the UI: confirm(artifact, params) -> True (go), False (declined) or "queued"
-# (Streamlit: the investigator decides later with Approve/Deny buttons).
-CONFIRM = None
+# Filter values that match everything are not filters (e.g. FileRegex ".").
+_MATCH_ALL = {".", ".*", ".+", "^.*$", "^.*", ".*$", "*", "(?i).", "(?i).*", "^", "$", "^.+$"}
 
 
-def _check_agent_request(artifact: str, params: dict):
-    mode = case_config.agent_collections
-    if mode == "off":
-        raise CollectionError("The investigator has disabled agent collections for this case "
-                              "(collection.agent_collections: off). Work with the data already collected.")
+def check_agent_request(artifact: str, params: dict):
+    """Rules for collections the agent asks for (before the investigator is asked)."""
     if case_config.is_heavy(artifact):
         filters = [k for k, v in (params or {}).items()
-                   if v not in (None, "") and k.lower() not in TIME_AFTER_PARAMS | TIME_BEFORE_PARAMS]
+                   if v not in (None, "") and str(v).strip() not in _MATCH_ALL
+                   and k.lower() not in TIME_AFTER_PARAMS | TIME_BEFORE_PARAMS]
         if not filters:
             raise CollectionError(
-                f"'{artifact}' can return millions of rows. Pass at least one filter parameter "
+                f"'{artifact}' can return millions of rows. Pass at least one real filter parameter "
                 f"(e.g. a filename/path regex, event IDs or a search regex; see describe_artifact) "
-                f"based on a lead you already have.")
-    if mode == "confirm":
-        if CONFIRM is None:
-            raise CollectionError("Agent collections need the investigator's approval, which isn't "
-                                  "available here. Ask the investigator to collect it.")
-        decision = CONFIRM(artifact, params or {})
-        if decision == "queued":
-            raise CollectionError(
-                f"Collecting '{artifact}' is waiting for the investigator's approval. If they approve, "
-                f"the result will be added to the conversation. Continue with the data already collected.")
-        if not decision:
-            raise CollectionError(f"The investigator declined collecting '{artifact}'. "
-                                  f"Continue with the data already collected or ask them.")
+                f"based on a lead you already have. Patterns that match everything don't count.")
 
 
 def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=None,
@@ -403,7 +388,15 @@ def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=No
     _check_artifact(artifact)
     params, window = with_time_window(artifact, params, vql)
     if requested_by == "agent":
-        _check_agent_request(artifact, params)
+        # The investigator approves (or the case allows) agent collections before anything runs.
+        # Requests approved later (Streamlit) are run by approvals.execute as the investigator's.
+        from copilot import approvals
+        check_agent_request(artifact, params)
+        try:
+            approvals.gate("collect", f"{artifact} {json.dumps(params)}" if params else artifact,
+                           {"artifact": artifact, "params": params})
+        except approvals.ApprovalError as e:
+            raise CollectionError(str(e))
     wait = case_config.collection_wait_seconds if wait_seconds is None else wait_seconds
     flow_id = schedule(artifact, params, vql)
 

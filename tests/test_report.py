@@ -81,7 +81,7 @@ def test_md_helper():
     assert md("x" * 5000) == "x" * 5000  # never shortened
 
 
-def test_retracted_findings_leave_the_report_body(skewed_case):
+def test_retracted_findings_leave_the_report_body(skewed_case, approve_all):
     logon, service = _ids(skewed_case)
     wrong = skewed_case.record_finding("No archive found", "nothing", [logon], "medium")
     skewed_case.record_finding("Service", "s", [service], "high")

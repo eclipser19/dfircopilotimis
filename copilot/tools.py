@@ -519,10 +519,19 @@ def retract_finding(finding_id: str, reason: str) -> str:
         finding_id: The finding ID (a unique prefix is enough).
         reason: Why it is retracted, citing the contradicting evidence or finding.
     """
-    found = case_db.retract_finding(finding_id, reason)
+    from copilot import approvals
+    found = case_db.find_finding(finding_id)
     if not found:
         return f"No unique finding matches '{finding_id}'. Use case_summary to see finding IDs."
-    return f"Retracted finding {found['finding_id']}: {found['title']}"
+    if (found.get("status") or "active") != "active":
+        return f"Finding {found['finding_id']} is already retracted."
+    if not (reason or "").strip():
+        return "Give a reason: the evidence or finding that contradicts it."
+    try:
+        return approvals.run("retract_finding", f"'{found['title']}' because: {reason}",
+                             {"finding_id": found["finding_id"], "title": found["title"], "reason": reason})
+    except approvals.ApprovalError as e:
+        return str(e)
 
 
 @tool
@@ -628,13 +637,16 @@ def switch_case(case_id: str) -> str:
     Args:
         case_id: The case ID from list_cases.
     """
-    from copilot import cases
+    from copilot import approvals, cases
+    known = {c["id"]: c for c in cases.list_cases()}
+    if case_id not in known:
+        return f"No case '{case_id}'. Known cases: {', '.join(known) or 'none'}."
+    if case_id == cases.current_id():
+        return f"Case '{case_id}' is already active."
     try:
-        info = cases.switch(case_id)
-    except cases.CaseError as e:
+        return approvals.run("switch_case", f"to '{case_id}' ({known[case_id]['name']})", {"case_id": case_id})
+    except (approvals.ApprovalError, cases.CaseError) as e:
         return str(e)
-    return (f"Switched to case '{info['id']}' ({info['name']}). The conversation will restart in that case "
-            f"after this answer; do not query data now.")
 
 
 @tool
@@ -658,18 +670,25 @@ def create_case(case_id: str, name: str, client_id: Optional[str] = None, start_
         copy_data_from: ID of a case on the SAME evidence whose collected data should be copied
                         (saves re-collecting; findings are not copied).
     """
-    from copilot import cases
+    from copilot import approvals, cases
     from copilot.iocs import extract_iocs, merge
     all_iocs = merge(iocs or {}, extract_iocs(description or ""))
+    kwargs = {"case_id": case_id, "name": name, "client_id": client_id or "", "start_time": start_time or "",
+              "end_time": end_time or "", "description": description or "",
+              "clock_offset_minutes": clock_offset_minutes or 0, "iocs": all_iocs, "copy_from": copy_data_from}
     try:
-        path = cases.create(case_id, name, client_id or "", start_time or "", end_time or "",
-                            description or "", clock_offset_minutes or 0, all_iocs, copy_data_from)
+        cases.create(**kwargs, dry_run=True)          # validate before asking the investigator
     except cases.CaseError as e:
         return str(e)
     found = {k: v for k, v in all_iocs.items() if v}
-    return (f"Created case '{case_id}' at {path}." + (f" IOCs: {_dump(found)}." if found else "") +
-            (f" Collected data copied from '{copy_data_from}'." if copy_data_from else "") +
-            " Ask the investigator whether to switch to it.")
+    summary = (f"'{case_id}' ({name})" + (f", client {client_id}" if client_id else "") +
+               (f", IOCs {_dump(found)}" if found else "") +
+               (f", copying data from '{copy_data_from}'" if copy_data_from else ""))
+    try:
+        result = approvals.run("create_case", summary, {"kwargs": kwargs})
+    except (approvals.ApprovalError, cases.CaseError) as e:
+        return str(e)
+    return result + (f" IOCs: {_dump(found)}." if found else "") + " Ask the investigator whether to switch to it."
 
 
 @tool
@@ -699,11 +718,21 @@ def update_case(client_id: Optional[str] = None, start_time: Optional[str] = Non
         changes["iocs"] = {k: [v for v in current[k] if v not in drop[k]] for k in current}
     if not changes:
         return "Nothing to change."
+    from copilot import approvals
+    case_id = cases.current_id()
     try:
-        cases.update(cases.current_id(), **changes)
+        cases.update(case_id, dry_run=True, **changes)   # validate before asking the investigator
     except cases.CaseError as e:
         return str(e)
-    return f"Updated the active case: {', '.join(changes)}. Case context: {case_config.build_system_context()}"
+    shown = {k: v for k, v in changes.items() if k != "iocs"}
+    if "iocs" in changes:
+        shown["iocs"] = {k: v for k, v in changes["iocs"].items() if v}
+    try:
+        result = approvals.run("update_case", f"case '{case_id}': {_dump(shown)}",
+                               {"case_id": case_id, "changes": changes})
+    except (approvals.ApprovalError, cases.CaseError) as e:
+        return str(e)
+    return f"{result} Case context now: {case_config.build_system_context()}"
 
 
 # Set by the Streamlit sidebar for the session; otherwise the case file decides.

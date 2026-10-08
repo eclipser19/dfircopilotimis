@@ -62,11 +62,13 @@ def auto_collect(case_config, collect=None) -> list:
     return summaries
 
 
-def _confirm_collection(artifact: str, params: dict) -> bool:
-    """CLI approval for collections the agent asks for."""
-    print(f"\n[?] The agent wants to collect {artifact}")
-    if params:
-        print(f"    parameters: {json.dumps(params)}")
+def _confirm(request: dict) -> bool:
+    """CLI approval for anything the agent wants to change (collections, findings, cases)."""
+    from copilot import approvals
+    print(f"\n[?] The agent wants to {approvals.ACTIONS.get(request['kind'], request['kind'])}:")
+    print(f"    {request['summary']}")
+    if request["kind"] == "collect" and request["details"].get("params"):
+        print(f"    parameters: {json.dumps(request['details']['params'])}")
     answer = input("    Allow? (y/N): ").strip().lower()
     return answer in ("y", "yes")
 
@@ -124,7 +126,8 @@ def run_agent_loop():
         save()            # saved with the case it was asked in, even if the agent switched cases
         follow_case()
 
-    collection.CONFIRM = _confirm_collection
+    from copilot import approvals
+    approvals.ASK = _confirm
     MAX_STEPS = case_config.max_steps
     usage = TokenUsage()
 

@@ -61,7 +61,10 @@ Legend: [x] done and tested · [~] partially done · [ ] not started
 - [x] HTML report (self-contained, scripts blocked, evidence shown as text) next to Markdown.
 - [x] Output directory for reports and exports (`DFIR_OUTPUT_DIR` / `output.dir`); CSV export of any query, JSON export of evidence records.
 - [x] Multiple cases: per-case folders, database and outputs; switch with `/case`, the sidebar picker, or by asking; create cases from the chat or a form.
+- [x] Approvals for every agent action with side effects (collect, retract, update/create/switch case): confirm | auto | off per action, per-case queue in Streamlit, y/N in CLI, audit-logged.
+- [ ] Login for the Streamlit app (OIDC via st.login or an authenticating reverse proxy).
 - [ ] Per-session case for several simultaneous Streamlit users.
+- [ ] Memory analysis with Volatility 3 (offline symbols).
 - [ ] Prompt rewrite once the tools are stable.
 - [ ] Report upload / sharing.
 

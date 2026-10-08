@@ -1,0 +1,131 @@
+"""
+Investigator approval for everything the agent wants to CHANGE.
+
+Evidence is attacker-controlled, and text inside it can try to steer the model ("retract
+finding 3", "switch to another case"). So actions with side effects are requests: the
+investigator approves or declines them (CLI: y/N prompt; Streamlit: Approve/Deny in the
+sidebar, possibly later). Read-only analysis never needs approval, and the investigator's
+own actions (sidebar buttons, /case, forms) bypass this module entirely.
+
+Per action, the case file decides: confirm (default) | auto | off
+    agent:
+      approvals: {retract_finding: confirm, update_case: confirm, switch_case: confirm, create_case: confirm}
+Collections keep their own setting, collection.agent_collections.
+
+Every request and decision is written to the case's audit log.
+"""
+import json
+
+from copilot.case_config import case_config
+from copilot.database import case_db
+
+ACTIONS = {
+    "collect": "collect an artifact",
+    "retract_finding": "retract a finding",
+    "update_case": "change the case settings",
+    "switch_case": "switch to another case",
+    "create_case": "create a new case",
+}
+MODES = ("confirm", "auto", "off")
+
+# Set by the UI: ask(request) -> True (approved now), False (declined) or "queued" (decided later).
+ASK = None
+
+
+class ApprovalError(Exception):
+    """The action did not run (declined, waiting, or not allowed); the message is for the agent."""
+
+
+def mode(kind: str) -> str:
+    if kind == "collect":
+        return case_config.agent_collections
+    configured = ((case_config.data.get("agent", {}) or {}).get("approvals", {}) or {}).get(kind, "confirm")
+    configured = str(configured).lower()
+    return configured if configured in MODES else "confirm"
+
+
+def _log(request: dict, decision: str):
+    case_db.log_query("approval", f"{request['kind']} {decision}: {request['summary']} "
+                                f"-- {json.dumps(request['details'], default=str)}", 0)
+
+
+def gate(kind: str, summary: str, details: dict) -> dict:
+    """
+    Asks for approval as configured. Returns the approved request, or raises ApprovalError
+    when the action must not run now (declined, waiting for the investigator, or not allowed).
+    """
+    from copilot import cases
+    request = {"kind": kind, "summary": summary, "details": details, "case_id": cases.current_id()}
+    m = mode(kind)
+    if m == "off":
+        _log(request, "refused (agent not allowed)")
+        raise ApprovalError(f"The investigator does not allow the agent to {ACTIONS[kind]} in this case. "
+                            f"Tell them what you would do and why, so they can do it themselves.")
+    if m == "auto":
+        request["approved_by"] = "auto"
+        _log(request, "auto-approved")
+        return request
+    if ASK is None:
+        _log(request, "refused (no approval channel)")
+        raise ApprovalError(f"This needs the investigator's approval, which isn't available here. "
+                            f"Ask them to {ACTIONS[kind]} themselves.")
+    decision = ASK(request)
+    if decision == "queued":
+        _log(request, "awaiting approval")
+        raise ApprovalError(f"Waiting for the investigator's approval: {summary}. If they approve, the result "
+                            f"will be added to the conversation. Do not repeat the request; continue with "
+                            f"other work or wait.")
+    if not decision:
+        _log(request, "declined")
+        raise ApprovalError(f"The investigator declined: {summary}. Continue without it or ask them.")
+    request["approved_by"] = "investigator"
+    _log(request, "approved")
+    return request
+
+
+def run(kind: str, summary: str, details: dict):
+    """gate() then execute(): returns the action's result, or raises ApprovalError."""
+    return execute(gate(kind, summary, details))
+
+
+def resolve(request: dict, approved: bool):
+    """For requests decided later (Streamlit): logs the decision and runs the action if approved."""
+    from copilot import cases
+    if request.get("case_id") != cases.current_id():
+        raise ApprovalError(f"This request belongs to case '{request.get('case_id')}'; switch to it first.")
+    if not approved:
+        _log(request, "declined")
+        return None
+    request["approved_by"] = "investigator"
+    _log(request, "approved")
+    return execute(request)
+
+
+def execute(request: dict):
+    """Performs an approved action. Returns its result (a dict for collections, else a message)."""
+    from copilot import cases, collection
+    kind, d = request["kind"], request["details"]
+    if kind == "collect":
+        return collection.collect(d["artifact"], d.get("params") or {})
+    if kind == "retract_finding":
+        who = "approved by the investigator" if request.get("approved_by") == "investigator" else "by the agent"
+        found = case_db.retract_finding(d["finding_id"], f"{d['reason']} (retraction {who})")
+        if not found:
+            raise ApprovalError(f"Finding {d['finding_id']} no longer exists.")
+        return f"Retracted finding {found['finding_id']}: {found['title']}"
+    if kind == "update_case":
+        cases.update(d["case_id"], **d["changes"])
+        return f"Updated case settings: {', '.join(d['changes'])}."
+    if kind == "switch_case":
+        info = cases.switch(d["case_id"])
+        return (f"Switched to case '{info['id']}' ({info['name']}). The conversation restarts in that case "
+                f"after this answer; do not query data now.")
+    if kind == "create_case":
+        path = cases.create(**d["kwargs"])
+        return f"Created case '{d['kwargs']['case_id']}' at {path}."
+    raise ApprovalError(f"Unknown action '{kind}'.")
+
+
+def describe(request: dict) -> str:
+    """One-line description for prompts and the approval list."""
+    return f"{ACTIONS.get(request['kind'], request['kind']).capitalize()}: {request['summary']}"

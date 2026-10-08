@@ -94,21 +94,24 @@ def test_investigator_collections_skip_agent_rules(case, monkeypatch):
 
 def test_agent_collections_off(case, monkeypatch):
     _config(monkeypatch, agent_collections="off")
-    with pytest.raises(CollectionError, match="disabled agent collections"):
+    with pytest.raises(CollectionError, match="does not allow the agent to collect"):
         collection.collect("Windows.System.TaskScheduler", vql=FakeVQL(), requested_by="agent", sleep=lambda s: None)
 
 
 def test_agent_collections_need_approval(case, monkeypatch):
+    from copilot import approvals
     _config(monkeypatch)  # default: confirm
     asked = []
-    monkeypatch.setattr(collection, "CONFIRM", lambda a, p: asked.append((a, p)) or False)
+    monkeypatch.setattr(approvals, "ASK", lambda request: asked.append(request) or False)
     vql = FakeVQL()
+    monkeypatch.setattr(collection, "get_vql", lambda: vql)
     with pytest.raises(CollectionError, match="declined"):
         collection.collect("Windows.System.TaskScheduler", vql=vql, requested_by="agent", sleep=lambda s: None)
-    assert asked == [("Windows.System.TaskScheduler", {})]
+    assert [(r["kind"], r["details"]["artifact"]) for r in asked] == [("collect", "Windows.System.TaskScheduler")]
     assert not any("collect_client" in q for q, _ in vql.calls)
 
-    monkeypatch.setattr(collection, "CONFIRM", lambda a, p: True)
+    monkeypatch.setattr(approvals, "ASK", lambda request: True)
+    monkeypatch.setattr(collection, "get_vql", lambda: FakeVQL())
     summary = collection.collect("Windows.System.TaskScheduler", vql=FakeVQL(), requested_by="agent",
                                  sleep=lambda s: None)
     assert summary["state"] == "FINISHED"
@@ -116,6 +119,7 @@ def test_agent_collections_need_approval(case, monkeypatch):
 
 def test_no_approval_channel_refuses(case, monkeypatch):
     _config(monkeypatch)
-    monkeypatch.setattr(collection, "CONFIRM", None)
+    from copilot import approvals
+    monkeypatch.setattr(approvals, "ASK", None)
     with pytest.raises(CollectionError, match="approval"):
         collection.collect("Windows.System.TaskScheduler", vql=FakeVQL(), requested_by="agent", sleep=lambda s: None)

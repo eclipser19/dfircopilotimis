@@ -98,7 +98,7 @@ def consume_switch() -> bool:
 
 def create(case_id: str, name: str, client_id: str = "", start_time: str = "", end_time: str = "",
            description: str = "", clock_offset_minutes: int = 0, iocs: dict = None,
-           copy_from: str = None) -> str:
+           copy_from: str = None, dry_run: bool = False) -> str:
     """
     Creates cases/<case_id>/case.yaml from the template (does not switch to it).
     Required: case_id and name. IOCs are validated; copy_from copies another case's
@@ -117,6 +117,9 @@ def create(case_id: str, name: str, client_id: str = "", start_time: str = "", e
             raise CaseError(f"Case '{copy_from}' is about client {source_client}, not {client_id}: "
                             f"data can only be copied between cases on the same evidence.")
         client_id = client_id or source_client
+        # Checked before anything is written, so a failed copy never leaves a half-made case.
+        if not os.path.isfile(os.path.join(data_dir_for(_case_file(copy_from)), "case.db")):
+            raise CaseError(f"Case '{copy_from}' has no data yet.")
     from copilot.normalize import normalize_bound
     if not CASE_ID_RE.match(case_id or "") or case_id == LEGACY_ID:
         raise CaseError("Case ID must be 1-64 letters, digits, - or _ (and not 'default').")
@@ -138,8 +141,12 @@ def create(case_id: str, name: str, client_id: str = "", start_time: str = "", e
                     "Windows.Timeline.Prefetch", "Windows.System.TaskScheduler"],
         "collection": {"max_rows": 50000, "apply_time_window": True, "agent_collections": "confirm"},
         "output": {"report_formats": ["html"]},
-        "agent": {"allow_raw_vql": False, "max_steps": 15, "max_tokens_per_turn": 300000},
+        "agent": {"allow_raw_vql": False, "max_steps": 15, "max_tokens_per_turn": 300000,
+                  "approvals": {"retract_finding": "confirm", "update_case": "confirm",
+                                "switch_case": "confirm", "create_case": "confirm"}},
     }
+    if dry_run:
+        return path
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
         f.write(f"# Created by DFIR Copilot. Edit freely; see cases/szechuan/case.yaml for all options.\n")
@@ -161,7 +168,7 @@ def _read(case_id: str) -> dict:
 EDITABLE = {"name", "client_id", "start_time", "end_time", "description", "clock_offset_minutes", "iocs"}
 
 
-def update(case_id: str, **changes) -> dict:
+def update(case_id: str, dry_run: bool = False, **changes) -> dict:
     """
     Changes a case's settings (name, client_id, window, description, clock offset, IOCs).
     Rewrites its case.yaml (comments in the file are not kept). Reloads it if active.
@@ -196,6 +203,8 @@ def update(case_id: str, **changes) -> dict:
         scope["clock_offset_minutes"] = int(changes["clock_offset_minutes"] or 0)
     if "iocs" in changes:
         data["iocs"] = clean(changes["iocs"])
+    if dry_run:
+        return data
     path = _case_file(case_id)
     with open(path, "w", encoding="utf-8") as f:
         f.write("# Managed by DFIR Copilot (edits from the app rewrite this file).\n")

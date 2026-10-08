@@ -9,7 +9,7 @@ os.environ.setdefault("DFIR_CASE_DIR", tempfile.mkdtemp(prefix="dfir_test_"))
 os.environ.setdefault("DFIR_CASE_FILE", os.path.join(os.path.dirname(__file__), "no_such_case.yaml"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from copilot import collection, outputs, tools  # noqa: E402
+from copilot import approvals, collection, outputs, tools  # noqa: E402
 from copilot.case_config import case_config  # noqa: E402
 from copilot.database import CaseDatabase  # noqa: E402
 
@@ -71,8 +71,22 @@ class FakeVQL:
 def case(tmp_path, monkeypatch):
     """Fresh database and a case pinned to CLIENT, patched into every module."""
     db = CaseDatabase(str(tmp_path))
-    for module in (collection, tools, outputs):
+    for module in (collection, tools, outputs, approvals):
         monkeypatch.setattr(module, "case_db", db)
     monkeypatch.setenv("DFIR_OUTPUT_DIR", str(tmp_path / "outputs"))
     monkeypatch.setattr(case_config, "data", {"velociraptor": {"client_id": CLIENT}})
     return db
+
+
+@pytest.fixture(autouse=True)
+def no_approval_channel(monkeypatch):
+    """Every test starts without an approval UI (the CLI test installs its own prompt)."""
+    monkeypatch.setattr(approvals, "ASK", None)
+
+
+@pytest.fixture
+def approve_all(monkeypatch):
+    """The investigator approves every request (records them for assertions)."""
+    asked = []
+    monkeypatch.setattr(approvals, "ASK", lambda request: asked.append(request) or True)
+    return asked
