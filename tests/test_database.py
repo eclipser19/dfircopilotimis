@@ -110,3 +110,16 @@ def test_activity_histogram(db):
     ]
     with pytest.raises(ValueError):
         db.activity_histogram(bucket="week")
+
+
+def test_identifier_numbers_are_searchable_so_renames_can_be_followed(tmp_path):
+    from copilot.database import CaseDatabase
+    db = CaseDatabase(str(tmp_path))
+    usn = [{"Timestamp": "2020-09-19T03:46:15Z", "Filename": "My Social Security Number.zip", "Reason": "FILE_CREATE",
+            "_FileMFTID": 87470, "_FileMFTSequence": 3, "Size": 87470123},
+           {"Timestamp": "2020-09-19T03:46:18Z", "Filename": "loot.zip", "Reason": "RENAME_NEW_NAME",
+            "_FileMFTID": 87470, "_FileMFTSequence": 3, "Size": 5}]
+    db.ingest_artifact_results(usn, "Windows.Forensics.Usn", "D", "C.1")
+    found = {r["description"] for r in db.search_events("87470")["records"]}
+    assert len(found) == 2 and any("My Social Security Number.zip" in d for d in found)
+    assert db.search_events("87470123")["total"] == 0                 # sizes and offsets are not indexed

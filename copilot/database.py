@@ -1,4 +1,5 @@
 import hashlib
+import re
 import sqlite3
 import json
 import uuid
@@ -392,32 +393,39 @@ class CaseDatabase:
 
     def _refresh_normalization(self, batch: int = 5000):
         """
-        Rebuilds descriptions, event types and extracted fields from the raw rows when the
-        normalizer has improved since they were stored (NORMALIZER_VERSION), so the agent sees
-        the same text a new collection would get. Timestamps are not affected.
+        Rebuilds descriptions, event types, extracted fields and the search index from the raw
+        rows when the normalizer has improved since they were stored (NORMALIZER_VERSION), so the
+        agent sees and finds the same as for a new collection. Timestamps are not affected.
         """
         stored = self.conn.execute("SELECT value FROM meta WHERE key = 'normalizer'").fetchone()
         if stored and stored[0] == str(NORMALIZER_VERSION):
             return
         assignments = ", ".join(f"{c} = ?" for c in ["event_type", "description", *ENTITY_COLUMNS])
+        if self.has_fts:
+            self.conn.execute("DELETE FROM records_fts")
         last = 0
         while True:
-            rows = self.conn.execute("SELECT rowid, evidence_id, source, raw_data FROM records WHERE rowid > ? "
-                                     "ORDER BY rowid LIMIT ?", (last, batch)).fetchall()
+            rows = self.conn.execute("SELECT rowid, evidence_id, source, raw_data, description FROM records "
+                                     "WHERE rowid > ? ORDER BY rowid LIMIT ?", (last, batch)).fetchall()
             if not rows:
                 break
-            updates = []
-            for rowid, evidence_id, source, raw in rows:
+            updates, index = [], []
+            for rowid, evidence_id, source, raw, old_description in rows:
                 last = rowid
                 try:
                     data = json.loads(raw)
                 except (TypeError, ValueError):
+                    index.append((evidence_id, old_description or ""))      # keep it findable as before
                     continue
                 data = data if isinstance(data, dict) else {"value": data}
                 entities = extract_entities(data, source=source)
-                updates.append((event_type_for(source), describe(data, entities, source=source),
+                description = describe(data, entities, source=source)
+                updates.append((event_type_for(source), description,
                                 *[entities.get(c) for c in ENTITY_COLUMNS], evidence_id))
+                index.append((evidence_id, _search_text(data, description, entities)))
             self.conn.executemany(f"UPDATE records SET {assignments} WHERE evidence_id = ?", updates)
+            if self.has_fts:
+                self.conn.executemany("INSERT INTO records_fts (evidence_id, text) VALUES (?, ?)", index)
         self.conn.execute("INSERT OR REPLACE INTO meta VALUES ('normalizer', ?)", (str(NORMALIZER_VERSION),))
         self.conn.commit()
 
@@ -455,12 +463,20 @@ def _evidence_id(client_id: str, source: str, raw_row: str) -> str:
     return hashlib.sha256(f"{client_id}|{source}|{raw_row}".encode("utf-8")).hexdigest()[:16]
 
 
+# Numbers are searchable only in identifier fields (PID, MFT entry, inode, USN, sequence...),
+# so a file can be followed across renames by its MFT entry, without indexing every size and offset.
+_ID_FIELD = re.compile(r"(?i)(id|pid|mft\w*|inode\w*|entry\w*|seq\w*|usn)$")
+
+
 def _search_text(row, description: str, entities: dict) -> str:
-    """Description, extracted fields, then short string values from the row, capped."""
+    """Description, extracted fields, short string values and identifier numbers from the row, capped."""
     parts = [description, *entities.values()]
-    for _, value in flatten(row if isinstance(row, dict) else {"value": row}):
+    for key, value in flatten(row if isinstance(row, dict) else {"value": row}):
         if isinstance(value, str) and value:
             parts.append(value[:FTS_VALUE_CHARS])
+        elif isinstance(value, int) and not isinstance(value, bool) and \
+                _ID_FIELD.search(re.sub(r"\[\d+\]$", "", key.rsplit(".", 1)[-1])):
+            parts.append(str(value))
     text, seen = [], set()
     size = 0
     for part in parts:

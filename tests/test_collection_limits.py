@@ -123,3 +123,42 @@ def test_no_approval_channel_refuses(case, monkeypatch):
     monkeypatch.setattr(approvals, "ASK", None)
     with pytest.raises(CollectionError, match="approval"):
         collection.collect("Windows.System.TaskScheduler", vql=FakeVQL(), requested_by="agent", sleep=lambda s: None)
+
+
+def test_a_short_time_window_counts_as_a_filter(case, monkeypatch):
+    _config(monkeypatch, agent_collections="auto")
+    narrow = {"DateAfter": "2020-09-19T03:45:00Z", "DateBefore": "2020-09-19T03:48:00Z"}
+    summary = collection.collect("Windows.Forensics.Usn", narrow, vql=FakeVQL(artifact_params=["DateAfter", "DateBefore"]),
+                                 requested_by="agent", sleep=lambda s: None)
+    assert summary["state"] == "FINISHED"
+    wide = {"DateAfter": "2020-09-19T00:00:00Z", "DateBefore": "2020-09-19T03:00:00Z"}
+    with pytest.raises(CollectionError, match="at most 60 minutes"):
+        collection.collect("Windows.Forensics.Usn", wide, vql=FakeVQL(artifact_params=["DateAfter", "DateBefore"]),
+                           requested_by="agent", sleep=lambda s: None)
+
+
+def test_empty_result_note_uses_what_the_case_collected_before(case, monkeypatch):
+    _config(monkeypatch)
+    flow_ids = iter(range(100))
+
+    class Flows(FakeVQL):                       # a new flow ID per collection, like Velociraptor
+        def run_vql(self, query, env=None, timeout=None):
+            res = super().run_vql(query, env, timeout)
+            if "collect_client" in query and res["results"]:
+                res["results"][0]["flow"]["flow_id"] = f"F.T{next(flow_ids)}"
+            return res
+
+    def nothing():
+        return Flows(rows={"Windows.NTFS.MFT": []}, reported_rows=0, listed=[])
+
+    first = collection.collect("Windows.NTFS.MFT", {"FileRegex": "x"}, vql=nothing(), sleep=lambda s: None)
+    assert "did not resolve through the remapping" in first["note"]          # nothing has worked yet: maybe
+    collection.collect("Windows.Timeline.Prefetch", vql=Flows(rows={"Windows.Timeline.Prefetch": [{"Name": "A.EXE"}]}),
+                       sleep=lambda s: None)
+    second = collection.collect("Windows.NTFS.MFT", {"FileRegex": "y"}, vql=nothing(), sleep=lambda s: None)
+    assert "The image is readable" in second["note"] and "remapping" not in second["note"]
+    collection.collect("Windows.NTFS.MFT", {"FileRegex": "z"},
+                       vql=Flows(rows={"Windows.NTFS.MFT": [{"FileName": "z.txt"}]}), sleep=lambda s: None)
+    third = collection.collect("Windows.NTFS.MFT", {"FileRegex": "^loot\\.zip$"}, vql=nothing(), sleep=lambda s: None)
+    assert "This artifact works on this image" in third["note"] and "loot" in third["note"]
+    assert "Do not blame the disk mapping" in third["note"]

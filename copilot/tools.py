@@ -85,7 +85,8 @@ def collect_artifact(artifact_name: str, parameters: Optional[dict] = None) -> s
     only collect more to test a specific lead. The case time window is applied to the
     artifact's date filters automatically, and results are capped at a row limit.
     Heavy artifacts (MFT, USN journal, EvtxHunter, file searches) require a filter
-    parameter (e.g. a filename/path regex or event IDs). The investigator may be asked
+    parameter (e.g. a filename/path regex or event IDs) or a DateAfter/DateBefore window
+    of at most 60 minutes (recorded host time). The investigator may be asked
     to approve the collection. If it is still running, it returns state RUNNING and a
     flow_id for `check_collection`.
     Args:

@@ -313,6 +313,26 @@ def _finish(flow_id: str, status: dict, vql) -> dict:
     return summary
 
 
+def _empty_note(flow_id: str, known: dict) -> str:
+    """Why a collection may have returned nothing, judged from what this case collected before."""
+    others = [c for c in case_db.get_collections()
+              if c["flow_id"] != flow_id and c.get("client_id") == known.get("client_id")
+              and (c.get("rows_ingested") or 0) > 0]
+    params = known.get("parameters") or "{}"
+    if any(c["artifact"] == known.get("artifact") for c in others):
+        return (f"Velociraptor collected 0 rows. This artifact works on this image (an earlier collection of it "
+                f"returned rows), so nothing matched these parameters {params}: the filter may be too narrow, "
+                f"the time window may exclude it, or the data is gone (e.g. a deleted file whose record was "
+                f"reused). Do not blame the disk mapping.")
+    if others:
+        return (f"Velociraptor collected 0 rows. The image is readable (other collections from it returned "
+                f"rows), so most likely nothing matched these parameters {params}, or the data is not on "
+                f"this image.")
+    return ("Velociraptor collected 0 rows. The artifact found nothing on the image; on a dead disk this can "
+            "also mean its paths did not resolve through the remapping (no collection from this image has "
+            "returned rows yet).")
+
+
 def _summary(flow_id: str, status: dict, result: dict = None) -> dict:
     known = case_db.get_collection(flow_id)
     summary = {
@@ -329,8 +349,7 @@ def _summary(flow_id: str, status: dict, result: dict = None) -> dict:
         if result.get("already_ingested"):
             summary["note"] = "Already ingested earlier."
         elif not total:
-            summary["note"] = ("Velociraptor collected 0 rows. The artifact found nothing on the image; on a "
-                               "dead disk this can also mean its paths did not resolve through the remapping.")
+            summary["note"] = _empty_note(flow_id, known)
         elif not result.get("rows_read"):
             summary["note"] = ("Velociraptor reports rows but none could be read back, so nothing was "
                                "ingested. This is a copilot problem, not an empty result; check_collection "
@@ -363,17 +382,35 @@ def check(flow_id: str, vql=None) -> dict:
 _MATCH_ALL = {".", ".*", ".+", "^.*$", "^.*", ".*$", "*", "(?i).", "(?i).*", "^", "$", "^.+$"}
 
 
+# A time window this short is a real filter, even on heavy artifacts (e.g. the USN journal
+# for the minutes around an event, to see every file touched then).
+NARROW_WINDOW_MINUTES = 60
+
+
+def _window_minutes(params: dict):
+    """Length of the window given in the parameters, in minutes (None if not both ends)."""
+    from copilot.normalize import parse_timestamp
+    after = next((v for k, v in (params or {}).items() if k.lower() in TIME_AFTER_PARAMS and v), None)
+    before = next((v for k, v in (params or {}).items() if k.lower() in TIME_BEFORE_PARAMS and v), None)
+    start, end = parse_timestamp(str(after or ""), "time"), parse_timestamp(str(before or ""), "time")
+    if not (start and end):
+        return None
+    return (end - start).total_seconds() / 60
+
+
 def check_agent_request(artifact: str, params: dict):
     """Rules for collections the agent asks for (before the investigator is asked)."""
     if case_config.is_heavy(artifact):
         filters = [k for k, v in (params or {}).items()
                    if v not in (None, "") and str(v).strip() not in _MATCH_ALL
                    and k.lower() not in TIME_AFTER_PARAMS | TIME_BEFORE_PARAMS]
-        if not filters:
+        minutes = _window_minutes(params)
+        if not filters and not (minutes is not None and 0 <= minutes <= NARROW_WINDOW_MINUTES):
             raise CollectionError(
                 f"'{artifact}' can return millions of rows. Pass at least one real filter parameter "
                 f"(e.g. a filename/path regex, event IDs or a search regex; see describe_artifact) "
-                f"based on a lead you already have. Patterns that match everything don't count.")
+                f"based on a lead you already have, or a time window of at most {NARROW_WINDOW_MINUTES} "
+                f"minutes around an event. Patterns that match everything don't count.")
 
 
 def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=None,

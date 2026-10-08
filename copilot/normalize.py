@@ -144,7 +144,7 @@ DESCRIPTION_TEMPLATES = [
     ("Memory.linux.psaux*", "process {COMM}[ PID {PID}][ PPID {PPID}][: {ARGS}]"),
     ("Memory.linux.pslist*", "process {COMM}[ PID {PID}][ PPID {PPID}]"),
 ]
-NORMALIZER_VERSION = 2
+NORMALIZER_VERSION = 3
 _FIELD_RE = re.compile(r"\{([^{}]+)\}")
 
 # Fields that make the best one-line description, in order of preference.

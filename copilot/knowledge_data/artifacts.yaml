@@ -213,6 +213,7 @@
     - FileRegex matches the file NAME only; to search a folder use PathRegex.
     - 'DateAfter/DateBefore filter on timestamps: when hunting a known file name, drop them so older or timestomped entries are not excluded.'
     - 0x10 ($SI) times can be timestomped; compare with 0x30 ($FN). $SI created earlier than $FN created is a classic timestomping sign.
+    - 'A deleted file''s MFT entry is often reused within minutes, so 0 rows for a deleted file''s name is normal: use the USN journal (Windows.Forensics.Usn) for its history.'
 
 - pattern: '*Usn*'
   what: NTFS USN change journal
@@ -222,6 +223,9 @@
   tips:
     - Several rows per operation are normal (one per reason flag, e.g. FILE_CREATE then CLOSE).
     - The journal rolls over; on busy systems it may only cover days.
+    - 'Follow a file across renames by its MFT entry number (e.g. _FileMFTID / MFTId): search_iocs on the number finds every record of that file, including FILE_CREATE with its original name and RENAME_OLD_NAME with each previous name.'
+    - 'To find files created next to it, also search the parent folder''s MFT entry (_ParentMFTID).'
+    - 'To see every file touched around an event (e.g. an archive created under another name), collect with only DateAfter/DateBefore a few minutes apart (recorded host time): a window of 60 minutes or less counts as a filter.' 
 
 - pattern: Windows.Forensics.Lnk*
   what: Shortcut (LNK) files
