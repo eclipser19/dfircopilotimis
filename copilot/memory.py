@@ -7,6 +7,7 @@ Server (server.yaml, see copilot/settings.py):
       symbols_dir: D:\\dfir\\symbols   # Windows symbol tables: windows.zip and/or downloaded tables
       offline: true                    # never download symbols (Volatility's --offline)
       timeout: 3600                    # seconds per plugin run
+      yara_dir: D:\\dfir\\yara           # optional: YARA rule files (.yar) the agent may scan memory with
 
 Case (case.yaml):
     memory:
@@ -19,7 +20,12 @@ rendering JSON. Its rows go into the case database like collected artifacts (sou
 "Memory.<plugin>"), so the timeline, search, findings and report include them.
 
 Only the plugins in PLUGINS can run, with only the options listed there: nothing that dumps
-files, writes outside the case, or reads anything but an image in images_dir.
+files, writes outside the case, or reads anything but an image in images_dir (and rule files
+in yara_dir).
+
+Searching memory: `strings` reads the image file itself for a text (no Volatility, also freed
+memory, but no process); windows.vadyarascan finds it per process with YARA, or scans with a
+rule file from yara_dir (needs `pip install yara-x` or yara-python next to Volatility).
 """
 import json
 import os
@@ -44,11 +50,58 @@ class MemoryAnalysisError(Exception):
 
 
 class Plugin:
-    def __init__(self, names, about, options=(), heavy=False):
+    def __init__(self, names, about, options=(), heavy=False, needs_one_of=(), post=None, requires=""):
         self.names = names            # full Volatility names, newest first (renamed between versions)
         self.about = about
-        self.options = set(options)   # pid | key | recurse | contains
+        self.options = set(options)   # pid | key | recurse | contains | text | rules
         self.heavy = heavy            # the agent must narrow it (pid / key / contains)
+        self.needs_one_of = set(needs_one_of)   # a search: one of these options is required
+        self.post = post              # rows -> rows, after Volatility (e.g. decode matched bytes)
+        self.requires = requires      # what to install when the installed Volatility lacks it
+
+    @property
+    def searches(self) -> bool:
+        return bool(self.needs_one_of)
+
+
+YARA_INSTALL = ("YARA for Python is not installed next to Volatility: run 'pip install yara-x' "
+                "(or yara-python) with the copilot's Python, then restart the copilot.")
+
+
+def _printable(data: bytes) -> tuple:
+    """(text, encoding) for matched bytes: UTF-16 when every second byte is zero."""
+    if len(data) >= 4 and not any(data[1::2]):
+        text, encoding = data[0::2].decode("latin-1"), "UTF-16"
+    else:
+        text, encoding = data.decode("latin-1"), "ASCII"
+    return "".join(c if " " <= c <= "~" else "." for c in text), encoding
+
+
+def _yara_hits(rows: list, options: dict) -> list:
+    """
+    One row per process and matched text (Volatility reports every offset): the matched bytes
+    (hex) become readable text, with how often and where first.
+    """
+    grouped = {}
+    for row in rows:
+        try:
+            data = bytes.fromhex(str(row.get("Value") or ""))
+        except ValueError:
+            data = str(row.get("Value") or "").encode()
+        match, encoding = _printable(data)
+        rule = "" if options.get("text") else row.get("Rule") or ""     # a text search's rule is generated
+        key = (row.get("PID"), rule, match)
+        if key in grouped:
+            grouped[key]["Hits"] += 1
+            continue
+        hit = {k: v for k, v in row.items() if k not in ("Value", "Component", "Rule", "Offset", "ImageFileName")}
+        if "ImageFileName" in row:
+            hit["Process"] = row["ImageFileName"]
+        hit.update(Match=match, Encoding=encoding, Hits=1, FirstOffset=row.get("Offset"))
+        if rule:
+            hit["Rule"] = rule
+        grouped[key] = hit
+    return list(grouped.values())
 
 
 # Short name -> plugin. Volatility accepts the full names on every 2.x version.
@@ -83,6 +136,16 @@ PLUGINS = {
                               ["pid", "contains"], heavy=True),
     "windows.vadinfo": Plugin(["windows.vadinfo.VadInfo"], "Virtual memory regions of a process and their protection",
                               ["pid", "contains"], heavy=True),
+    # --- Searching memory
+    "strings": Plugin([], "Searches the image file itself for a text (IP, domain, URL, file name), ASCII and "
+                          "UTF-16, with the text around it. Finds leftovers in freed memory too; does not say "
+                          "which process (then use windows.vadyarascan). Fast, needs no symbols.",
+                      ["text"], needs_one_of=["text"]),
+    "windows.vadyarascan": Plugin(["windows.vadyarascan.VadYaraScan"],
+                                  "YARA scan of each process's memory: which processes hold a text (text) or "
+                                  "match a rule file from the server's YARA folder (rules)",
+                                  ["pid", "text", "rules"], needs_one_of=["text", "rules"], post=_yara_hits,
+                                  requires=YARA_INSTALL),
     # --- Windows: network
     "windows.netscan": Plugin(["windows.netscan.NetScan"],
                               "Network connections and listening sockets, also closed ones: owner process, "
@@ -146,7 +209,16 @@ PLUGINS = {
                            heavy=True),
     "linux.lsmod": Plugin(["linux.lsmod.Lsmod"], "Loaded kernel modules"),
     "linux.boottime": Plugin(["linux.boottime.Boottime"], "When the system booted"),
+    "linux.vmayarascan": Plugin(["linux.vmayarascan.VmaYaraScan"],
+                                "YARA scan of each process's memory for a text or with a rule file",
+                                ["pid", "text", "rules"], needs_one_of=["text", "rules"], post=_yara_hits,
+                                requires=YARA_INSTALL),
 }
+
+# Raw search of the image file (the `strings` plugin).
+MAX_STRING_HITS = 5000
+_CHUNK = 64 * 1024 * 1024
+_BEFORE, _AFTER = 60, 100
 
 TRIAGE = {
     "windows": ["windows.info", "windows.pslist", "windows.psscan", "windows.pstree", "windows.cmdline",
@@ -192,6 +264,41 @@ def symbols_problem() -> str:
         return (f"memory.symbols_dir must be the folder that holds the windows folder, not a folder inside it. "
                 f"Use: {root}")
     return ""
+
+
+def yara_dir() -> str:
+    path = settings.get("memory", "yara_dir", "DFIR_YARA_DIR", "")
+    return os.path.abspath(str(path)) if path else ""
+
+
+def rule_files() -> list:
+    """YARA rule files the agent may use (names relative to yara_dir, one level deep)."""
+    root = yara_dir()
+    if not root or not os.path.isdir(root):
+        return []
+    found = []
+    for folder, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if not d.startswith(".")] if folder == root else []
+        found += [os.path.relpath(os.path.join(folder, f), root).replace("\\", "/") for f in files
+                  if os.path.splitext(f)[1].lower() in (".yar", ".yara") and not f.startswith(".")]
+    return sorted(found, key=str.lower)
+
+
+def rule_path(name: str) -> str:
+    """A rule file inside yara_dir (MemoryAnalysisError otherwise)."""
+    root = yara_dir()
+    if not root or not os.path.isdir(root):
+        raise MemoryAnalysisError("No YARA rule folder is set up on this server (memory.yara_dir in server.yaml). "
+                                  "Search for a text instead (text option).")
+    path, real_root = os.path.realpath(os.path.join(root, str(name))), os.path.realpath(root)
+    try:
+        inside = os.path.commonpath([path, real_root]) == real_root
+    except ValueError:
+        inside = False
+    if not inside or os.path.splitext(path)[1].lower() not in (".yar", ".yara") or not os.path.isfile(path):
+        known = ", ".join(rule_files()) or "none"
+        raise MemoryAnalysisError(f"No rule file '{name}' in the server's YARA folder. Available: {known}.")
+    return path
 
 
 def offline() -> bool:
@@ -284,6 +391,13 @@ def check_options(short: str, spec: Plugin, options: dict, requested_by: str = "
             raise MemoryAnalysisError("pid must be a list of process IDs (numbers).")
     if "recurse" in options and "key" not in options:
         raise MemoryAnalysisError("recurse needs a key.")
+    if spec.needs_one_of and len(spec.needs_one_of & set(options)) != 1:
+        raise MemoryAnalysisError(f"{short} searches memory: give exactly one of "
+                                  f"{' or '.join(sorted(spec.needs_one_of))}.")
+    if "text" in options:
+        options["text"] = check_text(options["text"])
+    if "rules" in options:
+        rule_path(options["rules"])
     if requested_by == "agent" and spec.heavy and not ({"pid", "key", "contains"} & set(options)):
         raise MemoryAnalysisError(f"{short} returns a lot of rows for a whole memory image. Narrow it with "
                            f"{' or '.join(sorted(spec.options & {'pid', 'key', 'contains'}))}, based on a lead "
@@ -291,8 +405,29 @@ def check_options(short: str, spec: Plugin, options: dict, requested_by: str = "
     return options
 
 
+def check_text(text) -> str:
+    """A text to search memory for: printable ASCII, long enough not to match everywhere."""
+    text = str(text).strip()
+    if not 4 <= len(text) <= 200 or any(not " " <= c <= "~" for c in text):
+        raise MemoryAnalysisError("text must be 4 to 200 printable ASCII characters, e.g. an IP address, "
+                                  "a domain, part of a URL or a file name.")
+    return text
+
+
+_YARA_META = set("\\^$.|?*+()[]{}/")
+
+
+def yara_text_rule(text: str) -> str:
+    """A YARA regex for the text plus the printable text that follows it (the rest of a URL)."""
+    return "/" + "".join("\\" + c if c in _YARA_META else c for c in text) + "[ -~]{0,100}/"
+
+
 def _arguments(options: dict) -> list:
     args = []
+    if options.get("text"):
+        args += ["--yara-string", yara_text_rule(options["text"]), "--wide", "--insensitive"]
+    if options.get("rules"):
+        args += ["--yara-file", rule_path(options["rules"])]
     if options.get("pid"):
         args += ["--pid", *[str(p) for p in options["pid"]]]
     if options.get("key"):
@@ -413,7 +548,8 @@ def _plugin_name(short: str, spec: Plugin) -> str:
     available = available_plugins()
     names = [n for n in spec.names if n in available]
     if not names:
-        raise MemoryAnalysisError(f"{short} is not available in the installed Volatility ({version()}).")
+        raise MemoryAnalysisError(f"{short} is not available in the installed Volatility ({version()})."
+                                  + (f" {spec.requires}" if spec.requires else ""))
     return names[0]
 
 
@@ -421,8 +557,11 @@ def execute(short: str, options: dict, image: str = None) -> dict:
     """Runs an already approved plugin run."""
     _, spec = resolve(short)
     image = image or image_path()
-    plugin_name = _plugin_name(short, spec)
-    cmd = build_command(image, plugin_name, options)      # settings problems surface before anything runs
+    if spec.names:
+        plugin_name = _plugin_name(short, spec)
+        cmd = build_command(image, plugin_name, options)      # settings problems surface before anything runs
+    else:
+        plugin_name, cmd = short, None                        # done here, not by Volatility
     started = datetime.now(timezone.utc)
     flow_id = f"MEM.{short}.{started.strftime('%Y%m%d%H%M%S%f')}"
     source = f"Memory.{plugin_name}"
@@ -433,9 +572,15 @@ def execute(short: str, options: dict, image: str = None) -> dict:
     summary = {"artifact": source, "flow_id": flow_id, "image": case_config.memory_image}
     clock = time.monotonic()
     try:
-        code, stdout, stderr = _run_process(cmd)
+        if cmd:
+            code, stdout, stderr = _run_process(cmd)
+        else:
+            found, truncated = search_image(image, options["text"])
+            code, stdout, stderr = 0, json.dumps(found), ""
     except subprocess.TimeoutExpired:
         code, stdout, stderr = None, "", f"Stopped after {timeout()} s (memory.timeout)."
+    except OSError as e:
+        code, stdout, stderr = None, "", f"Could not read the image: {e}"
     seconds = round(time.monotonic() - clock)
     finished = datetime.now(timezone.utc).isoformat()
     if code != 0:
@@ -450,6 +595,8 @@ def execute(short: str, options: dict, image: str = None) -> dict:
         case_db.upsert_collection(flow_id, state="ERROR", error=error[:4000], finished_at=finished)
         return {**summary, "state": "ERROR", "error": error, "seconds": seconds}
     returned = list(_rows(tree if isinstance(tree, list) else [tree]))
+    if spec.post:
+        returned = spec.post(returned, options)
     # Some scans report the same record many times (svcscan finds each service list from
     # several headers): keep one copy of identical rows.
     rows = list({json.dumps(r, sort_keys=True, default=str): r for r in returned}.values())
@@ -467,7 +614,63 @@ def execute(short: str, options: dict, image: str = None) -> dict:
                            f"(collection.max_rows). Narrow it with pid or contains.")
     elif not rows:
         summary["note"] = "No rows (nothing matched, or nothing of this kind in this image)."
+        if short == "strings":
+            summary["note"] = ("The text is nowhere in the image file (ASCII or UTF-16). If the image is "
+                               "compressed (e.g. some crash dumps or snapshots), this search can't see inside it.")
+        elif spec.searches:
+            summary["note"] = ("No process's memory holds it now. Freed memory and exited processes are not "
+                               "covered: the strings plugin searches the whole image file.")
+    if not cmd and truncated:
+        summary["note"] = f"Stopped after {MAX_STRING_HITS} hits: use a longer, more specific text."
     return summary
+
+
+def _context(data: bytes, start: int, end: int, step: int) -> tuple:
+    """Printable text before start (up to _BEFORE characters) and from start on (match + up to _AFTER)."""
+    def printable(i):
+        return 0x20 <= data[i] <= 0x7E and (step == 1 or data[i + 1] == 0)
+
+    i = start
+    while i - step >= 0 and (start - i) // step < _BEFORE and printable(i - step):
+        i -= step
+    j = end
+    while j + step <= len(data) and (j - end) // step < _AFTER and printable(j):
+        j += step
+    return data[i:start][::step].decode("latin-1"), data[start:j][::step].decode("latin-1")
+
+
+def search_image(path: str, text: str, max_hits: int = MAX_STRING_HITS) -> tuple:
+    """
+    The `strings` plugin: every place the image file holds `text` (case-insensitive, ASCII and
+    UTF-16LE), with the printable text around it. Returns (one row per distinct context,
+    whether it stopped at max_hits).
+    """
+    needle = text.lower().encode("ascii")
+    needles = [(needle, 1, "ASCII"), (b"".join(bytes([c]) + b"\0" for c in needle), 2, "UTF-16")]
+    margin = (_BEFORE + _AFTER) * 2 + len(needles[1][0])
+    grouped, hits, offset = {}, 0, 0
+    with open(path, "rb") as f:
+        while hits < max_hits:
+            f.seek(max(0, offset - margin))
+            head = offset - max(0, offset - margin)
+            data = f.read(head + _CHUNK + margin)
+            if len(data) <= head:
+                break
+            lowered = data.lower()
+            for pattern, step, encoding in needles:
+                at = lowered.find(pattern, head)
+                while at != -1 and at < head + _CHUNK and hits < max_hits:
+                    before, match = _context(data, at, at + len(pattern), step)
+                    key = (encoding, before, match)
+                    if key in grouped:
+                        grouped[key]["Hits"] += 1
+                    else:
+                        grouped[key] = {"Offset": hex(offset - head + at), "Encoding": encoding,
+                                        "Before": before, "Match": match, "Hits": 1}
+                    hits += 1
+                    at = lowered.find(pattern, at + 1)
+            offset += _CHUNK
+    return sorted(grouped.values(), key=lambda r: int(r["Offset"], 16)), hits >= max_hits
 
 
 def _run_process(cmd: list) -> tuple:
@@ -506,9 +709,23 @@ def triage(progress=None, plugins: list = None) -> list:
     return summaries
 
 
+def triage_plugins(os_name: str = None) -> list:
+    """Plugins that can be part of a memory triage (not the searches, which need a text or rules)."""
+    prefix = (os_name or case_config.memory_os) + "."
+    return [short for short, spec in PLUGINS.items() if short.startswith(prefix) and not spec.searches]
+
+
 def plugin_list() -> list:
-    return [{"plugin": short, "about": spec.about, "options": sorted(spec.options),
-             "needs_filter_for_agent": spec.heavy} for short, spec in PLUGINS.items()]
+    listed = []
+    for short, spec in PLUGINS.items():
+        item = {"plugin": short, "about": spec.about, "options": sorted(spec.options),
+                "needs_filter_for_agent": spec.heavy}
+        if spec.searches:
+            item["needs_one_of"] = sorted(spec.needs_one_of)
+        if "rules" in spec.options:
+            item["rule_files"] = rule_files()
+        listed.append(item)
+    return listed
 
 
 # ---------------------------------------------------------------- server check (CLI)
@@ -544,6 +761,13 @@ def check(image: str = None) -> int:
     else:
         print("Symbols: Volatility's own folders (memory.symbols_dir not set)")
     print(f"Offline: {'yes, nothing is downloaded' if offline() else 'no, missing symbols are downloaded'}")
+    if "windows.vadyarascan.VadYaraScan" in available_plugins():
+        print("YARA: available (memory searches per process)")
+    else:
+        print(f"[i] YARA scans are off: {YARA_INSTALL}")
+    if yara_dir():
+        state = f"{len(rule_files())} rule files" if os.path.isdir(yara_dir()) else "does not exist"
+        print(f"YARA rule folder {yara_dir()}: {state}")
     if image:
         try:
             path = image_path(image)

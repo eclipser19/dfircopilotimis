@@ -484,7 +484,7 @@ def triage_editor():
         if any(case_config.is_heavy(step["artifact"]) and not step["parameters"] for step in chosen):
             st.caption(f"⚠️ Heavy artifacts without a filter stop at {case_config.max_rows:,} rows.")
         if case_config.memory_image:
-            mem_options = [k for k in memory.PLUGINS if k.startswith(case_config.memory_os + ".")]
+            mem_options = memory.triage_plugins()
             st.session_state[p + "memsel"] = st.multiselect(
                 f"Memory plugins ({case_config.memory_image})", mem_options, key=p + "mem",
                 on_change=_keep, args=(p + "mem", p + "memsel"),

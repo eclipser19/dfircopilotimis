@@ -219,9 +219,16 @@ def real_volatility():
 
 
 def test_every_allowed_plugin_exists_in_the_installed_volatility(real_volatility):
+    import importlib.util
     available = memory.available_plugins()
-    missing = [short for short, spec in memory.PLUGINS.items() if not any(n in available for n in spec.names)]
+    missing = [short for short, spec in memory.PLUGINS.items()
+               if spec.names and not spec.requires and not any(n in available for n in spec.names)]
     assert not missing, f"not in Volatility {memory.version()}: {missing}"
+    # Plugins that need an extra package (YARA) are listed only when it is installed: the module must exist.
+    for spec in memory.PLUGINS.values():
+        if spec.requires:
+            assert any(importlib.util.find_spec("volatility3.plugins." + n.rsplit(".", 1)[0])
+                       for n in spec.names), spec.names
 
 
 def test_real_volatility_on_a_file_that_is_not_an_image(case, real_volatility, tmp_path, monkeypatch):
@@ -297,3 +304,113 @@ def test_identical_rows_are_stored_once(case, mem):
     from copilot.agent import status_line
     assert status_line(summary) == ("Memory.windows.svcscan.SvcScan -> FINISHED: rows 2, new 2, "
                                     "59 repeated rows dropped (0 s)")
+
+
+# ---- Searching memory: the image file itself (strings) and YARA per process ----
+
+def _hex(text, wide=False):
+    return (text.encode("utf-16-le") if wide else text.encode()).hex(" ")
+
+
+VADYARA = [  # as Volatility 2.28 renders windows.vadyarascan with -r json (Value = the matched bytes)
+    {"Offset": 4096, "PID": 3644, "CreateTime": "2020-09-19T03:42:42+00:00", "PPID": 600,
+     "ImageFileName": "spoolsv.exe", "SessionId": 0, "Threads": 9, "Rule": "r1", "Component": "$a",
+     "Value": _hex("203.78.103.109:443"), "__children": []},
+    {"Offset": 8192, "PID": 3644, "CreateTime": "2020-09-19T03:42:42+00:00", "PPID": 600,
+     "ImageFileName": "spoolsv.exe", "SessionId": 0, "Threads": 9, "Rule": "r1", "Component": "$a",
+     "Value": _hex("203.78.103.109:443"), "__children": []},
+    {"Offset": 64, "PID": 860, "CreateTime": "2020-09-19T03:36:40+00:00", "PPID": 700,
+     "ImageFileName": "MicrosoftEdge.", "SessionId": 2, "Threads": 30, "Rule": "r1", "Component": "$a",
+     "Value": _hex("203.78.103.109/x", wide=True), "__children": []},
+]
+
+
+def test_yara_text_search_names_the_processes_that_hold_it(case, mem):
+    OUTPUT["windows.vadyarascan.VadYaraScan"] = VADYARA
+    try:
+        summary = memory.run("windows.vadyarascan", {"text": "203.78.103.109"})
+    finally:
+        del OUTPUT["windows.vadyarascan.VadYaraScan"]
+    cmd = mem.commands[-1]
+    assert cmd[cmd.index("--yara-string") + 1] == r"/203\.78\.103\.109[ -~]{0,100}/"
+    assert "--wide" in cmd and "--insensitive" in cmd
+    assert summary["rows_read"] == 2                        # one row per process and matched text
+    events = case.query_timeline()["events"]
+    descriptions = sorted(e["description"] for e in events)
+    assert descriptions == ['MicrosoftEdge. PID 860 memory holds "203.78.103.109/x" (UTF-16), 1x',
+                            'spoolsv.exe PID 3644 memory holds "203.78.103.109:443" (ASCII), 2x']
+    assert {e["event_type"] for e in events} == {"memory_search"}
+    assert case.search_events("203.78.103.109")["total"] == 2
+
+
+def test_yara_rule_files_come_from_the_server_folder(case, mem, tmp_path, monkeypatch):
+    rules = tmp_path / "yara"
+    rules.mkdir()
+    (rules / "meterpreter.yar").write_text("rule m { strings: $a = \"metsrv\" condition: $a }")
+    (rules / "notes.txt").write_text("x")
+    with pytest.raises(memory.MemoryAnalysisError, match="memory.yara_dir"):
+        memory.run("windows.vadyarascan", {"rules": "meterpreter.yar"})
+    monkeypatch.setenv("DFIR_YARA_DIR", str(rules))
+    assert memory.rule_files() == ["meterpreter.yar"]
+    for bad in ("../yara/../case.db", "notes.txt", "nope.yar"):
+        with pytest.raises(memory.MemoryAnalysisError, match="Available: meterpreter.yar"):
+            memory.run("windows.vadyarascan", {"rules": bad})
+    OUTPUT["windows.vadyarascan.VadYaraScan"] = [dict(VADYARA[0], Rule="default.m", Value=_hex("metsrv.dll"))]
+    try:
+        memory.run("windows.vadyarascan", {"rules": "meterpreter.yar", "pid": [3644]})
+    finally:
+        del OUTPUT["windows.vadyarascan.VadYaraScan"]
+    cmd = mem.commands[-1]
+    assert cmd[cmd.index("--yara-file") + 1] == str(rules / "meterpreter.yar") and "--pid" in cmd
+    assert any("rule default.m" in r["description"] for r in case.search_events("metsrv")["records"])
+    listed = {p["plugin"]: p for p in memory.plugin_list()}
+    assert listed["windows.vadyarascan"]["rule_files"] == ["meterpreter.yar"]
+
+
+def test_searches_need_one_sensible_text_or_rules(case, mem):
+    for options, message in (({}, "exactly one of rules or text"),
+                             ({"text": "abc", "rules": "x.yar"}, "exactly one of"),
+                             ({"text": "ab"}, "4 to 200 printable ASCII"),
+                             ({"text": "caf\u00e9.example"}, "printable ASCII")):
+        with pytest.raises(memory.MemoryAnalysisError, match=message):
+            memory.run("windows.vadyarascan", options)
+    with pytest.raises(memory.MemoryAnalysisError, match="does not take text"):
+        memory.run("windows.pslist", {"text": "1.2.3.4"})
+    assert not mem.commands
+
+
+def test_yara_missing_says_what_to_install(case, mem, monkeypatch):
+    monkeypatch.setattr(memory, "available_plugins", lambda: {"windows.pslist.PsList"})
+    with pytest.raises(memory.MemoryAnalysisError, match="pip install yara-x"):
+        memory.run("windows.vadyarascan", {"text": "203.78.103.109"})
+    assert memory.main(["check"]) == 0
+
+
+def test_strings_searches_the_image_file_without_volatility(case, mem, tmp_path, monkeypatch):
+    request = b"GET http://194.61.24.102/coreupdater.exe HTTP/1.1\r\n"
+    url = "http://194.61.24.102/coreupdater.exe".encode("utf-16-le")
+    monkeypatch.setattr(memory, "_CHUNK", 32)              # hits across chunk borders
+    (tmp_path / "memory" / "desktop.mem").write_bytes(b"\0" * 40 + request + b"\x01" * 70 + url + b"\0" * 9 + request)
+    summary = memory.run("strings", {"text": "194.61.24.102"})
+    assert summary["state"] == "FINISHED" and summary["rows_read"] == 2 and not mem.commands
+    descriptions = sorted(r["description"] for r in case.search_events("194.61.24.102")["records"])
+    assert descriptions == [
+        'memory image holds "GET http://194.61.24.102/coreupdater.exe HTTP/1.1" (ASCII), 2x first at 0x33',
+        'memory image holds "http://194.61.24.102/coreupdater.exe" (UTF-16), 1x first at 0xaf']
+    missing = memory.run("strings", {"text": "10.99.99.99"})
+    assert missing["rows_read"] == 0 and "nowhere in the image" in missing["note"]
+    rows, truncated = memory.search_image(str(tmp_path / "memory" / "desktop.mem"), "coreupdater", max_hits=1)
+    assert truncated and len(rows) == 1
+
+
+def test_searches_are_not_part_of_the_triage(case, mem):
+    assert "windows.pslist" in memory.triage_plugins("windows")
+    assert "windows.vadyarascan" not in memory.triage_plugins("windows") and "strings" not in memory.triage_plugins("windows")
+    with pytest.raises(cases.CaseError, match="can't be part of the triage"):
+        cases._check_memory_triage(["windows.pslist", "windows.vadyarascan"])
+
+
+def test_agent_searches_memory_with_approval(case, mem, approve_all):
+    out = json.loads(tools.analyze_memory.invoke({"plugin": "strings", "text": "203.78.103.109"}))
+    assert out["state"] == "FINISHED" and out["rows_read"] == 0
+    assert approve_all[0]["summary"] == "strings (text=203.78.103.109) on desktop.mem"

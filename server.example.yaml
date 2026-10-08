@@ -57,3 +57,12 @@ memory:
 
   # Seconds one plugin may run before it is stopped.
   timeout: 3600
+
+  # 4. YARA (optional). The agent can search memory for a text (an IP, domain, URL) without it;
+  #    to find WHICH PROCESS holds the text, or to scan with rule files, install YARA for Python
+  #    once, with the same Python (offline: download the wheel on a PC with internet, then
+  #    `pip install <file>.whl`):
+  #        pip install yara-x
+  #    Rule files (.yar / .yara) the agent may scan with go into this folder (sub-folders one
+  #    level deep). Only these files can be used; rules can't be typed in.
+  # yara_dir: 'C:\dfir\yara'

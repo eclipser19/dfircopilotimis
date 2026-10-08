@@ -308,9 +308,14 @@ def _check_triage(entries) -> list:
 def _check_memory_triage(plugins) -> list:
     from copilot import memory
     try:
-        return [memory.resolve(p)[0] for p in plugins or []]
+        names = [memory.resolve(p)[0] for p in plugins or []]
     except memory.MemoryAnalysisError as e:
         raise CaseError(str(e))
+    searches = [n for n in names if memory.PLUGINS[n].searches]
+    if searches:
+        raise CaseError(f"{', '.join(searches)} search memory for a text or rules, so they can't be part of the "
+                        f"triage. Ask the agent to search for what you are looking for.")
+    return names
 
 
 def update(case_id: str, dry_run: bool = False, **changes) -> dict:

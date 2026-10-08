@@ -49,7 +49,10 @@ def test_guide_tool():
 def test_questions_get_the_matching_playbook():
     from copilot import knowledge
     assert knowledge.playbooks_for("How did coreupdater.exe get onto this machine?") == ["initial_access"]
-    assert knowledge.playbooks_for("Which process owned the connection to 203.78.103.109?") == ["memory"]
+    assert knowledge.playbooks_for("Which process owned the connection to 203.78.103.109?") == ["memory", "indicator"]
+    assert knowledge.playbooks_for("haven't you seen anything related to 194.61.24.102") == ["indicator"]
+    assert knowledge.playbooks_for("investigate that ip, think of the places where you can find it") == ["indicator"]
+    assert "analyze_memory strings" in knowledge.with_playbooks("anything related to 194.61.24.102?")
     assert knowledge.playbooks_for("Was data stolen?") == ["collection_exfiltration"]
     assert knowledge.playbooks_for("summarize the case") == []
     attached = knowledge.with_playbooks("How did coreupdater.exe get onto this machine?")

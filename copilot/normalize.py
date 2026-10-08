@@ -36,6 +36,8 @@ _TIME_NAME_RE = re.compile(
 # (artifact pattern, event type): first match wins.
 EVENT_TYPES = [
     # Memory images (Volatility, see memory.py): sources are "Memory.<plugin>".
+    ("Memory.strings*", "memory_search"),
+    ("Memory.*yarascan*", "memory_search"),
     ("Memory.*netscan*", "network"),
     ("Memory.*netstat*", "network"),
     ("Memory.*sockstat*", "network"),
@@ -143,8 +145,10 @@ DESCRIPTION_TEMPLATES = [
     ("Memory.*filescan*", "file object {Name}"),
     ("Memory.linux.psaux*", "process {COMM}[ PID {PID}][ PPID {PPID}][: {ARGS}]"),
     ("Memory.linux.pslist*", "process {COMM}[ PID {PID}][ PPID {PPID}]"),
+    ("Memory.strings*", 'memory image holds "[{Before}]{Match}"[ ({Encoding})][, {Hits}x][ first at {Offset}]'),
+    ("Memory.*yarascan*", '[{Process} ]PID {PID} memory holds "{Match}"[ ({Encoding})][, {Hits}x][, rule {Rule}]'),
 ]
-NORMALIZER_VERSION = 3
+NORMALIZER_VERSION = 4
 _FIELD_RE = re.compile(r"\{([^{}]+)\}")
 
 # Fields that make the best one-line description, in order of preference.

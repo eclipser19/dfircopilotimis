@@ -51,7 +51,7 @@
   tips:
     - Owner is the process name; join on PID with pslist/cmdline for the full path.
     - Connections from unusual processes (not a browser) to external IPs on 443/80/8080 are typical C2.
-    - 'When the owning process is not readable, compare the connection''s Created time with process start times (pslist/psscan) and malfind hits; then run netscan or handles with pid / contains to confirm.'
+    - 'When the owning process is not readable, run analyze_memory windows.vadyarascan with text = the remote IP: the process whose memory holds the address is usually the owner. Also compare the connection''s Created time with process start times (pslist/psscan) and malfind hits.'
     - Run search_iocs on the remote IP to see the record's description and get_event_detail for the raw row (Created, PID, Owner).
 
 - pattern: Memory.*.netstat.*
@@ -110,6 +110,24 @@
   what: Registry key from memory (Volatility printkey)
   location: memory image, registry hives cached in memory
   meaning: Registry values as they were in memory (can include changes not yet flushed to disk).
+
+- pattern: Memory.strings
+  what: Text search of the memory image (strings)
+  location: memory image file, read directly (ASCII and UTF-16)
+  meaning: 'Every place the image holds a text, with the readable text around it (Before + Match): a URL, an HTTP request, a command line. Includes freed memory of exited processes, so it finds traces that no process list or connection table still has. It does not say which process the memory belonged to.'
+  tips:
+    - 'Search for what the collected data cannot explain: an IP or domain from the case (also the download server, not only the C2), a file name, a URL path. The text after the match often completes it (full URL, HTTP headers, user agent).'
+    - Then run windows.vadyarascan with the same text to see which running process still holds it.
+    - 'No hit is weak evidence: the memory may have been reused, or the image is compressed.'
+
+- pattern: Memory.*yarascan.*
+  what: YARA scan of process memory (Volatility vadyarascan)
+  location: memory image, each process's virtual memory
+  meaning: 'Which process holds a text (text search) or matches a YARA rule (rules): the owner of a C2 address that netscan could not read, the process an injected payload lives in, a browser that still has a download URL.'
+  tips:
+    - Match is the matched text with what follows it; Hits counts how often that process holds it.
+    - 'A C2 address in a system process (spoolsv.exe, svchost.exe, explorer.exe) next to malfind hits points to injection or migration; confirm with malfind / dlllist for that PID.'
+    - 'Several processes can hold the same text (a browser, the console that typed it, the payload): give each one''s role.'
 
 - pattern: Memory.*
   what: Memory analysis result (Volatility 3)
@@ -196,6 +214,8 @@
   location: 'C:\Users\*\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt'
   meaning: Commands typed in interactive PowerShell consoles. No timestamps; correlate with logon sessions.
   params: {SearchStrings: regex filter on lines, UserRegex: user filter, UploadFiles: Y/N}
+  live_only: true
+  dead_disk_note: 'Calls lookupSID, which is disabled for disk images: it returns 0 rows with "Call to function lookupSID disabled" in the log (verified). On an image use PowerShell 4104/4103 script block logs, and the memory image (consoles, strings with a command you suspect).'
 
 # ---------------------------------------------------------------- file system
 - pattern: Windows.NTFS.MFT*
@@ -280,8 +300,8 @@
   location: 'C:\Windows\System32\config\{SYSTEM,SOFTWARE,SAM,SECURITY}, C:\Users\*\NTUSER.DAT, UsrClass.dat'
   meaning: System and user configuration, persistence keys and user activity traces.
 
-# Browsers. Verified on a dead-disk Velociraptor server (Windows 10 image): Chrome.History and
-# NirsoftBrowserViewer return nothing from an image. Internet Explorer / Edge Legacy history
+# Browsers. Verified on a dead-disk Velociraptor server (Windows 10 image): Chrome.History,
+# Edge.History, PSReadline and NirsoftBrowserViewer return nothing from an image (lookupSID). Internet Explorer / Edge Legacy history
 # (WebCacheV01.dat) has no parser artifact on a standard server: prove downloads with the
 # Zone.Identifier stream (Windows.NTFS.ADSHunter), Prefetch of the browser and LNK files.
 - pattern: Windows.Applications.Chrome.History*
@@ -314,7 +334,15 @@
   what: Edge (Chromium) browsing history
   location: 'C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\History'
   meaning: URLs visited and downloads in the new (Chromium) Edge. Not Internet Explorer or Edge Legacy.
-  dead_disk_note: Not yet verified on an image; it may call lookupSID like Chrome.History.
+  live_only: true
+  dead_disk_note: 'Calls lookupSID, which is disabled for disk images: it returns 0 rows with "Call to function lookupSID disabled" in the log (verified). Use Zone.Identifier (Windows.NTFS.ADSHunter), Prefetch, and a strings search of the memory image for the URL or host.'
+
+- pattern: Windows.Detection.Yara.Process*
+  what: YARA scan of running processes
+  location: live process memory
+  meaning: Scans the processes running on the endpoint. A disk image has none.
+  live_only: true
+  dead_disk_note: 'For process memory use the memory image: analyze_memory windows.vadyarascan (text or rules).'
 
 - pattern: Windows.NTFS.ADSHunter*
   what: Alternate data streams, including Zone.Identifier (Mark of the Web)

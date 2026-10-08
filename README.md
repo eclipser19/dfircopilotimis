@@ -228,6 +228,22 @@ files in `images_dir`), or write `memory: {image: <file name>}` in the case file
   can dump files or open a file outside `images_dir`.
 - Each plugin run can take minutes on a large image. `memory.timeout` stops it (default 1 h).
 
+**Searching memory.** When an IP, domain, URL or file name shows up nowhere in the collected data,
+the agent can search the memory image for it (with your approval, like any plugin):
+
+- `strings` reads the image file itself for the text, as ASCII and UTF-16, and stores each place
+  with the readable text around it (a full URL, an HTTP request). It also finds leftovers in freed
+  memory of processes that have exited. It needs neither Volatility symbols nor YARA, but it
+  can't say which process the memory belonged to, and it can't see inside compressed images.
+- `windows.vadyarascan` (Linux: `linux.vmayarascan`) runs YARA over each process's memory: with
+  `text` it names the processes that still hold the text (e.g. the owner of a C2 address that
+  netscan could not read), and with `rules` it scans with a rule file from `memory.yara_dir`.
+  The agent can't write rules itself; it can only use the files in that folder.
+  This needs YARA for Python next to Volatility: `pip install yara-x` (or `yara-python`).
+  `python -m copilot.memory check` says whether it is available.
+
+Searches need a text or rules, so they can't be part of the memory triage.
+
 **Symbols and offline use.** To read a Windows image, Volatility needs the symbol table of that
 image's exact Windows kernel. With `offline: true` it never downloads anything, so the table must
 already be in `symbols_dir` (or in Volatility's own `symbols` folder). Three ways to get it there:

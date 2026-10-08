@@ -11,6 +11,7 @@ initial_access:
     - 'RDP from external IPs: 4624 type 10, RemoteConnectionManager 1149, LocalSessionManager 21/22.'
     - 'Before writing that the delivery method cannot be determined, check the download evidence below and the parent process of the first execution (memory pslist PPID, Prefetch of the parent).'
     - 'Downloads, in this order: Prefetch shows WHICH browser ran just before the payload (IEXPLORE.EXE, MSEDGE.EXE, CHROME.EXE, FIREFOX.EXE); Windows.NTFS.ADSHunter on the payload''s current path gives its Zone.Identifier (HostUrl = download URL); then the history artifact of that browser if it works on images (see dfir_guide on the artifact). Internet Explorer and Edge Legacy (MicrosoftEdge.exe, not msedge.exe) keep history in WebCacheV01.dat, which has no parser artifact on a standard server: use Prefetch, Zone.Identifier and the MFT/USN of the Downloads folder.'
+    - 'If there is a memory image, search it for the payload''s file name and the suspected download host (analyze_memory strings): a URL or HTTP request left in browser memory shows where the file came from.'
     - Email attachments and Office files opened (LNK, JumpLists) shortly before the first malicious execution.
     - Exposed services (web servers) with new files in web roots (MFT/USN).
 
@@ -33,6 +34,16 @@ persistence:
     - 'Scheduled tasks: Tasks folder, Security 4698, TaskScheduler/Operational 106.'
     - WMI subscriptions (WMI-Activity 5861, repository).
     - New or modified accounts (4720, 4732 to Administrators).
+
+indicator:
+  question: Where does this IP, domain, URL or file name appear?
+  triggers: ['\b\d{1,3}(\.\d{1,3}){3}\b', '\bip\b', 'ip address', '\bdomain\b', '\burl\b', 'indicator', '\biocs?\b', 'related to', 'relation']
+  check:
+    - 'Collected data first: search_iocs with the exact value and a shorter part (e.g. the first three octets), then pivot_entity on what it finds.'
+    - 'Event logs that record addresses and URLs, in one pass: Windows.EventLogs.EvtxHunter with an IOC regex of the value covers logons (4624/4625 IpAddress), RDP (1149, LocalSessionManager 21/24/25), Defender detections (1116/1117 name the download URL), BITS transfers and PowerShell script blocks.'
+    - 'Downloads: the Zone.Identifier stream of the downloaded file (Windows.NTFS.ADSHunter on its CURRENT path) holds HostUrl / ReferrerUrl. Browser history only where the artifact works on images (dfir_guide on it); IE and Edge Legacy keep it in WebCacheV01.dat, which has no parser artifact.'
+    - 'Memory image: analyze_memory strings with the value finds it anywhere in RAM, freed memory included, with the text around it (full URL, HTTP request); windows.vadyarascan with the value names the process that still holds it. netscan only lists connections still in memory, so a netscan miss alone proves little.'
+    - 'In the answer, separate real negatives (searched, not there) from checks that could not run on this image (parser needs a live system): only the first kind is evidence of absence.'
 
 lateral_movement:
   question: Did the attacker move between machines?
@@ -93,4 +104,5 @@ memory:
     - 'Always name the parent: search_iocs "PID <ppid>" finds it in the pslist/psscan rows already collected. Not there: analyze_memory windows.psscan with pid [<ppid>] (exited processes stay in memory for a while). contains "<ppid>" also matches the children that list it as PPID, so use pid. explorer.exe means it was started from the desktop (double-click), cmd.exe/powershell.exe a command line, services.exe a service, a browser a download that was opened.'
     - 'A parent found nowhere in memory has exited and been overwritten: write that, then use disk evidence of what ran just before the child (Prefetch, browser artifacts, Zone.Identifier).'
     - 'Narrow heavy plugins (handles, dlllist, filescan, envars) with pid or contains from a lead you already have.'
+    - 'Search memory for any IP, domain or file name the collected data does not explain: strings (whole image, with context) and windows.vadyarascan text=... (which process). The owner of a C2 connection netscan cannot name is usually the process holding the C2 address.'
 

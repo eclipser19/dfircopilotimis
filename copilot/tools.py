@@ -102,7 +102,8 @@ def collect_artifact(artifact_name: str, parameters: Optional[dict] = None) -> s
 
 @tool
 def analyze_memory(plugin: str, pid: Optional[List[int]] = None, contains: Optional[str] = None,
-                   key: Optional[str] = None, recurse: Optional[bool] = None) -> str:
+                   key: Optional[str] = None, recurse: Optional[bool] = None, text: Optional[str] = None,
+                   rules: Optional[str] = None) -> str:
     """
     Runs a Volatility 3 plugin on the case's MEMORY IMAGE and stores its rows in the case database
     (source "Memory.<plugin>"), next to the disk evidence: query them with query_timeline,
@@ -113,6 +114,11 @@ def analyze_memory(plugin: str, pid: Optional[List[int]] = None, contains: Optio
     windows.cmdline, windows.netscan (connections, C2), windows.malfind (injection),
     windows.dlllist, windows.handles, windows.svcscan, windows.filescan, windows.registry.printkey,
     windows.consoles/cmdscan (typed commands). All: list_memory_plugins.
+    SEARCHING memory for an IP, domain, URL or file name that the collected data doesn't explain:
+    plugin 'strings' with text (the whole image file, freed memory too, with the surrounding text,
+    e.g. the full URL; fast) and 'windows.vadyarascan' with text (WHICH PROCESS holds it, e.g. the
+    owner of a C2 address netscan could not read). windows.vadyarascan with rules scans with a
+    YARA rule file from the server (list_memory_plugins shows them).
     Heavy plugins (dlllist, handles, filescan, envars, printkey...) need pid, contains or key.
     The investigator may be asked to approve. A run can take minutes.
     Args:
@@ -121,9 +127,12 @@ def analyze_memory(plugin: str, pid: Optional[List[int]] = None, contains: Optio
         contains: Only rows containing this text in any column (case-insensitive), e.g. 'updater.exe'.
         key: Registry key for windows.registry.printkey, e.g. 'Software\\Microsoft\\Windows\\CurrentVersion\\Run'.
         recurse: With key: include subkeys.
+        text: For strings / windows.vadyarascan: the text to find (4+ characters, case-insensitive,
+            ASCII and UTF-16), e.g. '10.20.30.40' or 'evil-domain.example'.
+        rules: For windows.vadyarascan: a rule file name from the server's YARA folder.
     """
     from copilot import memory
-    options = {"pid": pid, "contains": contains, "key": key, "recurse": recurse}
+    options = {"pid": pid, "contains": contains, "key": key, "recurse": recurse, "text": text, "rules": rules}
     try:
         return _dump(memory.run(plugin, options, requested_by="agent"))
     except memory.MemoryAnalysisError as e:
@@ -132,7 +141,7 @@ def analyze_memory(plugin: str, pid: Optional[List[int]] = None, contains: Optio
 
 @tool
 def list_memory_plugins() -> str:
-    """Lists the Volatility plugins analyze_memory may run, what each shows, and its options."""
+    """Lists the plugins analyze_memory may run, what each shows, its options, and the YARA rule files."""
     from copilot import memory
     return _dump(memory.plugin_list())
 
