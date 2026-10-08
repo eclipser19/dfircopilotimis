@@ -48,6 +48,11 @@ def app_env(tmp_path, monkeypatch):
     return db
 
 
+def _plain(at):
+    """Page text without the escapes that keep evidence and names literal in Markdown."""
+    return _texts(at).replace("\\", "")
+
+
 def _texts(at):
     return " ".join([m.value for m in at.markdown] + [c.value for c in at.caption] + [t.value for t in at.text])
 
@@ -107,6 +112,7 @@ def test_retract_finding_from_the_sidebar(app_env):
     eid = app_env.search_events("x")["records"][0]["evidence_id"]
     app_env.record_finding("No ZIP archive found", "wrong", [eid], "medium")
     at = AppTest.from_file(APP, default_timeout=30).run()
+    at.toggle(key="retract_open").set_value(True).run()                 # inside the collapsible Findings
     at.text_input(key="retract_reason").input("USN shows loot.zip").run()
     next(b for b in at.button if b.label == "Retract").click().run()
     assert not at.exception
@@ -288,7 +294,9 @@ def test_injected_retraction_waits_for_the_investigator(app_env):
     assert not at.exception
     assert len(app_env.get_findings()) == 1
     assert "Declined" in _texts(at)
-    assert "[Investigator] Declined" in at.session_state["chat_history"][-1].content
+    contents = [m.content for m in at.session_state["chat_history"]]
+    assert any("[Investigator] Declined" in c for c in contents)
+    assert "Every pending request has been decided" in contents[-1]      # and the agent went on by itself
 
 
 def test_pending_requests_stay_with_their_case(two_app_cases):
@@ -614,3 +622,95 @@ def test_attacker_text_is_shown_literally_in_the_app(app_env):
     assert "![p]" not in cell and "\\!\\[p\\]" in cell and "\\$b" in cell
     sidebar_title = next(c.value for c in at.caption if c.value.startswith("[HIGH]"))
     assert "![p]" not in sidebar_title and "\\$b" in sidebar_title
+
+
+# ---- Approvals: approve all, and the agent continues by itself ----
+
+def _two_collection_requests(app_env, *after):
+    app_env.ingest_artifact_results([{"Message": "x"}], "S", "D", "C.1")
+    vql = FakeVQL(unique_flows=True)
+    collection.get_vql = lambda: vql            # app_env's monkeypatch puts the original back afterwards
+    at = AppTest.from_file(APP, default_timeout=30)
+    llm = ScriptedLLM(
+        AIMessage(content="", tool_calls=[
+            {"name": "collect_artifact", "id": "1", "args": {"artifact_name": "Windows.System.TaskScheduler"}},
+            {"name": "collect_artifact", "id": "2", "args": {"artifact_name": "Windows.Sys.StartupItems"}}]),
+        AIMessage(content="Both requests are waiting."), *after)
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    at.chat_input[0].set_value("check persistence").run()
+    return at, llm
+
+
+def test_approve_all_then_the_agent_continues(app_env):
+    at, llm = _two_collection_requests(app_env, AIMessage(content="Both collections show the coreupdater task."))
+    assert len([b for b in at.button if b.label == "Approve"]) == 2
+    next(b for b in at.button if b.label == "✅ Approve all").click().run()
+    assert not at.exception
+    assert sorted(c["artifact"] for c in app_env.get_collections()) == ["Windows.Sys.StartupItems",
+                                                                         "Windows.System.TaskScheduler"]
+    assert "Both collections show the coreupdater task." in _texts(at)     # no "continue" needed
+    assert not llm.responses
+
+
+def test_no_automatic_continue_while_requests_wait_or_when_turned_off(app_env):
+    at, llm = _two_collection_requests(app_env)
+    next(b for b in at.button if b.label == "Approve").click().run()
+    assert not at.exception and len(app_env.get_collections()) == 1
+    assert "Every pending request" not in at.session_state["chat_history"][-1].content    # one still waits
+    at.checkbox(key="auto_continue").uncheck().run()
+    next(b for b in at.button if b.label == "Deny").click().run()
+    assert not at.exception
+    assert "[Investigator] Declined" in at.session_state["chat_history"][-1].content
+
+
+# ---- Sidebar ----
+
+def test_database_and_findings_are_collapsible(app_env):
+    app_env.ingest_artifact_results([{"Message": "x"}], "S", "D", "C.1")
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    labels = [e.label for e in at.expander]
+    assert "📊 Database · 1 record" in labels and "🚩 Findings · 0" in labels
+    assert any(d for d in at.get("divider"))
+
+
+def test_triage_picker_runs_and_saves_the_chosen_artifacts(app_env, tmp_path, monkeypatch):
+    import yaml
+    monkeypatch.setenv("DFIR_CASES_DIR", str(tmp_path / "cases"))
+    monkeypatch.setenv("DFIR_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("DFIR_CASE_DIR", raising=False)
+    monkeypatch.setattr(case_config, "path", case_config.path)
+    cases.create("t", "Triage case", client_id=CLIENT)
+    cases.switch("t")
+    cases.consume_switch()
+    vql = FakeVQL(unique_flows=True)
+    monkeypatch.setattr(collection, "get_vql", lambda: vql)
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert "• Windows.Timeline.Prefetch" in _plain(at)                    # the sidebar lists the case's triage
+    next(b for b in at.button if b.key == "tri_edit").click().run()
+    picker = at.multiselect(key="tri_t_art")                               # the editor, above the chat
+    assert "⭐ Windows.Forensics.Lnk" in picker.options and "Windows.Timeline.Prefetch" in picker.value
+    assert "⭐ Windows.NTFS.MFT (heavy)" in picker.options
+    picker.set_value(["Generic.Client.Info", "Windows.EventLogs.EvtxHunter"]).run()
+    assert "IdRegex" in _plain(at)                                         # the suggested parameters are used
+    assert "• Windows.Timeline.Prefetch" not in _plain(at) and "• Generic.Client.Info" in _plain(at)
+    next(b for b in at.button if b.key == "tri_done").click().run()
+    assert not [m for m in at.multiselect if m.key == "tri_t_art"]        # editor closed, choice kept
+    at.checkbox(key="triage_analyze").uncheck().run()
+    next(b for b in at.button if b.key == "tri_t_run").click().run()
+    assert not at.exception
+    assert sorted(c["artifact"] for c in app_env.get_collections()) == ["Generic.Client.Info",
+                                                                         "Windows.EventLogs.EvtxHunter"]
+    next(b for b in at.button if b.key == "tri_edit").click().run()
+    assert at.multiselect(key="tri_t_art").value == ["Generic.Client.Info", "Windows.EventLogs.EvtxHunter"]
+    at.text_area(key="tri_t_params").input('{"Windows.EventLogs.EvtxHunter": {"IdRegex": "^7045$"}}').run()
+    next(b for b in at.button if b.key == "tri_t_save").click().run()
+    assert "Saved as this case's triage" in _texts(at)
+    saved = yaml.safe_load(open(tmp_path / "cases" / "t" / "case.yaml"))["collect"]
+    assert saved == ["Generic.Client.Info", {"artifact": "Windows.EventLogs.EvtxHunter",
+                                             "parameters": {"IdRegex": "^7045$"}}]
+    at.text_area(key="tri_t_params").input("{not json").run()
+    assert any("not valid JSON" in e.value for e in at.error)
+    next(b for b in at.button if b.key == "tri_t_reset").click().run()
+    assert at.multiselect(key="tri_t_art").value == ["Generic.Client.Info", "Windows.EventLogs.EvtxHunter"]

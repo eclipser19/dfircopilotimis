@@ -54,6 +54,20 @@ def artifact_info(source: str) -> dict:
     return UNKNOWN
 
 
+def triage_suggestions(os_name: str = None) -> list:
+    """Suggested triage artifacts for disk images: [{artifact, why, parameters}] (both OSes if none given)."""
+    data = _load("triage.yaml") or {}
+    groups = [os_name] if os_name in data else list(data)
+    seen, out = set(), []
+    for group in groups:
+        for entry in data.get(group) or []:
+            if entry.get("artifact") and entry["artifact"] not in seen:
+                seen.add(entry["artifact"])
+                out.append({"artifact": entry["artifact"], "why": entry.get("why", ""),
+                            "parameters": dict(entry.get("parameters") or {})})
+    return out
+
+
 def is_live_only(artifact: str) -> bool:
     return bool(artifact_info(artifact).get("live_only"))
 

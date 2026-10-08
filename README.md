@@ -146,9 +146,16 @@ file (e.g. `/uploads` on a server), else `case_data/outputs/`.
 
 In the Streamlit app:
 - an empty case offers the triage collection (same as the CLI's first question), and the
-  sidebar's **Triage collection** panel can run it any time;
-- anything the agent wants to change (collect, retract a finding, change/create/switch a
-  case) appears under **Awaiting your approval** with Approve / Deny (CLI: a y/N prompt);
+  sidebar's **Triage collection** panel can run it any time. **✏️ Choose what to collect**
+  opens the triage list above the chat: ⭐ suggestions that work on disk images
+  (`copilot/knowledge_data/triage.yaml`), every allowed artifact on your Velociraptor server
+  (searchable), parameters as JSON, and the memory plugins. Use the choice for this session, or
+  **Save as this case's triage** to write it into the case file;
+- anything the agent wants to change (collect, analyze memory, retract a finding,
+  change/create/switch a case) appears under **Awaiting your approval** with Approve / Deny,
+  or **Approve all** when there are several (CLI: a y/N prompt). Once nothing is waiting, the
+  agent continues with the results by itself (untick "Continue the agent…" to do it yourself);
+- Database, Findings and Files are collapsible sections of the sidebar;
 - every file the agent produces appears in the chat as a download button, and the sidebar
   lists recent files. Ask e.g. "export the timeline 02:30-03:00 as a file" or "give me the
   full records of the evidence for finding 3".

@@ -21,7 +21,7 @@ class FakeVQL:
 
     def __init__(self, states=("FINISHED",), rows=None, flow_error="", schedule_fails=False,
                  reported_rows=None, listed=None, flow_logs=None, artifact_params=None,
-                 rejects_max_rows=False):
+                 rejects_max_rows=False, unique_flows=False):
         self.states = list(states)
         self.rows = rows if rows is not None else {"Generic.Client.Info/BasicInformation": [{"Hostname": "WS01"}]}
         self.flow_error = flow_error
@@ -32,6 +32,8 @@ class FakeVQL:
         self.flow_logs = flow_logs or []
         self.artifact_params = artifact_params or []
         self.rejects_max_rows = rejects_max_rows
+        self.unique_flows = unique_flows     # a new flow ID per collection, like Velociraptor
+        self.flows = 0
         self.calls = []
 
     def run_vql(self, query, env=None, timeout=None):
@@ -43,7 +45,9 @@ class FakeVQL:
                 return {"results": [], "log": "collect_client: Unexpected arg max_rows"}
             if self.schedule_fails:
                 return {"results": [], "log": "artifact not found", "error": None}
-            return {"results": [{"flow": {"flow_id": "F.TEST1"}}], "log": ""}
+            self.flows += 1
+            flow_id = f"F.TEST{self.flows}" if self.unique_flows else "F.TEST1"
+            return {"results": [{"flow": {"flow_id": flow_id}}], "log": ""}
         if "FROM flows(" in query:
             state = self.states.pop(0) if len(self.states) > 1 else self.states[0]
             finished = state == "FINISHED"

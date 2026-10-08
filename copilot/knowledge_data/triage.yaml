@@ -1,0 +1,68 @@
+# Triage suggestions for disk images: offered first (⭐) in the app's triage picker.
+# All read files, registry or event logs, so they work on a dead-disk image. Names must exist
+# on your Velociraptor server: the picker hides the ones it doesn't have.
+#
+#   artifact     exact Velociraptor artifact name
+#   why          one line shown in the picker
+#   parameters   used when the artifact is added to the triage without parameters of its own
+
+windows:
+  - artifact: Generic.Client.Info
+    why: Host name, OS and users
+  - artifact: Windows.EventLogs.RDPAuth
+    why: RDP and interactive logons, with source IPs
+  - artifact: Windows.EventLogs.EvtxHunter
+    why: 'Key event IDs: logons, services, tasks, process creation, log clearing'
+    parameters:
+      IocRegex: "."
+      IdRegex: "^(4624|4625|4634|4647|4648|4688|4697|4698|4720|7045|1102|104|1149|21|22|23|24|25)$"
+  - artifact: Windows.EventLogs.PowershellScriptblock
+    why: PowerShell code that ran (4104), decoded stages included
+  - artifact: Windows.Sys.StartupItems
+    why: Run keys and Startup folders (persistence)
+  - artifact: Windows.System.TaskScheduler
+    why: Scheduled tasks (persistence)
+  - artifact: Windows.Timeline.Prefetch
+    why: Program execution with run times
+  - artifact: Windows.System.Amcache
+    why: Executables present on the system, with SHA1
+  - artifact: Windows.Registry.AppCompatCache
+    why: ShimCache, executables seen by the system
+  - artifact: Windows.Forensics.Bam
+    why: Last execution per user (Background Activity Moderator)
+  - artifact: Windows.Registry.UserAssist
+    why: GUI programs each user ran, with counts
+  - artifact: Windows.Registry.RecentDocs
+    why: Documents each user opened recently
+  - artifact: Windows.Forensics.Lnk
+    why: Shortcuts to opened files, with target paths and times
+  - artifact: Windows.Forensics.Shellbags
+    why: Folders each user browsed
+  - artifact: Windows.Forensics.RecycleBin
+    why: Deleted files in the Recycle Bin
+  - artifact: Windows.System.Powershell.PSReadline
+    why: PowerShell command history per user (no timestamps)
+  - artifact: Windows.Forensics.SRUM
+    why: Per-application network and resource usage
+  - artifact: Generic.Forensic.SQLiteHunter
+    why: Browser history and other SQLite databases read from the files
+  - artifact: Windows.Forensics.Usn
+    why: File creations, renames and deletions (large; capped at the row limit)
+  - artifact: Windows.NTFS.MFT
+    why: Every file with its MACB times (large; capped at the row limit)
+
+linux:
+  - artifact: Generic.Client.Info
+    why: Host name, OS and users
+  - artifact: Linux.Sys.Users
+    why: Local accounts
+  - artifact: Linux.Sys.LastUserLogin
+    why: Logins (wtmp)
+  - artifact: Linux.Syslog.SSHLogin
+    why: SSH logins from the auth logs
+  - artifact: Linux.Ssh.AuthorizedKeys
+    why: SSH keys allowed to log in (persistence)
+  - artifact: Linux.Sys.Crontab
+    why: Cron jobs (persistence)
+  - artifact: Linux.Sys.BashHistory
+    why: Shell command history per user

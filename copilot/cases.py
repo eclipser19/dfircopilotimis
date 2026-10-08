@@ -282,7 +282,35 @@ def _read(case_id: str) -> dict:
 
 # Settings the UI and the agent may change on an existing case.
 EDITABLE = {"name", "client_id", "start_time", "end_time", "description", "clock_offset_minutes", "iocs",
-            "memory_image", "memory_os"}
+            "memory_image", "memory_os", "collect", "memory_collect"}
+ARTIFACT_NAME_RE = re.compile(r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+$")
+
+
+def _check_triage(entries) -> list:
+    """The disk triage list as stored in case.yaml: names, or {artifact, parameters} when there are any."""
+    import fnmatch
+    from copilot.case_config import ARTIFACT_DENYLIST
+    out = []
+    for entry in entries or []:
+        name, params = (entry, {}) if isinstance(entry, str) else \
+            ((entry or {}).get("artifact"), (entry or {}).get("parameters") or {})
+        name = str(name or "").strip()
+        if not ARTIFACT_NAME_RE.match(name):
+            raise CaseError(f"'{name}' is not a Velociraptor artifact name.")
+        if any(fnmatch.fnmatchcase(name, pattern) for pattern in ARTIFACT_DENYLIST):
+            raise CaseError(f"'{name}' can never be collected by the copilot.")
+        if not isinstance(params, dict):
+            raise CaseError(f"Parameters of {name} must be name: value pairs.")
+        out.append({"artifact": name, "parameters": {str(k): str(v) for k, v in params.items()}} if params else name)
+    return out
+
+
+def _check_memory_triage(plugins) -> list:
+    from copilot import memory
+    try:
+        return [memory.resolve(p)[0] for p in plugins or []]
+    except memory.MemoryAnalysisError as e:
+        raise CaseError(str(e))
 
 
 def update(case_id: str, dry_run: bool = False, **changes) -> dict:
@@ -326,6 +354,10 @@ def update(case_id: str, dry_run: bool = False, **changes) -> dict:
         if changes["memory_os"] not in ("windows", "linux"):
             raise CaseError("memory_os must be windows or linux.")
         data.setdefault("memory", {})["os"] = changes["memory_os"]
+    if "collect" in changes:
+        data["collect"] = _check_triage(changes["collect"])
+    if "memory_collect" in changes:
+        data.setdefault("memory", {})["collect"] = _check_memory_triage(changes["memory_collect"])
     if dry_run:
         return data
     _write(case_id, data)

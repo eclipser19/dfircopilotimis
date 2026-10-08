@@ -7,8 +7,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
-from copilot import (approvals, auth, cases, citations, collection, commands, conversation, memory, outputs,
-                     session)
+from copilot import (approvals, auth, cases, citations, collection, commands, conversation, knowledge, memory,
+                     outputs, session)
 from copilot import llm as llm_config
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
@@ -290,6 +290,160 @@ def llm_box():
         st.session_state.finalizer = llm.bind_tools(tools, tool_choice="none")
 
 
+def server_artifacts():
+    """Artifact names on the Velociraptor server, read once per browser session (None if unreachable)."""
+    if "server_artifacts" not in st.session_state:
+        names = None
+        try:
+            res = collection.get_vql().run_vql("SELECT name FROM artifact_definitions()", timeout=5)
+            names = sorted({r["name"] for r in res.get("results", []) if isinstance(r, dict) and r.get("name")})
+        except Exception:      # no api_client.yaml, server down...: offer the suggestions only
+            names = None
+        st.session_state.server_artifacts = names or None
+    return st.session_state.server_artifacts
+
+
+def _plan_params_text() -> str:
+    params = {step["artifact"]: step["parameters"] for step in case_config.collection_plan if step["parameters"]}
+    return json.dumps(params, indent=1) if params else ""
+
+
+def picked_triage(prefix: str) -> list:
+    """The disk triage chosen in this session (else the case's) as [{artifact, parameters}]; ValueError if bad."""
+    plan = case_config.collection_plan
+    picked = st.session_state.get(prefix + "sel", [step["artifact"] for step in plan])
+    text = st.session_state.get(prefix + "paramtext", _plan_params_text()).strip()
+    try:
+        given = json.loads(text) if text else {}
+    except ValueError as e:
+        raise ValueError(f"Parameters are not valid JSON: {e}")
+    if not isinstance(given, dict) or not all(isinstance(v, dict) for v in given.values()):
+        raise ValueError('Parameters must look like {"Artifact.Name": {"Param": "value"}}.')
+    known = {s["artifact"]: s["parameters"] for s in knowledge.triage_suggestions()}
+    known.update({step["artifact"]: step["parameters"] for step in plan})
+    return [{"artifact": n, "parameters": dict(given[n]) if n in given else dict(known.get(n) or {})} for n in picked]
+
+
+def picked_memory(prefix: str) -> list:
+    return st.session_state.get(prefix + "memsel", memory.triage_plan())
+
+
+def save_triage_cb(case_id: str):
+    p = f"tri_{case_id}_"
+    try:
+        changes = {"collect": [step if step["parameters"] else step["artifact"] for step in picked_triage(p)]}
+        if case_config.memory_image:
+            changes["memory_collect"] = picked_memory(p)
+        cases.update(case_id, **changes)
+    except (ValueError, cases.CaseError) as e:
+        st.session_state.tri_message = f"❌ {e}"
+        return
+    cases.consume_settings_change()
+    st.session_state.tri_message = "✅ Saved as this case's triage."
+
+
+def reset_triage_cb(case_id: str):
+    p = f"tri_{case_id}_"
+    for key in ("sel", "paramtext", "memsel", "art", "params", "mem"):
+        st.session_state.pop(p + key, None)
+    st.session_state.tri_message = "Back to the case's triage list."
+
+
+def _keep(widget_key: str, key: str):
+    """Copies an editor widget's value to a plain key, which outlives the widget (and the sidebar,
+    drawn first, sees the new value in the same run)."""
+    st.session_state[key] = st.session_state[widget_key]
+
+
+def set_triage_editing(on: bool):
+    st.session_state.triage_editing = on
+
+
+def triage_panel():
+    """Sidebar: what the triage will collect, and the buttons to run it (the editor is in the main area)."""
+    action = None
+    p = f"tri_{cases.current_id()}_"
+    try:
+        chosen, problem = picked_triage(p), ""
+    except ValueError as e:
+        chosen, problem = [], str(e)
+    st.caption(f"**Disk** · {len(chosen)} artifact{'s' if len(chosen) != 1 else ''}")
+    for step in chosen:
+        st.caption(citations.md_literal(f"• {step['artifact']}" + (" (with parameters)" if step["parameters"] else "")))
+    if problem:
+        st.error(problem)
+    plugins = picked_memory(p) if case_config.memory_image else []
+    if case_config.memory_image:
+        st.caption(f"**Memory** · {case_config.memory_image}")
+        st.caption(citations.md_literal(", ".join(plugins) or "no plugins"))
+    st.button("✏️ Choose what to collect", key="tri_edit", on_click=set_triage_editing, args=(True,),
+              help="Opens the triage list above the chat: suggestions for disk images and every artifact "
+                   "on your Velociraptor server.")
+    analyze = st.checkbox("Analyze with the agent afterwards", value=True, key="triage_analyze")
+    c1, c2 = st.columns(2)
+    if c1.button("Run triage", key=p + "run",
+                 disabled=bool(case_config.client_id_error) or not chosen or bool(problem)):
+        action = ("triage", (analyze, chosen))
+    if case_config.memory_image and c2.button("Run memory triage", key=p + "run_mem", disabled=not plugins):
+        action = ("memory_triage", (analyze, plugins))
+    return action
+
+
+def triage_editor():
+    """Main area, full width: choose the triage artifacts and memory plugins, then save or just use them."""
+    cid = cases.current_id()
+    p = f"tri_{cid}_"
+    plan = case_config.collection_plan
+    planned = [step["artifact"] for step in plan]
+    suggestions = {s["artifact"]: s for s in knowledge.triage_suggestions()}
+    server = server_artifacts()
+    pool = server if server is not None else list(suggestions)
+    usable = [n for n in pool if case_config.is_artifact_allowed(n) and not knowledge.is_live_only(n)]
+    current = st.session_state.get(p + "sel", planned)
+    options = list(dict.fromkeys(current + planned + [n for n in suggestions if n in usable] +
+                                 sorted(n for n in usable if n not in suggestions)))
+    with st.container(border=True):
+        st.markdown(f"#### 🧰 Triage for case `{cid}`")
+        st.caption("⭐ = suggested for disk images (reads files, registry or event logs). " +
+                   (f"{len(usable)} artifacts on your Velociraptor server are allowed in this case; type to search."
+                    if server is not None else "Velociraptor is not reachable, so only the suggestions are listed."))
+        st.session_state[p + "sel"] = st.multiselect(
+            "Disk artifacts", options, default=current, key=p + "art", on_change=_keep, args=(p + "art", p + "sel"),
+            format_func=lambda n: f"{'⭐ ' if n in suggestions else ''}{n}{' (heavy)' if case_config.is_heavy(n) else ''}")
+        st.session_state[p + "paramtext"] = st.text_area(
+            "Parameters (JSON, optional)", value=st.session_state.get(p + "paramtext", _plan_params_text()),
+            key=p + "params", height=110, on_change=_keep, args=(p + "params", p + "paramtext"),
+            help='e.g. {"Windows.EventLogs.EvtxHunter": {"IdRegex": "^(4624|7045)$"}}. Artifacts not listed here '
+                 'keep their saved or suggested parameters; {} means none.')
+        try:
+            chosen, problem = picked_triage(p), ""
+        except ValueError as e:
+            chosen, problem = [], str(e)
+        for step in chosen:
+            why = suggestions.get(step["artifact"], {}).get("why", "")
+            given = f" · parameters {json.dumps(step['parameters'])}" if step["parameters"] else ""
+            st.caption(citations.md_literal(f"{step['artifact']}{' · ' + why if why else ''}{given}"))
+        if problem:
+            st.error(problem)
+        if any(case_config.is_heavy(step["artifact"]) and not step["parameters"] for step in chosen):
+            st.caption(f"⚠️ Heavy artifacts without a filter stop at {case_config.max_rows:,} rows.")
+        if case_config.memory_image:
+            mem_options = [k for k in memory.PLUGINS if k.startswith(case_config.memory_os + ".")]
+            st.session_state[p + "memsel"] = st.multiselect(
+                f"Memory plugins ({case_config.memory_image})", mem_options, key=p + "mem",
+                on_change=_keep, args=(p + "mem", p + "memsel"),
+                default=[x for x in picked_memory(p) if x in mem_options],
+                help="Run with Volatility 3 on the case's memory image.")
+        c1, c2, c3 = st.columns([2, 2, 1])
+        c1.button("💾 Save as this case's triage", key=p + "save", on_click=save_triage_cb, args=(cid,),
+                  disabled=bool(problem), help="Stored in the case file: used next time and by the CLI.")
+        c2.button("↩️ Back to the case's list", key=p + "reset", on_click=reset_triage_cb, args=(cid,))
+        c3.button("Done", key="tri_done", on_click=set_triage_editing, args=(False,), type="primary")
+        st.caption("Without saving, the choice is used for this session only. Run it from the sidebar.")
+        if st.session_state.get("tri_message"):
+            st.caption(st.session_state.tri_message)
+
+
 # The hook is process-wide, but queue_request stores each request in the session that made it.
 approvals.ASK = queue_request
 
@@ -383,12 +537,12 @@ def agent_turn(text: str, show_user: bool = True):
     st.session_state.messages.append({"role": "assistant", "content": content, "log": log, "files": files})
 
 
-def run_triage(analyze: bool):
-    """The case's triage collections (no LLM), then optionally an agent analysis turn."""
+def run_triage(analyze: bool, plan: list = None):
+    """The triage collections (picked in the sidebar, else the case's), no LLM; then optionally an agent turn."""
     lines, summaries = [], []
     with st.chat_message("assistant"):
         status = st.status("Running triage collection...", expanded=True)
-        for step in case_config.collection_plan:
+        for step in plan or case_config.collection_plan:
             artifact, params = step["artifact"], step["parameters"]
             status.write(f"Collecting `{artifact}`...")
             try:
@@ -414,8 +568,8 @@ def run_triage(analyze: bool):
         show_user=False)
 
 
-def run_memory_triage(analyze: bool):
-    """The case's memory triage plugins (Volatility, no LLM), then optionally an agent analysis turn."""
+def run_memory_triage(analyze: bool, plugins: list = None):
+    """The memory triage plugins (picked in the sidebar, else the case's), no LLM; then optionally an agent turn."""
     lines = []
     with st.chat_message("assistant"):
         status = st.status("Running memory triage (each plugin can take minutes)...", expanded=True)
@@ -423,7 +577,7 @@ def run_memory_triage(analyze: bool):
         def progress(plugin):
             status.write(f"Running `{plugin}`...")
 
-        summaries = memory.triage(progress=progress)
+        summaries = memory.triage(progress=progress, plugins=plugins)
         for summary in summaries:
             lines.append(status_line(summary))
             status.text(lines[-1])
@@ -461,8 +615,9 @@ def resolve_request(request: dict, approved: bool):
     st.session_state.chat_history.append(HumanMessage(
         content=f"[Investigator] Approved: {label}. Result: {json.dumps(result, default=str)}"))
     st.session_state.messages.append({"role": "assistant",
-                                      "content": f"✅ Approved — {label}\n\n{shown}\n\n"
-                                                 f"Ask the copilot to continue when ready."})
+                                      "content": f"✅ Approved — {label}\n\n{shown}" +
+                                                 ("" if st.session_state.get("auto_continue", True) else
+                                                  "\n\nAsk the copilot to continue when ready.")})
     if cases.consume_settings_change():
         st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
 
@@ -588,19 +743,12 @@ with st.sidebar:
     st.caption(f"LLM tokens this session: "
                f"{st.session_state.usage.session_input + st.session_state.usage.session_output:,}")
 
+    st.divider()
     with st.expander("🧰 Triage collection", expanded=False):
-        for step in case_config.collection_plan:
-            st.caption(f"- {step['artifact']}" + (f" {json.dumps(step['parameters'])}" if step["parameters"] else ""))
-        analyze = st.checkbox("Analyze with the agent afterwards", value=True, key="triage_analyze")
-        if st.button("Run triage collection", disabled=bool(case_config.client_id_error)):
-            action = ("triage", analyze)
-        if case_config.memory_image:
-            st.markdown(f"**🧠 Memory triage** ({case_config.memory_image})")
-            st.caption(", ".join(memory.triage_plan()))
-            if st.button("Run memory triage"):
-                action = ("memory_triage", analyze)
+        action = triage_panel() or action
 
     if pending_here():
+        st.divider()
         st.subheader("⏳ Awaiting your approval")
         st.caption("The agent asked to change something. Nothing happens until you approve.")
         for req in pending_here():
@@ -614,20 +762,26 @@ with st.sidebar:
                 action = ("approve", req)
             if c2.button("Deny", key=f"deny-{req['id']}"):
                 action = ("deny", req)
+        if len(pending_here()) > 1 and st.button("✅ Approve all", key="approve-all", type="primary"):
+            action = ("approve_all", None)
+        st.checkbox("Continue the agent once all are decided", value=True, key="auto_continue",
+                    help="Otherwise ask the copilot to continue yourself.")
 
-    st.subheader("📊 Database")
+    st.divider()
     stats = case_db.get_stats()
-    st.metric("Records", stats["total_records"])
-    st.caption(f"{stats['timeline_events']} timeline events · {stats['undated_records']} without timestamps")
-    for src in stats["by_source"]:
-        st.caption(f"- {src['source']} ({src['records']})")
+    n = stats["total_records"]
+    with st.expander(f"📊 Database · {n:,} record{'' if n == 1 else 's'}", expanded=False):
+        st.caption(f"{stats['timeline_events']:,} timeline events · {stats['undated_records']:,} without timestamps")
+        for src in stats["by_source"]:
+            st.caption(f"- {src['source']} ({src['records']:,})")
 
-    st.subheader("🚩 Findings")
     active = case_db.get_findings()
-    for f in active:
-        st.caption(f"[{(f['confidence'] or 'unknown').upper()}] {citations.md_literal(f['title'])}")
-    if active:
-        with st.expander("Retract a finding", expanded=False):
+    with st.expander(f"🚩 Findings · {len(active)}", expanded=False):
+        if not active:
+            st.caption("No findings recorded yet.")
+        for f in active:
+            st.caption(f"[{(f['confidence'] or 'unknown').upper()}] {citations.md_literal(f['title'])}")
+        if active and st.toggle("Retract a finding", key="retract_open"):
             labels = {f"{f['title']} ({f['finding_id']})": f["finding_id"] for f in active}
             choice = st.selectbox("Finding", list(labels), key="retract_choice")
             reason = st.text_input("Reason (e.g. the contradicting evidence)", key="retract_reason")
@@ -637,6 +791,7 @@ with st.sidebar:
                     content=f"[Investigator] Retracted finding '{choice}': {reason.strip()}"))
                 st.rerun()
 
+    st.divider()
     st.subheader("📄 Report")
     chosen = st.multiselect("Report formats", ["html", "md"], default=case_config.report_formats,
                             key="report_formats", help="Formats cost no extra LLM tokens.")
@@ -644,10 +799,11 @@ with st.sidebar:
 
     files = outputs.produced_since(0)
     if files:
-        st.subheader("📄 Files")
-        st.caption(f"Saved in `{outputs.output_dir()}`")
-        for entry in reversed(files[-15:]):
-            download_button(entry, key=f"dl-side-{entry['output_id']}")
+        st.divider()
+        with st.expander(f"📁 Files · {len(files)}", expanded=False):
+            st.caption(f"Saved in `{outputs.output_dir()}`")
+            for entry in reversed(files[-15:]):
+                download_button(entry, key=f"dl-side-{entry['output_id']}")
 
 # ==========================================
 # Main area
@@ -657,6 +813,8 @@ st.caption(f"Case `{cases.current_id()}` — {case_config.case_name} · type `/h
 hint = cases.legacy_data_hint()
 if hint:
     st.warning(hint)
+if st.session_state.get("triage_editing"):
+    triage_editor()
 
 for i, msg in enumerate(st.session_state.messages):
     render_message(msg, i)
@@ -670,10 +828,15 @@ if (not case_db.get_collections() and not st.session_state.triage_dismissed and 
         st.markdown(f"**No data collected for this case yet.** Run the initial triage of {' and '.join(sources)}? "
                     f"It needs no LLM; the agent can analyze the results afterwards.")
         c1, c2, c3 = st.columns([1, 1, 3])
+        p = f"tri_{cases.current_id()}_"          # the same choice as the sidebar's triage panel
         if not case_config.client_id_error and c1.button("Run triage", type="primary"):
-            action = ("triage", st.session_state.get("triage_analyze", True))
+            try:
+                plan = picked_triage(p)
+            except ValueError:
+                plan = None                        # unusable edits: the case's saved list
+            action = ("triage", (st.session_state.get("triage_analyze", True), plan))
         if case_config.memory_image and c2.button("Run memory triage", type="primary", key="first_memory_triage"):
-            action = ("memory_triage", st.session_state.get("triage_analyze", True))
+            action = ("memory_triage", (st.session_state.get("triage_analyze", True), picked_memory(p)))
         if c3.button("Skip"):
             st.session_state.triage_dismissed = True
             st.rerun()
@@ -682,12 +845,18 @@ if action:
     kind, arg = action
     if kind == "triage":
         st.session_state.triage_dismissed = True
-        run_triage(analyze=arg)
+        run_triage(*arg)
     elif kind == "memory_triage":
         st.session_state.triage_dismissed = True
-        run_memory_triage(analyze=arg)
-    elif kind in ("approve", "deny"):
-        resolve_request(arg, approved=(kind == "approve"))
+        run_memory_triage(*arg)
+    elif kind in ("approve", "deny", "approve_all"):
+        for request in (pending_here() if kind == "approve_all" else [arg]):
+            resolve_request(request, approved=(kind != "deny"))
+        # Once nothing waits any more, the agent goes on with the results (no "continue" needed).
+        if (st.session_state.get("auto_continue", True) and not pending_here()
+                and st.session_state.case_id == cases.current_id() and "llm_with_tools" in st.session_state):
+            agent_turn("[Investigator] Every pending request has been decided (see the results above). Continue "
+                       "the investigation with them and answer the open question.", show_user=False)
         st.rerun()
 
 if prompt := st.chat_input("Ask the copilot to investigate... (/help for commands)"):

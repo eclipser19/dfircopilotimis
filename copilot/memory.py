@@ -482,8 +482,11 @@ def triage_plan() -> list:
     return plan or TRIAGE.get(case_config.memory_os, TRIAGE["windows"])
 
 
-def triage(progress=None) -> list:
-    """Runs the memory triage plugins (investigator action, no approval). Failures are reported, not raised."""
+def triage(progress=None, plugins: list = None) -> list:
+    """
+    Runs the memory triage plugins (investigator action, no approval): `plugins`, else the case's
+    list. Failures are reported, not raised.
+    """
     try:                 # problems every plugin would hit: report once
         image_path()
         available_plugins()
@@ -492,7 +495,7 @@ def triage(progress=None) -> list:
     except MemoryAnalysisError as e:
         return [{"artifact": "Memory triage", "state": "NOT_STARTED", "error": str(e)}]
     summaries = []
-    for plugin in triage_plan():
+    for plugin in plugins or triage_plan():
         if progress:
             progress(plugin)
         try:
