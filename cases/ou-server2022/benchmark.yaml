@@ -1,0 +1,31 @@
+# Benchmark for the Open University "Compromised Windows Server 2022 (simulation)" image.
+# Read by copilot/benchmark.py only; the agent never sees this file. Matching rules: see
+# cases/szechuan-dc/benchmark.yaml.
+#
+# NO ANSWER KEY YET: the questions have no facts. A run saves the answers; once the facts are added
+# here (from a writeup or our own checks, with their sources in answer_key.md), score the saved run
+# with: python -m copilot.benchmark score benchmark_results/<run>.json
+# Held out: the knowledge base is not tuned on this image.
+
+name: ou-server2022
+case_file: case.yaml
+clock_offset_minutes: 0
+time_tolerance_seconds: 120
+
+questions:
+  - id: entry
+    ask: Was this server compromised? If so, how did the attacker get in, from where, and when?
+  - id: weaknesses
+    ask: What made the attack possible - which Windows version and patch level, which exposed services, which weak or reused passwords?
+  - id: accounts
+    ask: Which accounts did the attacker use, create or change, and how did they get the credentials?
+  - id: tools
+    ask: What programs or scripts did the attacker bring onto or run on this server, and when?
+  - id: persistence
+    ask: How did the attacker keep access to this server?
+  - id: ransomware
+    ask: What encrypted the data on this server, when did it run, how was it started, and what did it touch?
+  - id: data
+    ask: Was any data collected or taken from this server before the ransomware ran?
+  - id: anti_forensics
+    ask: Did the attacker try to hide their tracks or weaken defences, such as deleting files, clearing logs or disabling security tools?

@@ -1,0 +1,63 @@
+# Open University ORDO dataset "Compromised Windows Server 2022 (simulation)" (B. Donnachie; data
+# synthetic: users, IPs). Disk image only (E01). Held-out benchmark: no answer key yet, so a run
+# saves the answers and benchmark.yaml gets its facts later (then: python -m copilot.benchmark
+# score benchmark_results/<run>.json). Setup: answer_key.md.
+
+case:
+  name: "Compromised Windows Server 2022 (OU simulation)"
+  analyst: "Investigator"
+  created: "2026-10-15"
+
+velociraptor:
+  client_id: ""                     # the dead-disk client reading the E01 (C.xxxx)
+  collection_wait_seconds: 300
+
+scope:
+  # The office network ran from September 2023; the ransomware was found on 12 February 2024.
+  start_time: "2023-09-01T00:00:00Z"
+  end_time: "2024-02-13T00:00:00Z"
+  clock_offset_minutes: 0
+  description: >
+    A small UK office ran a Windows Server 2022 machine from September 2023. To support home
+    working the administrator enabled remote access to it. On 12 February 2024 the server stopped
+    responding and showed a ransomware message. The disk was decrypted and imaged. Determine how
+    the attacker got in, from where and when, which accounts they used or created, what they ran,
+    how they kept access, what the ransomware did and when, and whether data was taken first.
+
+iocs:
+  hashes: []
+  ips: []
+  domains: []
+  filenames: []
+  users: []
+
+# Triage collected before the agent starts (no LLM). Same list as the other intrusion benchmarks.
+collect:
+  - Generic.Client.Info
+  - Windows.EventLogs.RDPAuth
+  - Windows.Sys.StartupItems
+  - Windows.Timeline.Prefetch
+  - Windows.System.TaskScheduler
+  - artifact: Windows.EventLogs.EvtxHunter
+    parameters:
+      IocRegex: "."
+      IdRegex: "^(4624|4625|4634|4647|4648|4688|4697|4698|4720|7045|1102|104|1149|21|22|23|24|25)$"
+
+collection:
+  max_rows: 50000
+  apply_time_window: true
+  agent_collections: confirm
+
+output:
+  report_formats: [html]
+
+agent:
+  approvals:
+    retract_finding: confirm
+    update_case: confirm
+    switch_case: confirm
+    create_case: confirm
+    memory: confirm
+  allow_raw_vql: false
+  max_steps: 15
+  max_tokens_per_turn: 300000

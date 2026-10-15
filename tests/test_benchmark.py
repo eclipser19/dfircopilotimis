@@ -175,7 +175,7 @@ def test_within_ties_the_words_of_a_fact_together_and_cut_ids_are_invalid(tmp_pa
     assert cites["evidence_invalid"] == ["ba06dfce83ba6f8", "0123456789abcdef0"]
 
 
-@pytest.mark.parametrize("name", ["szechuan-dc", "corporatesecrets", "injector"])
+@pytest.mark.parametrize("name", ["szechuan-dc", "corporatesecrets", "injector", "ou-server2022"])
 def test_shipped_benchmarks_load_and_their_case_files_parse(name):
     root = os.path.join(os.path.dirname(__file__), "..", "cases", name)
     spec = benchmark.load_spec(os.path.join(root, "benchmark.yaml"))
@@ -211,3 +211,9 @@ def test_a_client_reading_another_image_stops_the_run():
     right = wrong[:1] + [_triage("Windows.EventLogs.RDPAuth", 388, True)] + wrong[2:]
     assert benchmark.image_problem(right) == ""            # Prefetch off on a server is fine
     assert benchmark.image_problem([_triage("Generic.Client.Info", 22, False)]) == ""
+
+
+def test_a_run_without_an_answer_key_says_so():
+    results = {"name": "x", "run_id": "bench-x-1", "case_id": "bench-x-1", "questions": [],
+               "totals": benchmark.totals([{"id": "q", "answer": "a", "score": benchmark.score_answer("a", {"id": "q"}, {})}])}
+    assert "No answer key yet" in benchmark.render_markdown(results)

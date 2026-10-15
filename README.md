@@ -382,6 +382,9 @@ are also the run case's chat, so you can open the run in the app. Benchmarks:
   Velociraptor as a folder (`deaddisk --add_windows_directory`).
 - `cases/injector/`: CyberDefenders "Injector" (raw disk + memory, web server breached through
   its web application), held out.
+- `cases/ou-server2022/`: Open University "Compromised Windows Server 2022 (simulation)" (E01,
+  RDP and ransomware), held out. No answer key yet: a run saves the answers, which are scored
+  with `benchmark score` once the facts are filled in.
 
 The desktop case (`cases/szechuan/`) was used to tune the knowledge, so it isn't a fair test.
 

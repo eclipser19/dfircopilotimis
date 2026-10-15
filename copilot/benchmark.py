@@ -246,8 +246,11 @@ def render_markdown(results: dict) -> str:
         "",
         f"Model `{results.get('model', '?')}` · case `{results['case_id']}` · {results.get('started', '')[:19]} UTC",
         "",
-        f"**Score {t['score_percent']}%** — facts {t['facts_found']}/{t['facts_total']}, "
-        f"times {t['times_ok']}/{t['times_total']} · uncorrected times {t['uncorrected_times']} · "
+        (f"**Score {t['score_percent']}%** — facts {t['facts_found']}/{t['facts_total']}, "
+         f"times {t['times_ok']}/{t['times_total']} · " if t["facts_total"] else
+         "**No answer key yet** — answers saved; score them once the key has facts "
+         "(`python -m copilot.benchmark score <this run>.json`) · ") +
+        f"uncorrected times {t['uncorrected_times']} · "
         f"invalid IDs {t['invalid_ids']} · forbidden claims {t['forbidden']} · errors {t['errors']}",
         "",
         f"{t['questions']} questions · {t['steps']} model steps · {t['tool_calls']} tool calls · "
@@ -462,7 +465,10 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
     results["finished"] = datetime.now(timezone.utc).isoformat()
     results["totals"] = totals(results["questions"])
     paths = save(results, out_dir)
-    log(f"\n[*] Score {results['totals']['score_percent']}%: {paths[1]}")
+    if results["totals"]["facts_total"]:
+        log(f"\n[*] Score {results['totals']['score_percent']}%: {paths[1]}")
+    else:
+        log(f"\n[*] No answer key yet: answers saved in {paths[0]} (score them later with the 'score' command)")
     return results
 
 
