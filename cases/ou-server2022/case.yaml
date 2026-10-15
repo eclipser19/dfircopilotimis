@@ -47,7 +47,9 @@ collect:
       IdRegex: "^(4624|4625|4634|4647|4648|4688|4697|4698|4720|7045|1102|104|1149|21|22|23|24|25)$"
 
 collection:
-  max_rows: 50000
+  # An RDP server open to the internet for months logs a lot of failed logons: 50,000 rows were not
+  # enough for the event-log triage over this window (Velociraptor cancels a collection past the limit).
+  max_rows: 300000
   apply_time_window: true
   agent_collections: confirm
 

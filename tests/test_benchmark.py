@@ -211,6 +211,11 @@ def test_a_client_reading_another_image_stops_the_run():
     right = wrong[:1] + [_triage("Windows.EventLogs.RDPAuth", 388, True)] + wrong[2:]
     assert benchmark.image_problem(right) == ""            # Prefetch off on a server is fine
     assert benchmark.image_problem([_triage("Generic.Client.Info", 22, False)]) == ""
+    # Run 121906: the event-log collections passed the row limit and failed; only Prefetch (off on
+    # servers) finished, with 0 rows. Not a wrong image: no conclusion.
+    too_many = dict(_triage("Windows.EventLogs.EvtxHunter", 0, True), state="ERROR", row_limit=True)
+    assert benchmark.image_problem([_triage("Generic.Client.Info", 22, False),
+                                    _triage("Windows.Timeline.Prefetch", 0, True), too_many]) == ""
 
 
 def test_a_run_without_an_answer_key_says_so():

@@ -323,7 +323,10 @@ def image_problem(summaries: list) -> str:
     empty while unfiltered ones returned rows. That is what a client reading another image looks like
     (its events are from other dates), so the run stops before spending tokens on questions.
     """
-    finished = [s for s in summaries if s.get("state") == "FINISHED" and not str(s.get("artifact", "")).startswith("Memory.")]
+    disk = [s for s in summaries if not str(s.get("artifact", "")).startswith("Memory.")]
+    if any(s.get("time_window_applied") and s.get("state") != "FINISHED" for s in disk):
+        return ""          # a windowed collection failed (e.g. too many rows): no conclusion possible
+    finished = [s for s in disk if s.get("state") == "FINISHED"]
     windowed = [s for s in finished if s.get("time_window_applied")]
     others = [s for s in finished if not s.get("time_window_applied")]
     if windowed and not any(s.get("rows_collected_by_velociraptor") for s in windowed) \

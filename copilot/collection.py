@@ -48,6 +48,8 @@ _LOG_PROBLEM = re.compile(r"(?i)(warn|error|denied|fail|not found|cannot|unable|
 MAX_LOG_LINES = 15
 # "Call to plugin wmi disabled": the dead-disk remapping disables live-only plugins.
 _DISABLED_RE = re.compile(r"(?i)(?:plugin|function)\s+(\w+)\s+disabled")
+# "Rows 50007 exceeded limit 50000 for flow F.X. Cancelling.": the max_rows we passed was reached.
+_ROW_LIMIT = re.compile(r"(?i)rows\s+\d+\s+exceeded\s+limit")
 
 POLL_INTERVAL = 2
 
@@ -442,6 +444,13 @@ def _summary(flow_id: str, status: dict, result: dict = None) -> dict:
     elif status["state"] in ("ERROR", "CANCELLED"):
         summary["error"] = status["error"]
         summary["note"] = f"Collection {status['state'].lower()}. Nothing was ingested."
+        if _ROW_LIMIT.search(str(status.get("error") or "")):
+            # Velociraptor cancels a collection that passes max_rows: there is MORE data, not none.
+            summary["row_limit"] = True
+            summary["note"] = (f"More than {case_config.max_rows:,} rows: Velociraptor cancelled the collection, so "
+                               f"nothing was ingested. This is too much data, not an empty result. Collect again "
+                               f"narrower (shorter time window, fewer event IDs, a filter), or raise "
+                               f"collection.max_rows in the case.")
     else:
         summary["note"] = (f"Still {status['state']}. Nothing has been ingested yet. "
                            f"Call check_collection('{flow_id}') later; do not treat this as 'no results'.")

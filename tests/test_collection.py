@@ -83,6 +83,15 @@ def test_errored_collection_surfaces_error(case):
     assert summary["error"] == "boom"
 
 
+def test_a_collection_past_the_row_limit_says_there_is_more_data(case):
+    # Velociraptor cancels a flow that passes max_rows: "more than the limit", not "nothing found".
+    error = "Rows 50007 exceeded limit 50000 for flow F.X. Cancelling."
+    summary = collection.collect("Generic.Client.Info", vql=FakeVQL(states=("ERROR",), flow_error=error),
+                                 sleep=lambda s: None)
+    assert summary["row_limit"] and "too much data, not an empty result" in summary["note"]
+    assert "collection.max_rows" in summary["note"]
+
+
 def test_hostname_comes_from_client_lookup(case):
     collection.collect("Generic.Client.Info", vql=FakeVQL(), sleep=lambda s: None)
     rows = case.search_events("WS01")["records"]
