@@ -222,3 +222,18 @@ def test_a_run_without_an_answer_key_says_so():
     results = {"name": "x", "run_id": "bench-x-1", "case_id": "bench-x-1", "questions": [],
                "totals": benchmark.totals([{"id": "q", "answer": "a", "score": benchmark.score_answer("a", {"id": "q"}, {})}])}
     assert "No answer key yet" in benchmark.render_markdown(results)
+
+
+def test_evidence_dump_shows_the_raw_records_an_answer_cites(bench_dirs):
+    llm = ScriptedLLM(AIMessage(content="first"), AIMessage(content="second"))
+    results = benchmark.run(_spec(bench_dirs), client_id=CLIENT, model=(llm, llm, "scripted"),
+                            out_dir=str(bench_dirs / "results"), log=lambda *a: None)
+    from copilot.database import case_db
+    real = case_db.conn.execute("SELECT evidence_id FROM records LIMIT 1").fetchone()[0]
+    path = bench_dirs / "results" / f"{results['run_id']}.json"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    saved["questions"][0]["answer"] = f"Host seen in `{real}`; also `0123456789abcdef`."
+    path.write_text(json.dumps(saved), encoding="utf-8")
+    dump = open(benchmark.evidence_dump(str(path)), encoding="utf-8").read()
+    assert f"### `{real}` Generic.Client.Info" in dump and "WS01" in dump
+    assert "`0123456789abcdef`: NOT IN THE CASE" in dump and "(no evidence IDs cited)" in dump

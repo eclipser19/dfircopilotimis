@@ -475,6 +475,52 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
     return results
 
 
+RAW_CHARS = 1500
+
+
+def evidence_dump(results_path: str, out_path: str = None) -> str:
+    """
+    For building an answer key without trusting the agent: every evidence ID each answer cites,
+    with the raw record behind it (as Velociraptor / Volatility returned it, from the run case's
+    database) and the record's times. Claims are checked against these, not against the answer.
+    Writes <run>.evidence.md next to the results unless out_path is given; returns the path.
+    """
+    from copilot import cases
+    from copilot.citations import EVIDENCE_RE, FINDING_RE
+    from copilot.database import case_db
+    with open(results_path, encoding="utf-8") as f:
+        results = json.load(f)
+    cases.switch(results["case_id"])
+    cases.consume_switch()
+    lines = [f"# Evidence cited by {results['run_id']}", "",
+             "Raw records behind every evidence ID the answers cite, from the run case's database. "
+             "Check each claim against these, not against the answer's wording.", ""]
+    for entry in results["questions"]:
+        answer = entry.get("answer") or ""
+        lines += [f"## {entry['id']}: {entry['ask']}", ""]
+        ids = list(dict.fromkeys(EVIDENCE_RE.findall(answer)))
+        for finding_id in dict.fromkeys(FINDING_RE.findall(answer)):
+            finding = case_db.find_finding(finding_id)
+            if finding:
+                lines.append(f"- finding `{finding_id}`: {finding.get('title')} (cites {finding.get('evidence_ids')})")
+        for evidence_id in ids:
+            record = case_db.get_event_detail(evidence_id)
+            if not record:
+                lines += [f"### `{evidence_id}`: NOT IN THE CASE", ""]
+                continue
+            times = ", ".join(f"{t['timestamp_utc'][:19]} ({t['timestamp_desc']})" for t in record["timestamps"][:6])
+            raw = str(record.get("raw_data") or "")
+            lines += [f"### `{evidence_id}` {record.get('source')}", "",
+                      f"{record.get('description')}", "", f"Times: {times or 'none'}", "",
+                      "~~~~", raw[:RAW_CHARS] + (" ..." if len(raw) > RAW_CHARS else ""), "~~~~", ""]
+        if not ids:
+            lines += ["(no evidence IDs cited)", ""]
+    out_path = out_path or os.path.splitext(results_path)[0] + ".evidence.md"
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return out_path
+
+
 def rescore(results_path: str, spec_path: str = None, out_dir: str = None) -> dict:
     """Scores saved answers again (e.g. after correcting the answer key). Citation checks are kept."""
     with open(results_path, encoding="utf-8") as f:
@@ -540,6 +586,8 @@ def main(argv=None) -> int:
     s = sub.add_parser("score", help="score saved answers again")
     s.add_argument("results")
     s.add_argument("--spec")
+    e = sub.add_parser("evidence", help="dump the raw records the answers cite (to build an answer key)")
+    e.add_argument("results")
     c = sub.add_parser("clean", help="remove benchmark run cases")
     c.add_argument("--yes", action="store_true")
     args = parser.parse_args(argv)
@@ -552,6 +600,8 @@ def main(argv=None) -> int:
             t = rescore(args.results, args.spec)["totals"]
             print(f"Score {t['score_percent']}%: facts {t['facts_found']}/{t['facts_total']}, "
                   f"times {t['times_ok']}/{t['times_total']}")
+        elif args.command == "evidence":
+            print(f"[*] Written: {evidence_dump(args.results)}")
         else:
             clean(args.yes)
     except Exception as e:
