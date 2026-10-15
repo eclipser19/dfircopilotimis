@@ -28,6 +28,9 @@ MAX_LIST_ITEMS = 16
 _ISO_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)(?:\.(\d+))?\s*(Z|[+-]\d{2}:?\d{2})?$"
 )
+# Web server log lines (Apache/nginx common log format) carry local time with its offset:
+# [10/Oct/2023:13:55:36 -0700]. Converted here so the model never does the arithmetic.
+_CLF_RE = re.compile(r"\[(\d{2}/[A-Z][a-z]{2}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4})\]")
 # Numeric values are only treated as time when the field name says so.
 _TIME_NAME_RE = re.compile(
     r"(?i)(time|date|stamp|created|modified|accessed|changed|written|mtime|atime|ctime|btime|epoch|lastrun)"
@@ -227,6 +230,11 @@ def parse_timestamp(value, field_name: str = "", now: datetime = None):
                 return None
         elif text.isdigit() and _TIME_NAME_RE.search(field_name):
             ts = _from_number(int(text))
+        elif _CLF_RE.search(text):
+            try:
+                ts = datetime.strptime(_CLF_RE.search(text).group(1), "%d/%b/%Y:%H:%M:%S %z")
+            except ValueError:
+                return None
     elif isinstance(value, (int, float)) and _TIME_NAME_RE.search(field_name):
         ts = _from_number(value)
     if ts is None:

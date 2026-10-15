@@ -1,0 +1,121 @@
+# Benchmark for the CyberDefenders "Injector" lab (web server WIN-L0ZZQ76PMUF, Windows Server 2008
+# SP1 x86, XAMPP + DVWA). Read by copilot/benchmark.py only; the agent never sees this file.
+# Matching rules: see cases/szechuan-dc/benchmark.yaml. Answers, sources and setup: answer_key.md.
+#
+# Held out: the knowledge base was not tuned on this image. Times are true UTC (the host clock was
+# right; Apache logs local time with "-0700", which the copilot converts). Time of day only.
+
+name: injector
+case_file: case.yaml
+clock_offset_minutes: 0
+time_tolerance_seconds: 120
+
+questions:
+  - id: system
+    ask: Describe this server - its name, Windows version and build, time zone, user accounts, and the web server software it runs.
+    facts:
+      - id: computer_name
+        what: Computer name WIN-L0ZZQ76PMUF
+        all: ["WIN-L0ZZQ76PMUF"]
+      - id: os_build
+        what: Build 6001 (Windows Server 2008 SP1, x86)
+        all: ["6001"]
+      - id: time_zone
+        what: Pacific time, UTC-7 (daylight saving; Bias 480, ActiveTimeBias 420)
+        any: [["pacific", "utc-7", "utc-07", "utc -7", "utc−7", "-07:00", "gmt-7", "gmt-07"]]
+      - id: users
+        what: Four accounts - Administrator, Guest, user1, hacker
+        all: ["administrator", "guest", "user1", "hacker"]
+      - id: xampp
+        what: XAMPP (Apache, MySQL, FileZilla, PHP)
+        any: [["xampp"]]
+
+  - id: entry
+    ask: How was this web server compromised? Which web application was attacked, from which IP address, with which vulnerabilities and tools, and when did each start?
+    facts:
+      - id: dvwa
+        what: The vulnerable application is DVWA
+        any: [["dvwa", "damn vulnerable web"]]
+      - id: attacker_ip
+        what: Attacker IP 192.168.56.102
+        all: ["192.168.56.102"]
+      - id: sqlmap
+        what: SQL injection with sqlmap (User-Agent sqlmap/1.0-dev-nongit-20150902), first request 2015-09-02 11:15:40
+        any: [["sqlmap"]]
+        time: "11:15:40"
+        tolerance_seconds: 300
+      - id: lfi_hosts
+        what: Local file inclusion read windows\system32\drivers\etc\hosts, 2015-09-02 09:31:16
+        regex: ['\bhosts\b']
+        any: [["file inclusion", "lfi", "fi/?page", "fi/", "traversal", "../"]]
+        within: 400
+        time: "09:31:16"
+        tolerance_seconds: 300
+      - id: xss
+        what: First vulnerability exercised - reflected XSS (/dvwa/vulnerabilities/xss_r/), 2015-09-02 06:03:19 (from ::1)
+        any: [["xss", "cross-site scripting", "cross site scripting"]]
+        time: "06:03:19"
+        tolerance_seconds: 300
+        scored: false
+        note: the challenge calls it the first exploit, but the requests come from localhost (::1)
+
+  - id: uploads
+    ask: Which files did the attacker plant on the web server (web shells, uploaders), how were they used, and when?
+    facts:
+      - id: phpshell
+        what: phpshell.php uploaded through the upload vulnerability, commands through the cmd URL parameter, first call 2015-09-03 07:16:13
+        any: [["phpshell"]]
+        time: "07:16:13"
+        tolerance_seconds: 300
+      - id: cmd_parameter
+        what: The web shell takes commands in the cmd parameter (phpshell.php?cmd=dir)
+        regex: ['cmd=|\bcmd\b[^.\n]{0,40}parameter|parameter[^.\n]{0,40}\bcmd\b']
+      - id: tmpudvfh
+        what: tmpudvfh.php (sqlmap file uploader) written with SQL injection INTO OUTFILE, 2015-09-03 06:52:24
+        any: [["tmpudvfh"]]
+        time: "06:52:24"
+        tolerance_seconds: 300
+      - id: webshell_php
+        what: webshell.php in the DVWA folder (MD5 5594112b531660654429f8639322218b)
+        any: [["webshell.php"]]
+
+  - id: accounts
+    ask: Did the attacker create or change user accounts? Which ones, when, and what rights did they get?
+    facts:
+      - id: user1_created
+        what: user1 (RID 1005) created 2015-09-02 09:05:06
+        all: ["user1"]
+        any: [["creat", "added", "new account", "4720"]]
+        within: 300
+        time: "09:05:06"
+      - id: hacker_account
+        what: Account hacker (RID 1006) created by the attacker
+        all: ["hacker"]
+        any: [["creat", "added", "new account", "4720"]]
+        within: 300
+      - id: hacker_rdp_group
+        what: hacker added to Remote Desktop Users (command injection - net localgroup)
+        all: ["hacker"]
+        any: [["remote desktop users"]]
+        within: 300
+      - id: two_accounts
+        what: Two accounts added
+        regex: ['(?<![\w:.-])(?:2|two)(?![\w:.-])[^.\n]{0,30}(?:account|user)']
+        scored: false
+
+  - id: commands
+    memory: true
+    ask: Which commands did the attacker run on this server, and what did they change? Use the memory image as well as the disk.
+    facts:
+      - id: netsh_firewall
+        what: netsh firewall set service type=remotedesktop mode=enable scope=subnet (console history in memory)
+        all: ["netsh"]
+        any: [["remotedesktop", "remote desktop"]]
+        within: 300
+      - id: net_localgroup
+        what: net localgroup "Remote Desktop Users" hacker /add (command injection through the ip parameter; seen in xampp-control.exe memory)
+        regex: ['net\s+localgroup']
+      - id: command_injection
+        what: Command injection through DVWA's exec page (ip=192.168.56.102 && ...)
+        any: [["command injection", "os command injection", "exec/"]]
+        scored: false

@@ -33,6 +33,7 @@ DEFAULT_ARTIFACT_ALLOWLIST = [
     "Windows.System.TaskScheduler",
     "Windows.System.Services",
     "Generic.Forensic.*",
+    "Generic.Detection.Logs",
     "Linux.Forensics.*",
     "Linux.Syslog.*",
     "Linux.Ssh.*",

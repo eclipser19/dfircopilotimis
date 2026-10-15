@@ -1,0 +1,67 @@
+# CyberDefenders "Injector": a company web server (Windows) breached through its website; raw
+# disk image + memory. Held-out benchmark: the knowledge base was not tuned on it. The answers are
+# in answer_key.md and benchmark.yaml, which the agent never sees. Setup: answer_key.md, "Setup".
+#     python -m copilot.benchmark run cases/injector/benchmark.yaml --client C.<id of its client>
+
+case:
+  name: "Injector - breached web server"
+  analyst: "Investigator"
+  created: "2026-10-15"
+
+velociraptor:
+  client_id: ""                     # the dead-disk client reading s4a-challenge4 (C.xxxx)
+  collection_wait_seconds: 300
+
+scope:
+  # The breach was noticed at the start of September 2015; the weeks before are in scope.
+  start_time: "2015-08-20T00:00:00Z"
+  end_time: "2015-09-04T00:00:00Z"
+  clock_offset_minutes: 0
+  description: >
+    A company's web server has been breached through its website. The response team took a
+    forensic image of the running system and a capture of its memory. Determine how the server
+    was compromised (which application, which vulnerabilities, from where, when), what the
+    attacker uploaded and executed, which accounts and settings they changed, and how they kept
+    access.
+
+iocs:
+  hashes: []
+  ips: []
+  domains: []
+  filenames: []
+  users: []
+
+# Triage collected before the agent starts (no LLM). Same list as the szechuan-dc benchmark.
+collect:
+  - Generic.Client.Info
+  - Windows.EventLogs.RDPAuth
+  - Windows.Sys.StartupItems
+  - Windows.Timeline.Prefetch
+  - Windows.System.TaskScheduler
+  - artifact: Windows.EventLogs.EvtxHunter
+    parameters:
+      IocRegex: "."
+      IdRegex: "^(4624|4625|4634|4647|4648|4688|4697|4698|4720|7045|1102|104|1149|21|22|23|24|25)$"
+
+memory:
+  image: injector-memdump.mem     # memdump.mem from the lab, renamed, in memory.images_dir
+  os: windows
+
+collection:
+  max_rows: 50000
+  apply_time_window: true
+  agent_collections: confirm
+
+output:
+  report_formats: [html]
+
+agent:
+  approvals:
+    retract_finding: confirm
+    update_case: confirm
+    switch_case: confirm
+    create_case: confirm
+    memory: confirm
+  allow_raw_vql: false
+  max_steps: 15
+  max_tokens_per_turn: 300000

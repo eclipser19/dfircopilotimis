@@ -225,6 +225,16 @@
   params: {SearchStrings: regex filter on lines, UserRegex: user filter, UploadFiles: Y/N}
   dead_disk_note: 'Works on images (Velociraptor 0.73+; "lookupSID disabled" in the log is harmless). 0 rows: nobody used an interactive PowerShell console, so also check 4104/4103 script block logs.'
 
+# ---------------------------------------------------------------- text logs
+- pattern: Generic.Detection.Logs*
+  what: Lines of text log files (web server access/error logs, application logs) matching a regex
+  location: 'Any text file glob, e.g. C:/inetpub/logs/LogFiles/**/*.log (IIS), C:/*/apache*/logs/* or C:/*/*/apache*/logs/* (Apache)'
+  meaning: 'Web requests with client IP, time, URL with its parameters, status and user agent. Request bodies (POST data) are not logged.'
+  params: {TargetGlob: file glob (verified), SearchRegex: regex a line must match (verified), WhitelistRegex: regex of lines to drop}
+  tips:
+    - 'Always give a SearchRegex (an IP, a path, a word); a busy access log has millions of lines. Find the log folder first (Windows.Search.FileFinder on *.log under the web server folder).'
+    - 'Times in access-log lines are local with their offset ([10/Oct/2023:13:55:36 -0700]); the copilot stores them converted to UTC: quote the stored UTC time.'
+
 # ---------------------------------------------------------------- file system
 - pattern: Windows.Search.FileFinder*
   what: Files (or registry values) by glob, with size, times, hashes and an optional YARA content match

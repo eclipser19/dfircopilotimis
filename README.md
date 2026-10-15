@@ -371,6 +371,8 @@ are also the run case's chat, so you can open the run in the app. Benchmarks:
 - `cases/corporatesecrets/`: CyberDefenders "CorporateSecrets" (disk only, insider / HR case),
   held out. It comes as an AD1 logical image: `answer_key.md` explains how to present it to
   Velociraptor as a folder (`deaddisk --add_windows_directory`).
+- `cases/injector/`: CyberDefenders "Injector" (raw disk + memory, web server breached through
+  its web application), held out.
 
 The desktop case (`cases/szechuan/`) was used to tune the knowledge, so it isn't a fair test.
 

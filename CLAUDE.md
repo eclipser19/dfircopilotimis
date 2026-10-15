@@ -73,6 +73,7 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
 | `cases/szechuan/` | Example case (DFIR Madness "Szechuan Sauce" desktop) and `answer_key.md`; used to tune the knowledge. |
 | `cases/szechuan-dc/` | The same case's domain controller: `case.yaml`, `benchmark.yaml` (questions and expected facts), `answer_key.md`. Benchmark (no longer fully blind). |
 | `cases/corporatesecrets/` | CyberDefenders "CorporateSecrets" (insider case, AD1 logical image read as a folder): held-out benchmark; `answer_key.md` has the setup. |
+| `cases/injector/` | CyberDefenders "Injector" (web server breach, raw disk + memory): held-out benchmark; web logs via `Generic.Detection.Logs`. |
 | `tests/conftest.py` | `FakeVQL` (answers Velociraptor queries; `artifact_params` take names or dicts), fixtures `case`, `approve_all`, and isolation from real `server.yaml`/accounts/lessons. |
 
 ## Things that span several files
@@ -103,7 +104,7 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
 - **Knowledge must stay generic.** The answer keys (`answer_key.md`, `benchmark.yaml`) score the
   agent, so prompts, tool descriptions and `knowledge_data/` must not contain facts of the test
   cases (their file names, IPs, users). Improve the agent on the desktop case, measure on the
-  benchmarks; `cases/corporatesecrets/` is still held out, so don't tune on it.
+  benchmarks; `cases/corporatesecrets/` and `cases/injector/` are still held out, so don't tune on them.
 - **Streamlit quirks.** `RerunException`/`StopException` are `BaseException` (they can cut a turn
   short: `repair_history`); widget state is dropped when a widget is not drawn, so selections are
   copied to plain keys in `on_change`; `AppTest` cannot keep `st.dialog` open, so editors live in

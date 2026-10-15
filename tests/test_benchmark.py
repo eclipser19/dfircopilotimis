@@ -175,7 +175,7 @@ def test_within_ties_the_words_of_a_fact_together_and_cut_ids_are_invalid(tmp_pa
     assert cites["evidence_invalid"] == ["ba06dfce83ba6f8", "0123456789abcdef0"]
 
 
-@pytest.mark.parametrize("name", ["szechuan-dc", "corporatesecrets"])
+@pytest.mark.parametrize("name", ["szechuan-dc", "corporatesecrets", "injector"])
 def test_shipped_benchmarks_load_and_their_case_files_parse(name):
     root = os.path.join(os.path.dirname(__file__), "..", "cases", name)
     spec = benchmark.load_spec(os.path.join(root, "benchmark.yaml"))

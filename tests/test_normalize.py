@@ -150,3 +150,9 @@ def test_stored_descriptions_are_rebuilt_when_the_normalizer_improves(tmp_path):
     db.conn.commit()
     db.conn.close()
     assert CaseDatabase(str(tmp_path)).conn.execute("SELECT description FROM records").fetchone()[0] == "kept"
+
+
+def test_web_log_line_time_is_converted_to_utc():
+    line = '10.0.0.5 - - [10/Oct/2023:13:55:36 -0700] "GET /index.php?id=2 HTTP/1.1" 200 2326 "-" "curl/8.0"'
+    found = extract_timestamps({"Line": line, "OSPath": "C:\\web\\logs\\access.log"})
+    assert [ts for ts, _ in found] == ["2023-10-10T20:55:36.000000Z"]
