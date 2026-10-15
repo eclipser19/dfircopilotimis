@@ -23,7 +23,11 @@ Velociraptor cannot open `.ad1` files, but it can read a folder that holds a Win
    - mount it: *File > Image Mounting*, Image File = the `.ad1`, Mount Method *File System / Read Only*,
      pick a drive letter, *Mount*; or
    - export it: *File > Add Evidence Item > Image File* = the `.ad1`, right-click the top folder in
-     the Evidence Tree, *Export Files*, to e.g. `D:\evidence\corpsec\`.
+     the Evidence Tree, *Export Files*, to e.g. `D:\evidence\corpsec\`;
+   - or, without FTK, extract it with AD1-tools (github.com/al3ks1s/AD1-tools, Linux, so in WSL):
+     install the `.deb` from its releases page, then
+     `ad1extract -i /mnt/c/evidence/CorporateSecrets.ad1 -d /mnt/c/evidence/corpsec -m`
+     (`-m` keeps the original timestamps).
 2. **Find the folder that contains `Windows` and `Users`** (for example `F:\...\[root]`). That
    folder is the "C: drive" of the image.
 3. **Make the remapping and start the client** (stop the client of the previous image first, Ctrl+C):
