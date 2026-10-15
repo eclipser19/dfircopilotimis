@@ -1,0 +1,117 @@
+# Benchmark for CITADEL-DC01 (DFIR Madness Case 001). Read by copilot/benchmark.py only; the
+# agent never sees this file. Human-readable version and sources: answer_key.md.
+#
+# Each question is asked in a fresh conversation in a fresh case (the case database is shared by
+# the questions of one run, so findings recorded by an earlier question are visible later).
+# A fact is found when the answer contains every `all` string and one string of each `any`
+# group (case-insensitive; `regex` entries must match too). A fact with `time` must also give a
+# true-UTC time in that range, near the words that matched; a recorded (host clock) time given as
+# UTC is counted as an uncorrected time. `scored: false` facts are reported, not counted.
+
+name: szechuan-dc
+case_file: case.yaml
+clock_offset_minutes: 60          # recorded = true UTC + 60 min (for spotting uncorrected times)
+time_tolerance_seconds: 120       # default allowance around each expected time
+
+# Claims that are wrong for this image wherever they appear (events of the desktop, not the DC).
+forbidden:
+  - pattern: 'loot\.zip'
+    why: loot.zip was made on the desktop (DESKTOP-SDN1RPT), not on the DC
+  - pattern: 'my social security number'
+    why: desktop file, not on the DC
+
+questions:
+  - id: entry
+    ask: Was this server compromised? If so, how did the attacker get in, from where, and when?
+    facts:
+      - id: brute_force
+        what: RDP password guessing (a burst of failed logons) from 194.61.24.102
+        all: ["194.61.24.102"]
+        any: [["brute", "4625", "failed logon", "failed log", "password guess", "password spray", "hydra"]]
+        time: "02:19:00-02:21:59"
+        tolerance_seconds: 180
+      - id: rdp_logon
+        what: Successful RDP logon as Administrator from 194.61.24.102
+        all: ["194.61.24.102"]
+        any: [["administrator"], ["4624", "logon", "logged on", "logged in", "rdp", "remote desktop"]]
+        time: "02:21:00-02:22:59"
+
+  - id: malware
+    ask: What malicious program was put on this server, where did it come from, and how does it keep running?
+    facts:
+      - id: payload
+        what: The payload is coreupdater.exe
+        any: [["coreupdater"]]
+      - id: download
+        what: Downloaded from 194.61.24.102
+        all: ["194.61.24.102"]
+        any: [["coreupdater"], ["download", "zone.identifier", "visited", "http", "browser", "internet explorer"]]
+        time: "02:24:06"
+      - id: service
+        what: Persistence as a service named coreupdater (System 7045)
+        any: [["coreupdater"], ["7045", "service"]]
+        time: "02:27:49"
+      - id: system32
+        what: The service binary is in C:\Windows\System32
+        all: ["system32"]
+        any: [["coreupdater"]]
+        scored: false
+        note: path on the DC not confirmed against the published answers
+
+  - id: data
+    ask: Which files of interest did the attacker access, collect or take from this server?
+    facts:
+      - id: secret_zip
+        what: secret.zip created on the DC
+        any: [["secret.zip"]]
+        time: "02:30:00-02:31:59"
+        tolerance_seconds: 180
+      - id: szechuan_file
+        what: Szechuan Sauce.txt opened by the attacker
+        regex: ['szechuan[ _-]?sauce\.txt']
+        time: "02:32:21"
+
+  - id: anti_forensics
+    ask: Is there any sign that the attacker tried to hide their tracks, such as altered timestamps, deleted files or cleared logs?
+    facts:
+      - id: timestomp
+        what: Beth_Secret.txt timestomped ($SI times changed, $FN times not)
+        regex: ['beth[ _-]?secret']
+        any: [["timestomp", "time stomp", "time-stomp", "$si", "$fn", "0x10", "0x30", "backdat", "altered timestamp",
+               "timestamps were changed", "timestamps were altered", "modified timestamp"]]
+        time: "02:38:00"
+        tolerance_seconds: 300
+
+  - id: lateral
+    ask: Did the attacker move from this server to other machines? How and when?
+    facts:
+      - id: rdp_to_desktop
+        what: RDP from the DC to DESKTOP-SDN1RPT (10.42.85.115)
+        any: [["10.42.85.115", "desktop-sdn1rpt"], ["rdp", "remote desktop", "mstsc", "3389", "4648", "1024"]]
+        time: "02:35:54"
+        tolerance_seconds: 180
+
+  - id: memory
+    memory: true
+    ask: What does the memory image show about the attacker's tools and their command-and-control connection?
+    facts:
+      - id: c2
+        what: Connection to the C2 server 203.78.103.109
+        all: ["203.78.103.109"]
+      - id: spoolsv
+        what: The backdoor runs inside spoolsv.exe (migrated / injected)
+        any: [["spoolsv"], ["inject", "migrat", "malfind", "203.78.103.109", "meterpreter", "hollow"]]
+      - id: meterpreter
+        what: Identified as Metasploit Meterpreter
+        any: [["meterpreter", "metasploit"]]
+        scored: false
+        note: true, but hard to prove from these sources alone
+
+  - id: end
+    ask: When did the attacker's activity on this server end, and did they come back later?
+    facts:
+      - id: return_and_restart
+        what: The attacker logged on again later, restarted the server and moved the backdoor into spoolsv.exe
+        any: [["restart", "reboot", "1074", "6005", "6006"], ["logged on again", "came back", "returned", "new session", "logged in again", "second session"]]
+        scored: false
+        note: from the published answers, placed on the DC by elimination (not on the desktop); not verified

@@ -339,6 +339,34 @@ To go back to the cloud model, remove those lines (or variables).
 - Servers that reject `tool_choice="none"` still work: the wrap-up answer is requested from
   the normal model.
 
+## Benchmark
+
+Scores the copilot on an image with a known answer key, so changes to prompts, knowledge or
+the model can be compared run against run. The checks are done in code (free, repeatable):
+
+```bash
+python -m copilot.benchmark run cases/szechuan-dc/benchmark.yaml --client C.<id of the image's client>
+python -m copilot.benchmark run <spec> --from-case <case id>   # reuse a case's collected data, skip triage
+python -m copilot.benchmark run <spec> --questions entry,malware
+python -m copilot.benchmark score benchmark_results/<run>.json # score saved answers again (key corrected)
+python -m copilot.benchmark clean --yes                        # remove the bench-* run cases
+```
+
+Each run creates a fresh case `bench-<name>-<time>` from the spec's case file (agent collections
+and memory runs approved automatically; case changes and lessons off), runs the triage without
+the LLM, then asks every question in a fresh conversation. Per question it records the answer,
+tool calls, steps, tokens and time, and scores each expected fact:
+- **found:** the answer has the fact's words (`all`, one of each `any` group, `regex`);
+- **time:** a true-UTC time in the expected range near those words; a recorded (host clock)
+  time given as UTC counts as an *uncorrected time*;
+- **citations:** evidence and finding IDs that don't exist in the case;
+- **forbidden claims:** e.g. another host's events.
+
+The scorecard is written to `benchmark_results/<run>.json` and `.md`. The questions and answers
+are also the run case's chat, so you can open the run in the app. The first benchmark is the
+Szechuan Sauce domain controller (`cases/szechuan-dc/`: `case.yaml`, `benchmark.yaml`,
+`answer_key.md`); the desktop case was used to tune the knowledge, so it isn't a fair test.
+
 ## Tests
 
 ```bash

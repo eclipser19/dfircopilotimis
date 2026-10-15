@@ -1,0 +1,73 @@
+# DFIR Madness Case 001 — "The Stolen Szechuan Sauce", domain controller CITADEL-DC01.
+# Blind run: only what the victim told us at the start. The answers are in answer_key.md and
+# benchmark.yaml, which the agent never sees. Benchmark it with:
+#     python -m copilot.benchmark run cases/szechuan-dc/benchmark.yaml --client C.<id of the DC's client>
+# or open it in the app like any case (set the client ID below or in Case settings).
+
+case:
+  name: "Case 001 - Stolen Szechuan Sauce (Domain Controller)"
+  analyst: "Investigator"
+  created: "2026-10-15"
+
+velociraptor:
+  client_id: ""                     # the dead-disk client reading the DC's E01 (C.xxxx)
+  collection_wait_seconds: 300      # image collections take longer than live ones
+
+scope:
+  # The client noticed on 19 Sep 2020; a day either side covers the run-up and aftermath.
+  start_time: "2020-09-18T00:00:00Z"
+  end_time: "2020-09-20T00:00:00Z"
+  # Host clock ran 60 minutes ahead of true UTC: recorded 03:35:54 = real 02:35:54.
+  clock_offset_minutes: 60
+  description: >
+    The client's secret Szechuan sauce recipe was found for sale on the dark web.
+    They suspect a breach of their small network (domain C137 / CITADEL): a domain
+    controller CITADEL-DC01 (10.42.85.10, Windows Server 2012) and one workstation
+    DESKTOP-SDN1RPT (10.42.85.115, Windows 10). This image is the domain controller.
+    Determine whether it was compromised, how, when, by whom, what ran, what
+    persisted, and what data was accessed or taken.
+    Clock warning from the client: the machines' time zone was set incorrectly
+    (UTC-7 instead of UTC-6), so their clocks ran one hour ahead of true UTC
+    (confirmed against the network capture). See clock_offset_minutes.
+
+iocs:
+  hashes: []
+  ips: []
+  domains: []
+  filenames: []
+  users: []
+
+# Triage collected before the agent starts (no LLM). Same list as the desktop case.
+collect:
+  - Generic.Client.Info
+  - Windows.EventLogs.RDPAuth          # RDP / logon activity
+  - Windows.Sys.StartupItems           # Run keys / startup folders
+  - Windows.Timeline.Prefetch          # program execution
+  - Windows.System.TaskScheduler       # scheduled tasks
+  - artifact: Windows.EventLogs.EvtxHunter   # key event IDs only: logons, service installs,
+    parameters:                              # process creation, tasks, log clearing
+      IocRegex: "."
+      IdRegex: "^(4624|4625|4634|4647|4648|4688|4697|4698|4720|7045|1102|104|1149|21|22|23|24|25)$"
+
+memory:
+  image: citadeldc01.mem          # the DC's RAM capture, as named in memory.images_dir
+  os: windows
+
+collection:
+  max_rows: 50000
+  apply_time_window: true
+  agent_collections: confirm
+
+output:
+  report_formats: [html]
+
+agent:
+  approvals:
+    retract_finding: confirm
+    update_case: confirm
+    switch_case: confirm
+    create_case: confirm
+    memory: confirm
+  allow_raw_vql: false
+  max_steps: 15
+  max_tokens_per_turn: 300000

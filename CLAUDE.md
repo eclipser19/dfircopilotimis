@@ -22,6 +22,8 @@ python -m copilot.selftest [--flow F.XXXX]     # check the Velociraptor setup wi
 python -m copilot.memory check [image]         # check Volatility, symbols, YARA, memory images
 python -m copilot.auth add <user> [--admin]    # accounts (also: admin on|off, remove, list)
 python -m copilot.lessons list|accept|remove   # lessons learned
+python -m copilot.benchmark run cases/szechuan-dc/benchmark.yaml --client C.<id>   # score the agent
+python -m copilot.benchmark score benchmark_results/<run>.json                     # re-score saved answers
 ```
 
 No linter or formatter is configured. Tests pass in any order (they must keep doing so).
@@ -67,7 +69,9 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
 | `copilot/conversation.py` | Saves/restores each user's chat per case (`ui@user` / `agent@user`). |
 | `copilot/settings.py`, `llm.py`, `auth.py` | `server.yaml` (env vars win), the chat model, local accounts (PBKDF2, lockout). |
 | `copilot/iocs.py`, `commands.py`, `selftest.py` | IOC extraction, `/cases` `/case` `/help` chat commands, setup check. |
-| `cases/szechuan/` | Example case (DFIR Madness "Szechuan Sauce" desktop) and `answer_key.md` for grading. |
+| `copilot/benchmark.py` | Benchmark runner: fresh `bench-*` case, triage, fixed questions in fresh conversations, scoring in code (facts, true-UTC times near the fact's words, uncorrected times, invalid IDs, forbidden claims), results in `benchmark_results/`. |
+| `cases/szechuan/` | Example case (DFIR Madness "Szechuan Sauce" desktop) and `answer_key.md`; used to tune the knowledge. |
+| `cases/szechuan-dc/` | The same case's domain controller: `case.yaml`, `benchmark.yaml` (questions and expected facts), `answer_key.md`. The benchmark image. |
 | `tests/conftest.py` | `FakeVQL` (answers Velociraptor queries; `artifact_params` take names or dicts), fixtures `case`, `approve_all`, and isolation from real `server.yaml`/accounts/lessons. |
 
 ## Things that span several files
@@ -91,9 +95,9 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
   `live_only` in `artifacts.yaml`); the `mft` accessor is not remapped, so `Windows.NTFS.ADSHunter`
   returns nothing (use `Windows.Analysis.EvidenceOfDownload`). Check Velociraptor's own artifact
   YAML (`github.com/Velocidex/velociraptor`, `artifacts/definitions/`) before assuming parameters.
-- **Knowledge must stay generic.** `answer_key.md` will be used to benchmark the agent, so prompts,
-  tool descriptions and `knowledge_data/` must not contain facts of the test case (its file names,
-  IPs, users).
+- **Knowledge must stay generic.** The answer keys (`answer_key.md`, `benchmark.yaml`) score the
+  agent, so prompts, tool descriptions and `knowledge_data/` must not contain facts of the test
+  cases (their file names, IPs, users). Improve the agent on the desktop case, measure on the DC.
 - **Streamlit quirks.** `RerunException`/`StopException` are `BaseException` (they can cut a turn
   short: `repair_history`); widget state is dropped when a widget is not drawn, so selections are
   copied to plain keys in `on_change`; `AppTest` cannot keep `st.dialog` open, so editors live in

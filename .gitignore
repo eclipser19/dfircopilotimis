@@ -25,3 +25,7 @@ server.yaml
 
 # Lessons learned on this server (shared by its cases; may describe your environment)
 learned_knowledge.yaml
+
+# Benchmark runs (cases/bench-*/ and their results; data lives in case_data/)
+cases/bench-*/
+benchmark_results/
