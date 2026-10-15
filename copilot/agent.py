@@ -1,5 +1,6 @@
 import getpass
 import json
+import re
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
 from copilot.tools import tools, tool_map
 
@@ -23,6 +24,8 @@ def trim_chat_history(chat_history: list, keep_last_turns: int = 3) -> list:
                     name=msg.name
                 )
     return chat_history
+
+_EVIDENCE_ID = re.compile(r"(?<![0-9A-Za-z])[0-9a-f]{16}(?![0-9A-Za-z])")   # as citations.EVIDENCE_RE
 
 INTERRUPTED = ("[No result: this step was interrupted before the tool finished (e.g. the page was used while "
                "the agent worked). Run it again if it is still needed.]")
@@ -357,6 +360,7 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
     """
     usage = usage or TokenUsage()
     usage.start_turn()
+    seen_ids = set()          # evidence IDs in this turn's tool results (older ones get trimmed)
     answer = ""
     answered = False
     repair_history(chat_history)               # e.g. a previous turn that was cut short
@@ -410,6 +414,7 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
                     except (ValueError, TypeError):
                         emit("collection", str(tool_output)[:300])
 
+                seen_ids.update(_EVIDENCE_ID.findall(str(tool_output)))
                 chat_history.append(ToolMessage(
                     content=str(tool_output),
                     tool_call_id=tool_call["id"],
@@ -425,8 +430,29 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
         # Also when Streamlit stops the script mid-turn (its exceptions are not Exceptions):
         # the saved conversation must stay valid.
         repair_history(chat_history)
+    answer = _repair_citations(answer, chat_history, seen_ids)
     emit("usage", usage.summary())
     return answer
+
+
+def _repair_citations(answer: str, chat_history: list, seen_ids: set = ()) -> str:
+    """Puts back evidence IDs the model garbled when copying them from its tool results."""
+    if not answer:
+        return answer
+    from copilot.citations import repair_ids
+    from copilot.database import case_db
+    seen = set(seen_ids) | {i for m in chat_history if isinstance(m, ToolMessage)
+                            for i in _EVIDENCE_ID.findall(str(m.content))}
+    try:
+        fixed, fixes = repair_ids(answer, seen, case_db)
+    except Exception:            # never lose an answer over a citation check
+        return answer
+    if fixes:
+        for message in reversed(chat_history):       # the agent remembers the corrected answer too
+            if isinstance(message, AIMessage) and answer_text(message) == answer:
+                message.content = fixed
+                break
+    return fixed
 
 
 def _process_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, max_tokens: int = None,

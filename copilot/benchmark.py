@@ -104,24 +104,24 @@ def _positions(text: str, needle: str) -> list:
 
 
 def match_fact(text: str, fact: dict) -> tuple:
-    """(found, positions of the words that matched)."""
-    hits = []
-    for needle in fact.get("all") or []:
-        where = _positions(text, needle)
-        if not where:
-            return False, []
-        hits += where
-    for group in fact.get("any") or []:
-        where = [p for needle in group for p in _positions(text, needle)]
-        if not where:
-            return False, []
-        hits += where
-    for pattern in fact.get("regex") or []:
-        where = [m.start() for m in re.finditer(pattern, text or "", re.I)]
-        if not where:
-            return False, []
-        hits += where
-    return True, sorted(set(hits))
+    """
+    (found, positions of the words that matched). With `within: N`, every requirement must occur
+    within N characters of the first one, so "downloaded ... from 1.2.3.4" counts but an IP named
+    for something else three paragraphs away does not.
+    """
+    required = [_positions(text, needle) for needle in fact.get("all") or []]
+    required += [[p for needle in group for p in _positions(text, needle)] for group in fact.get("any") or []]
+    required += [[m.start() for m in re.finditer(pattern, text or "", re.I)] for pattern in fact.get("regex") or []]
+    if not required or not all(required):
+        return False, []
+    window = fact.get("within")
+    if not window:
+        return True, sorted({p for where in required for p in where})
+    for anchor in required[0]:
+        near = [[p for p in where if abs(p - anchor) <= window] for where in required[1:]]
+        if all(near):
+            return True, sorted({anchor, *(p for where in near for p in where)})
+    return False, []
 
 
 def _within(seconds: int, start: int, end: int, tolerance: int) -> bool:
@@ -170,10 +170,16 @@ def _existing_ids(ids: list, table: str, column: str, db) -> set:
     return {r[0] for r in rows}
 
 
+def malformed_ids(text: str) -> list:
+    """Cited like an evidence ID (in backticks) but cut short or too long: a copying mistake, never valid."""
+    return list(dict.fromkeys(re.findall(r"`([0-9a-f]{12,15}|[0-9a-f]{17,20})`", text or "")))
+
+
 def check_citations(text: str, db=None) -> dict:
     """Evidence and finding IDs the answer cites, and those that do not exist in the case."""
     from copilot.citations import EVIDENCE_RE, FINDING_RE
     evidence = list(dict.fromkeys(EVIDENCE_RE.findall(text or "")))
+    malformed = malformed_ids(text)
     findings = list(dict.fromkeys(FINDING_RE.findall(text or "")))
     real_evidence = _existing_ids(evidence, "records", "evidence_id", db)
     real_findings = set()
@@ -183,7 +189,8 @@ def check_citations(text: str, db=None) -> dict:
                 real_findings.add(fid)
         except Exception:
             real_findings.add(fid)
-    return {"evidence_cited": len(evidence), "evidence_invalid": [e for e in evidence if e not in real_evidence],
+    return {"evidence_cited": len(evidence) + len(malformed),
+            "evidence_invalid": [e for e in evidence if e not in real_evidence] + malformed,
             "findings_cited": len(findings), "findings_invalid": [f for f in findings if f not in real_findings]}
 
 
@@ -453,8 +460,12 @@ def rescore(results_path: str, spec_path: str = None, out_dir: str = None) -> di
             entry["skipped"] = "Volatility cannot read the memory image (setup)"
         if entry.get("skipped") or entry["id"] not in by_id:
             continue
-        entry["score"] = score_answer(entry.get("answer") or "", by_id[entry["id"]], spec,
-                                      citations=(entry.get("score") or {}).get("citations"))
+        cites = dict((entry.get("score") or {}).get("citations") or {}) or None
+        if cites:                 # the database check is kept; text-only checks are redone
+            missing = [m for m in malformed_ids(entry.get("answer")) if m not in cites.get("evidence_invalid", [])]
+            cites["evidence_invalid"] = list(cites.get("evidence_invalid", [])) + missing
+            cites["evidence_cited"] = cites.get("evidence_cited", 0) + len(missing)
+        entry["score"] = score_answer(entry.get("answer") or "", by_id[entry["id"]], spec, citations=cites)
     results["totals"] = totals(results["questions"])
     save(results, out_dir or os.path.dirname(os.path.abspath(results_path)))
     return results

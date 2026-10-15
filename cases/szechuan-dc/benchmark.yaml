@@ -6,7 +6,9 @@
 # A fact is found when the answer contains every `all` string and one string of each `any`
 # group (case-insensitive; `regex` entries must match too). A fact with `time` must also give a
 # true-UTC time in that range, near the words that matched; a recorded (host clock) time given as
-# UTC is counted as an uncorrected time. `scored: false` facts are reported, not counted.
+# UTC is counted as an uncorrected time. `within: N` makes the words count only when they occur
+# within N characters of each other. `scored: false` facts are reported, not counted.
+# Use words that appear only when the evidence was found: "brute" also matches "not brute-forced".
 
 name: szechuan-dc
 case_file: case.yaml
@@ -46,6 +48,7 @@ questions:
       - id: download
         what: Downloaded from 194.61.24.102
         all: ["194.61.24.102"]
+        within: 250               # the IP must be named as the download's source, not only for the logon
         any: [["coreupdater"], ["download", "zone.identifier", "visited", "http", "browser", "internet explorer"]]
         time: "02:24:06"
       - id: service

@@ -162,3 +162,14 @@ def test_rescoring_an_old_run_skips_memory_questions_when_volatility_could_not_r
     assert again["questions"][0]["skipped"].endswith("(setup)") and again["totals"]["questions"] == 1
     report = (tmp_path / "bench-mini-1.md").read_text(encoding="utf-8")
     assert "⚠ **Setup:** Volatility cannot read the memory image" in report and "## Triage" in report
+
+
+def test_within_ties_the_words_of_a_fact_together_and_cut_ids_are_invalid(tmp_path):
+    spec = benchmark.load_spec(_spec(tmp_path))
+    fact = {"id": "dl", "what": "download from the IP", "all": ["194.61.24.102"], "any": [["download"]], "within": 60}
+    near = "coreupdater.exe was downloaded from http://194.61.24.102/ at 02:24:12 UTC."
+    far = "It was downloaded to C:/Users/x/Downloads. " + "Unrelated text. " * 10 + "RDP from 194.61.24.102."
+    assert benchmark.match_fact(near, fact)[0] and not benchmark.match_fact(far, fact)[0]
+    assert benchmark.match_fact(far, dict(fact, within=None))[0]          # without within: anywhere
+    cites = benchmark.check_citations("see `ba06dfce83ba6f8` and `0123456789abcdef0`", db=None)
+    assert cites["evidence_invalid"] == ["ba06dfce83ba6f8", "0123456789abcdef0"]

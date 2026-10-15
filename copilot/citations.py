@@ -18,6 +18,45 @@ _CODE = re.compile(r"(```.*?```|`[^`\n]*`)", re.S)
 
 
 _AUTOLINK = re.compile(r"(?i)(\b(?:https?|ftp)):(?=//)|\b(www)(?=\.)")
+# Evidence IDs a model may have copied wrongly: 12-20 hex characters on their own.
+_ID_LIKE = re.compile(r"(?<![0-9A-Za-z-])[0-9a-f]{12,20}(?![0-9A-Za-z-])")
+
+
+def _distance(a: str, b: str, limit: int = 2) -> int:
+    """Edit distance (insert, delete, change, swap neighbours), or limit + 1 once it is exceeded."""
+    if abs(len(a) - len(b)) > limit:
+        return limit + 1
+    prev2, prev = None, list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i] + [0] * len(b)
+        for j, cb in enumerate(b, 1):
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb))
+            if i > 1 and j > 1 and ca == b[j - 2] and a[i - 2] == cb:
+                cur[j] = min(cur[j], prev2[j - 2] + 1)
+        if min(cur) > limit:
+            return limit + 1
+        prev2, prev = prev, cur
+    return prev[-1]
+
+
+def repair_ids(text: str, seen: set, db) -> tuple:
+    """
+    Fixes evidence IDs the model garbled while copying (a swapped, changed or dropped character):
+    an ID that is not in the case but is within 2 edits of exactly one ID the agent saw in its
+    tool results (and that exists) is replaced by it. Returns (text, [(wrong, right)]).
+    """
+    if not text or not seen:
+        return text, []
+    fixes = {}
+    for token in dict.fromkeys(_ID_LIKE.findall(text)):
+        if len(token) == 16 and db.get_event_detail(token):
+            continue
+        matches = [s for s in seen if _distance(token, s) <= 2]
+        if len(matches) == 1 and db.get_event_detail(matches[0]):
+            fixes[token] = matches[0]
+    for wrong, right in fixes.items():
+        text = re.sub(r"(?<![0-9A-Za-z-])" + wrong + r"(?![0-9A-Za-z-])", right, text)
+    return text, list(fixes.items())
 
 
 def md_literal(text) -> str:

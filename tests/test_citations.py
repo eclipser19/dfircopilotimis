@@ -58,3 +58,37 @@ def test_answers_keep_dollars_and_lose_images():
     out = citations.answer_markdown("ran $b=$env:windir ![x](http://evil.example/p.png) `$code` [MITRE](https://attack.mitre.org)")
     assert out == "ran \\$b=\\$env:windir [image removed: x] `$code` [MITRE](https://attack.mitre.org)"
     assert citations.answer_markdown("```\n$x = 1 ![a](b)\n```") == "```\n$x = 1 ![a](b)\n```"   # code stays as is
+
+
+def test_garbled_evidence_ids_are_repaired_only_when_unambiguous(case):
+    from copilot.citations import repair_ids
+    case.ingest_artifact_results([{"Message": f"record {n}"} for n in range(3)], "S", "H", "C.1")
+    ids = [r["evidence_id"] for r in case.search_events("record")["records"]]
+    a, b = ids[0], ids[1]
+    swapped = a[:10] + a[11] + a[10] + a[12:]                 # two neighbours swapped while copying
+    cut = a[:15]                                              # last character dropped
+    text = f"Seen in `{swapped}`, `{cut}` and `{b}`; also `ffffffffffffffff`."
+    fixed, fixes = repair_ids(text, set(ids), case)
+    assert fixed == f"Seen in `{a}`, `{a}` and `{b}`; also `ffffffffffffffff`."
+    assert dict(fixes) == {swapped: a, cut: a}
+    other = a[:15] + ("0" if a[15] != "0" else "1")              # one character away from a
+    assert repair_ids(f"`{swapped}`", {a, other}, case) == (f"`{swapped}`", [])   # two candidates: left alone
+
+
+def test_the_agent_answer_comes_back_with_repaired_ids(case):
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+    from copilot.agent import run_turn
+    case.ingest_artifact_results([{"Message": "coreupdater service installed"}], "S", "H", "C.1")
+    real = case.search_events("coreupdater")["records"][0]["evidence_id"]
+    garbled = real[:-2] + real[-1] + real[-2]
+
+    class LLM:
+        steps = [AIMessage(content="", tool_calls=[{"name": "search_iocs", "id": "1", "args": {"keyword": "coreupdater"}}]),
+                 AIMessage(content=f"The service was installed (`{garbled}`).")]
+
+        def invoke(self, history):
+            return self.steps.pop(0)
+
+    history = [SystemMessage(content="s"), HumanMessage(content="q")]
+    answer = run_turn(LLM(), history, 5, emit=lambda *a: None)
+    assert answer == f"The service was installed (`{real}`)." and history[-1].content == answer
