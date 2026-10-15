@@ -375,6 +375,11 @@ def _finish(flow_id: str, status: dict, vql) -> dict:
         if problems:
             summary["velociraptor_log"] = problems
             disabled = sorted({m.group(1) for line in problems for m in _DISABLED_RE.finditer(line)})
+            # Some artifacts call a live-only function only for a detail (e.g. Prefetch: winobj to show
+            # drive letters) and work without it: the knowledge base lists those as harmless.
+            from copilot.knowledge import artifact_info
+            harmless = {h.lower() for h in artifact_info(summary.get("artifact") or "").get("harmless_disabled") or []}
+            disabled = [d for d in disabled if d.lower() not in harmless]
             if disabled:
                 summary["note"] = (
                     f"This artifact relies on {', '.join(disabled)}, which only works on a running system "

@@ -24,7 +24,12 @@ them one hour later (e.g. 02:24:06 is recorded as 03:24:06).
 | 10 | memory | C2 connection to 203.78.103.109 | netscan, memsearch | yes |
 | 11 | memory | Backdoor inside spoolsv.exe (Meterpreter migrated) | malfind, netscan owner, memsearch | yes |
 | 12 | memory | Identified as Meterpreter | malfind / strings, AV | no (hard to prove) |
-| 13 | later | Attacker logs on again, restarts the server, migrates Meterpreter, last logoff ~03:00 | Security 4624/4634/4647, System 1074/6005/6006 | no (unverified) |
+| 13 | 02:56:04 | Attacker comes back over RDP from 194.61.24.102 after a disconnect at 02:52:46 | 1149, LocalSessionManager 21/25, 4624 | yes |
+| 14 | 02:57:40 | Attacker's last RDP session logs off (published: ~03:00) | 4647, LocalSessionManager 23 | yes |
+| 15 | later | Server restarted during the attack (published account) | System 1074/6005/6006 | no (unconfirmed) |
+
+Rows 13-14: times from the events the copilot cited in run bench-szechuan-dc-20261015-081138; they fit
+the published account (the attacker logs on again; last logoff around 03:00). Check them if in doubt.
 
 ## Red flags
 - Desktop events presented as DC findings: `loot.zip`, `My Social Security Number.zip`.

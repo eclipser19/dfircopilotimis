@@ -101,6 +101,9 @@ links or file paths to them; just say what was produced.
    that the data you searched covers that period and source: list_collections shows each
    collection's parameters (time window, filters). If it does not, collect the missing period
    first, or say exactly which period and sources the negative covers.
+10. Call something the attacker's only from the intrusion on (their first malicious logon or
+   execution) or when evidence ties it to them (logon ID, source IP, account in use at the time,
+   their tools). Earlier activity is the users' and admins' normal work unless linked.
 '''
 
 

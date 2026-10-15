@@ -567,6 +567,13 @@ def run(plugin: str, options: dict = None, requested_by: str = "investigator") -
     short, spec = resolve(plugin)
     options = check_options(short, spec, options, requested_by)
     image = image_path()
+    if requested_by == "agent" and spec.names:
+        blocked = unreadable_reason(case_config.memory_image)
+        if blocked:
+            raise MemoryAnalysisError(
+                f"Volatility cannot read this memory image: {blocked[:300]} Do not retry Volatility plugins: "
+                f"the investigator has to add the symbol table (python -m copilot.memory check). The 'strings' "
+                f"plugin still works (it searches the image file itself).")
     if requested_by == "agent":
         from copilot import approvals
         shown = ", ".join(f"{k}={v}" for k, v in options.items())
@@ -576,6 +583,18 @@ def run(plugin: str, options: dict = None, requested_by: str = "investigator") -
         except approvals.ApprovalError as e:
             raise MemoryAnalysisError(str(e))
     return execute(short, options, image)
+
+
+def unreadable_reason(image_name: str) -> str:
+    """The symbol-table error of the latest Volatility run on this image ("" if it worked since)."""
+    client = f"memory:{image_name}"
+    runs = sorted((c for c in case_db.get_collections() if c.get("client_id") == client
+                   and str(c.get("flow_id", "")).startswith("MEM.")
+                   and not str(c.get("flow_id", "")).startswith("MEM.strings.")),
+                  key=lambda c: c.get("requested_at") or "")
+    if runs and runs[-1].get("state") == "ERROR" and "symbol table" in (runs[-1].get("error") or ""):
+        return runs[-1]["error"]
+    return ""
 
 
 def _plugin_name(short: str, spec: Plugin) -> str:

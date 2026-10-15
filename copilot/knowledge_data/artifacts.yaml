@@ -174,13 +174,17 @@
   location: 'C:\Windows\Prefetch\*.pf'
   meaning: 'A program ran: executable name, run count and up to 8 last run times (Windows 8+). Proves execution even if the binary was deleted.'
   params: {dateAfter: start of window (lowercase d), dateBefore: end of window}
+  harmless_disabled: [winobj]
+  dead_disk_note: 'Works on disk images. The log line "winobj disabled" is harmless: it is only used to show drive letters instead of device paths.'
   tips:
-    - Prefetch is often disabled on servers and SSD-backed VMs; absence is not proof of non-execution.
+    - 'Windows Server has Prefetch turned off by default, and it is often off on SSD-backed VMs: 0 rows there is normal and proves nothing. Use Amcache, ShimCache (AppCompatCache), service installs (7045), Security 4688 if auditing was on, and MFT/USN for the executable.'
 
 - pattern: Windows.Forensics.Prefetch*
   what: Prefetch files (parsed)
   location: 'C:\Windows\Prefetch\*.pf'
   meaning: Program execution, run count, last run times and files/directories loaded by the program.
+  harmless_disabled: [winobj]
+  dead_disk_note: 'Works on disk images; "winobj disabled" in the log is harmless. Windows Server has Prefetch off by default.'
 
 - pattern: '*Amcache*'
   what: Amcache inventory

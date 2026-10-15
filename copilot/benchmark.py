@@ -246,6 +246,10 @@ def render_markdown(results: dict) -> str:
         f"{t['questions']} questions · {t['steps']} model steps · {t['tool_calls']} tool calls · "
         f"{t['tokens_in']:,} tokens in / {t['tokens_out']:,} out · {round(t['seconds'] / 60, 1)} min",
         "",
+    ]
+    for problem in results.get("setup") or []:
+        lines += [f"⚠ **Setup:** {problem}", ""]
+    lines += [
         "| Question | Facts | Times | Invalid IDs | Steps | Tokens in | Min |",
         "|---|---|---|---|---|---|---|",
     ]
@@ -286,6 +290,9 @@ def render_markdown(results: dict) -> str:
         if tools:
             lines.append(f"- Tools: {', '.join(tools)}")
         lines += ["", "<details><summary>Answer</summary>", "", (q.get("answer") or "(none)"), "", "</details>"]
+    if results.get("triage"):
+        fence = "~~~~"            # triage lines may contain backticks
+        lines += ["", "## Triage", "", fence] + list(results["triage"]) + [fence]
     return "\n".join(lines) + "\n"
 
 
@@ -392,17 +399,23 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
         if case_config.memory_image:
             log("[*] Memory triage ...")
             triage += [status_line(s) for s in memory.triage(progress=lambda p: log(f"    {p}"))]
+    setup = []
+    memory_broken = memory.unreadable_reason(case_config.memory_image) if case_config.memory_image else ""
+    if memory_broken:      # a setup problem (e.g. no symbol table), not the agent's: memory questions are skipped
+        setup.append(f"Volatility cannot read the memory image: {memory_broken[:300]}")
     llm_with_tools, finalizer, model_name = model or make_model()
     results = {"name": spec["name"], "spec": spec["_path"], "run_id": run_id, "case_id": run_id,
                "client_id": case_config.client_id, "memory_image": case_config.memory_image,
-               "model": model_name, "started": started.isoformat(), "triage": triage, "questions": []}
+               "model": model_name, "started": started.isoformat(), "triage": triage, "setup": setup,
+               "questions": []}
     chat = []
     for question in spec["questions"]:
         if only and question["id"] not in only:
             continue
         entry = {"id": question["id"], "ask": question["ask"]}
-        if question.get("memory") and not case_config.memory_image:
-            entry["skipped"] = "no memory image in this run"
+        if question.get("memory") and (not case_config.memory_image or memory_broken):
+            entry["skipped"] = ("Volatility cannot read the memory image (setup)" if memory_broken
+                                else "no memory image in this run")
             results["questions"].append(entry)
             continue
         log(f"\n[?] {question['id']}: {question['ask']}")
@@ -429,7 +442,15 @@ def rescore(results_path: str, spec_path: str = None, out_dir: str = None) -> di
         results = json.load(f)
     spec = load_spec(spec_path or results["spec"])
     by_id = {q["id"]: q for q in spec["questions"]}
+    # Runs saved before setup problems were recorded: every memory triage plugin failed on symbols.
+    memory_lines = [line for line in results.get("triage") or [] if line.startswith("Memory.")]
+    if memory_lines and all("-> ERROR" in line for line in memory_lines) and \
+            any("symbol table" in line for line in memory_lines) and not results.get("setup"):
+        results["setup"] = ["Volatility cannot read the memory image (every memory triage plugin failed on symbols)"]
     for entry in results["questions"]:
+        if results.get("setup") and by_id.get(entry["id"], {}).get("memory") and not entry.get("skipped") \
+                and any("memory image" in s for s in results["setup"]):
+            entry["skipped"] = "Volatility cannot read the memory image (setup)"
         if entry.get("skipped") or entry["id"] not in by_id:
             continue
         entry["score"] = score_answer(entry.get("answer") or "", by_id[entry["id"]], spec,

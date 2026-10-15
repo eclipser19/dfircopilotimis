@@ -27,7 +27,8 @@ questions:
       - id: brute_force
         what: RDP password guessing (a burst of failed logons) from 194.61.24.102
         all: ["194.61.24.102"]
-        any: [["brute", "4625", "failed logon", "failed log", "password guess", "password spray", "hydra"]]
+        # Evidence words only: "brute" or "failed attempt" also match sentences saying it was NOT seen.
+        any: [["4625", "failed logon", "password guess", "hydra"]]
         time: "02:19:00-02:21:59"
         tolerance_seconds: 180
       - id: rdp_logon
@@ -87,7 +88,9 @@ questions:
     facts:
       - id: rdp_to_desktop
         what: RDP from the DC to DESKTOP-SDN1RPT (10.42.85.115)
-        any: [["10.42.85.115", "desktop-sdn1rpt"], ["rdp", "remote desktop", "mstsc", "3389", "4648", "1024"]]
+        any: [["10.42.85.115", "desktop-sdn1rpt"], ["rdp", "remote desktop", "mstsc", "3389", "4648", "1024", "1102"]]
+        # The direction matters: "from DESKTOP-SDN1RPT (10.42.85.115) to the DC" is the wrong way round.
+        regex: ['(?:\bto\b|->|→|towards)\W{0,6}(?:10\.42\.85\.115|desktop-sdn1rpt)']
         time: "02:35:54"
         tolerance_seconds: 180
 
@@ -110,8 +113,22 @@ questions:
   - id: end
     ask: When did the attacker's activity on this server end, and did they come back later?
     facts:
-      - id: return_and_restart
-        what: The attacker logged on again later, restarted the server and moved the backdoor into spoolsv.exe
-        any: [["restart", "reboot", "1074", "6005", "6006"], ["logged on again", "came back", "returned", "new session", "logged in again", "second session"]]
+      # Published answers: the attacker logs on again, migrates Meterpreter, last logoff ~03:00. The times
+      # below are the events found in run bench-szechuan-dc-20261015-081138 (RDP 1149/21/25 recorded
+      # 03:56:04, 4647/23 recorded 03:57:40), which fit that account.
+      - id: reconnect
+        what: The attacker came back over RDP from 194.61.24.102 after a disconnect
+        all: ["194.61.24.102"]
+        any: [["reconnect", "came back", "come back", "returned", "again", "4778"]]
+        time: "02:56:04"
+        tolerance_seconds: 180
+      - id: last_logoff
+        what: The attacker's last RDP session ended with a logoff
+        any: [["logoff", "logged off", "log off", "logged out", "4647", "4634"]]
+        time: "02:57:40"
+        tolerance_seconds: 300
+      - id: restart
+        what: The server was restarted during the attack
+        any: [["restart", "reboot", "1074", "6005", "6006"]]
         scored: false
-        note: from the published answers, placed on the DC by elimination (not on the desktop); not verified
+        note: in the published answers' account, not confirmed on this image

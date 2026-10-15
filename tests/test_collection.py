@@ -212,3 +212,11 @@ def test_disabled_plugin_in_flow_log_is_explained(case):
     summary = collection.collect("Windows.System.TaskScheduler",
                                  vql=FakeVQL(rows={}, reported_rows=0, flow_logs=logs), sleep=lambda s: None)
     assert "lookupSID" in summary["note"] and "running system" in summary["note"]
+
+
+def test_a_disabled_function_the_artifact_does_without_is_not_blamed(case):
+    # Prefetch calls winobj only to show drive letters: on a server with Prefetch off, 0 rows is normal.
+    logs = [{"level": "DEFAULT", "message": "Call to function winobj disabled"}]
+    summary = collection.collect("Windows.Timeline.Prefetch",
+                                 vql=FakeVQL(rows={}, reported_rows=0, flow_logs=logs), sleep=lambda s: None)
+    assert "running system" not in summary.get("note", "") and "0 rows" in summary["note"]

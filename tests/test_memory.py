@@ -157,6 +157,18 @@ def test_missing_symbols_offline_are_explained(case, mem, tmp_path):
     assert case.get_collection(summary["flow_id"])["state"] == "ERROR"
 
 
+def test_after_a_symbol_failure_the_agent_stops_retrying_volatility(case, mem, approve_all):
+    mem.fail["windows.pslist.PsList"] = "\nUnsatisfied requirement plugins.PsList.kernel.symbol_table_name: \n"
+    assert memory.run("windows.pslist")["state"] == "ERROR"                    # the triage, investigator's
+    out = tools.analyze_memory.invoke({"plugin": "windows.netscan"})
+    assert "cannot read this memory image" in out and "'strings' plugin still works" in out
+    assert not approve_all and len(mem.commands) == 1                          # not even asked
+    assert json.loads(tools.analyze_memory.invoke({"plugin": "strings", "text": "203.78.103.109"}))["state"] == "FINISHED"
+    del mem.fail["windows.pslist.PsList"]
+    assert memory.run("windows.pslist")["state"] == "FINISHED"                 # symbols added, run again
+    assert json.loads(tools.analyze_memory.invoke({"plugin": "windows.netscan"}))["state"] == "FINISHED"
+
+
 def test_unreadable_file_is_explained(case, mem):
     mem.fail["windows.pslist.PsList"] = "Unsatisfied requirement plugins.PsList.kernel.layer_name: "
     assert "could not read this file as a memory image" in memory.run("windows.pslist")["error"]

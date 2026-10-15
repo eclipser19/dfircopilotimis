@@ -146,3 +146,19 @@ def test_a_full_run_scores_saves_and_leaves_a_readable_case(bench_dirs):
 def test_a_run_needs_an_evidence_client(bench_dirs):
     with pytest.raises(benchmark.BenchmarkError, match="--client"):
         benchmark.run(_spec(bench_dirs), model=(None, None, "x"), log=lambda *a: None)
+
+
+def test_rescoring_an_old_run_skips_memory_questions_when_volatility_could_not_read_the_image(tmp_path):
+    spec_path = _spec(tmp_path)
+    results = {"name": "mini", "spec": spec_path, "run_id": "bench-mini-1", "case_id": "bench-mini-1",
+               "triage": ["Generic.Client.Info -> FINISHED: rows 1",
+                          "Memory.windows.info.Info -> ERROR: Volatility has no symbol table for this image's kernel",
+                          "Memory.windows.pslist.PsList -> ERROR: Volatility has no symbol table for this image's kernel"],
+               "questions": [{"id": "memory", "ask": "?", "answer": "Nothing could be read.", "score": {}},
+                             {"id": "entry", "ask": "?", "answer": "4625 burst from 194.61.24.102 at 02:20 UTC"}]}
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps(results))
+    again = benchmark.rescore(str(path))
+    assert again["questions"][0]["skipped"].endswith("(setup)") and again["totals"]["questions"] == 1
+    report = (tmp_path / "bench-mini-1.md").read_text(encoding="utf-8")
+    assert "⚠ **Setup:** Volatility cannot read the memory image" in report and "## Triage" in report

@@ -25,8 +25,8 @@
 - {id: 4779, channel: Security, meaning: Session disconnected (RDP/fast user switching)}
 - {id: 5140, channel: Security, meaning: Network share accessed, details: 'ADMIN$ or C$ from another host often means remote execution (PsExec) or file staging.'}
 - {id: 5145, channel: Security, meaning: Network share object access checked}
-- {id: 1102, channel: Security, meaning: Security log cleared, details: Anti-forensics.}
-- {id: 7045, channel: System, meaning: Service installed, details: 'ImagePath shows the binary; random names or binaries in Temp/System32 are suspicious (PsExec installs PSEXESVC).'}
+- {id: 1102, channel: Security, meaning: Security log cleared, details: 'Anti-forensics. Only in the Security log: 1102 in other channels (e.g. RDPClient) means something else.'}
+- {id: 7045, channel: System, meaning: Service installed, details: 'ImagePath shows the binary; random names or binaries in Temp/System32 are suspicious (PsExec installs PSEXESVC). A service whose command is cmd.exe /c echo <name> > \\.\pipe\<name> (random short name) is Metasploit getsystem (named-pipe impersonation to become SYSTEM): privilege escalation by a Meterpreter session, not persistence.'}
 - {id: 7036, channel: System, meaning: Service state changed}
 - {id: 7040, channel: System, meaning: Service start type changed}
 - {id: 104, channel: System, meaning: Event log cleared, details: Anti-forensics.}
@@ -41,6 +41,7 @@
 - {id: 24, channel: LocalSessionManager, meaning: RDP session disconnected}
 - {id: 25, channel: LocalSessionManager, meaning: RDP session reconnected}
 - {id: 1024, channel: RDPClient, meaning: Outbound RDP connection attempt, details: 'On the SOURCE machine: which host this machine connected to over RDP.'}
+- {id: 1102, channel: RDPClient, meaning: Outbound RDP connection (multi-transport) started, details: 'On the SOURCE machine: names the server this machine connected to over RDP. Not the Security log-cleared 1102.'}
 - {id: 4103, channel: PowerShell, meaning: PowerShell module logging (pipeline execution)}
 - {id: 4104, channel: PowerShell, meaning: PowerShell script block logged, details: 'The code that ran, including decoded stages; long scripts span several 4104 records.'}
 - {id: 400, channel: Windows PowerShell, meaning: PowerShell engine started, details: HostApplication shows the full command line.}
