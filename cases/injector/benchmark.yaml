@@ -48,11 +48,17 @@ questions:
         time: "11:15:40"
         tolerance_seconds: 300
       - id: lfi_hosts
-        what: Local file inclusion read windows\system32\drivers\etc\hosts, 2015-09-02 09:31:16
+        what: Local file inclusion read windows\system32\drivers\etc\hosts (2015-09-02 09:31:16)
         regex: ['\bhosts\b']
-        any: [["file inclusion", "lfi", "fi/?page", "fi/", "traversal", "../"]]
+        any: [["file inclusion", "file-inclusion", "lfi", "fi/?page", "fi/", "traversal", "../"]]
         within: 400
-        time: "09:31:16"
+      - id: lfi_start
+        what: File inclusion attacks started 2015-09-02 between 08:43 and 09:31
+        any: [["file inclusion", "file-inclusion", "lfi", "fi/?page", "traversal"], ["192.168.56.102", "dvwa"]]
+        within: 300
+        # The question asks when it started: from the first fi/ request (08:43:29 in run 095938, not
+        # in the writeup) to the hosts read (09:31:16, writeup).
+        time: "08:43:00-09:31:16"
         tolerance_seconds: 300
       - id: xss
         what: First vulnerability exercised - reflected XSS (/dvwa/vulnerabilities/xss_r/), 2015-09-02 06:03:19 (from ::1)

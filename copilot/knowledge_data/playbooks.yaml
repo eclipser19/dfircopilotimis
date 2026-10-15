@@ -22,7 +22,7 @@ system_info:
   triggers: ['computer.?s? name', 'host ?name', 'time ?zone', '\bbuild\b', 'windows version', '\bos\b', 'operating system', 'user accounts?', 'describe (this|the) (computer|server|machine|host|system)', 'installed (software|programs?)', 'web server software']
   check:
     - 'Generic.Client.Info cannot describe an image (it asks WMI). Read the registry with Windows.Search.FileFinder, Accessor "registry", one Glob per call (verified on images): HKEY_LOCAL_MACHINE/System/ControlSet001/Control/ComputerName/ComputerName/* (name), HKEY_LOCAL_MACHINE/Software/Microsoft/Windows NT/CurrentVersion/* (ProductName, CurrentBuild), HKEY_LOCAL_MACHINE/System/ControlSet001/Control/TimeZoneInformation/* (TimeZoneKeyName; ActiveTimeBias = minutes to add to local time to get UTC), HKEY_LOCAL_MACHINE/System/ControlSet001/Services/Tcpip/Parameters/Interfaces/*/* (IPAddress, DhcpIPAddress, DhcpDomain), HKEY_LOCAL_MACHINE/Software/Microsoft/Windows NT/CurrentVersion/Winlogon/* and .../Authentication/LogonUI/* (last user).'
-    - 'Accounts: Windows.Forensics.SAM (source CreateTimes: when each account was made; source Parsed: RID, LoginCount, LastLoginDate). Windows.Sys.Users lists profile folders only.'
+    - 'Accounts: Windows.Forensics.SAM (source CreateTimes: when each account was made; source Parsed: RID, LoginCount, LastLoginDate). List every account, built-in ones (Guest, disabled ones) included. Windows.Sys.Users lists profile folders only.'
     - 'Software: HKEY_LOCAL_MACHINE/Software/Microsoft/Windows/CurrentVersion/Uninstall/*/DisplayName (FileFinder, registry), program folders (FileFinder Glob C:/*/ and C:/Program Files*/*), services; with a memory image: pslist, cmdline, svcscan.'
     - 'With a memory image, windows.info gives the OS and capture time, and windows.registry.printkey reads the same keys from memory.'
 
@@ -32,15 +32,18 @@ web_attack:
   check:
     - 'Find the web server first: which software serves the site, where its web root and its logs are. Windows.Search.FileFinder on candidate folders (C:/inetpub/**/*.log for IIS; C:/*/apache*/logs/*, C:/*/*/apache*/logs/*, C:/*/nginx*/logs/* for Apache- and nginx-based stacks), the program folders at C:/*/, services, and with memory pslist/cmdline (web server and database processes and their paths). Do not assume IIS.'
     - 'Read the access logs with Generic.Detection.Logs (TargetGlob = the log files found, always a SearchRegex). To find the attacker: requests carrying attack payloads (../ traversal, quotes with SQL keywords such as union|select, <script, command separators such as ;, |, && with a command) and automated-tool user agents; then every request from those client IPs. The first request of each kind dates that stage.'
-    - 'Planted files: script files (.php, .asp, .aspx, .jsp, .cgi) in the web root created or changed in the incident window: Windows.NTFS.MFT with PathRegex on the web root and FileRegex on script extensions, or FileFinder on the web root (times, Calculate_Hash). Then grep the access log for each new file name: its first request is its first use, and the query parameters of those requests are the commands sent to it.'
+    - 'Planted files: script files (.php, .asp, .aspx, .jsp, .cgi) in the web root created or changed in the incident window: Windows.NTFS.MFT with PathRegex on the web root and FileRegex on script extensions, or FileFinder on the web root (times, Calculate_Hash). Then grep the access log for each new file name: its first request is its first use, and the query parameters of those requests are the commands sent to it. Files can also be written through SQL injection (INTO OUTFILE / DUMPFILE in a request) and deleted afterwards: grep the log for requests to script files that are no longer on disk.'
     - 'POST bodies are not logged: commands sent by POST are only in memory (strings, windows.memsearch on the web server process and its parent) or visible through their effects.'
     - 'What the attacker did through the server: child processes of the web server (pstree, cmdline), console history (consoles, cmdscan), new or changed accounts (Windows.Forensics.SAM CreateTimes, Security 4720/4732), firewall and remote-access changes.'
     - 'Requests from 127.0.0.1 or ::1 come from the server itself (someone logged on to it), not from a remote client.'
 
 execution:
   question: What ran?
-  triggers: ['\bran\b', 'execut', 'launch', 'what (was )?run', 'started by']
+  triggers: ['\bran\b', 'execut', 'launch', 'what (was )?run', 'started by', '\bcommands?\b']
   check:
+    - 'Typed commands in memory: consoles / cmdscan read conhost.exe (Windows 7+). On older Windows (no conhost.exe in pslist) they return nothing: search csrss.exe with windows.memsearch (pid, text = a command or utility you suspect) or strings.'
+    - 'Commands sent through a web application: GET parameters are in the access log; POST bodies (injected commands, web shell forms) only in memory - windows.memsearch on the web server process and its parent/control process with words of likely commands, or strings. Search memory before writing that a command cannot be determined.'
+    - 'The effects of a command are evidence of it when its text is lost: accounts created (Windows.Forensics.SAM), group changes (4732), firewall or remote-access settings, new services or tasks.'
     - Prefetch (run count, last 8 run times) - strongest single execution source on workstations.
     - Security 4688 (if enabled), Sysmon 1.
     - PowerShell 4104 script blocks, 4103, 400; PSReadline history.

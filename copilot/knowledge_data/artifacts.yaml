@@ -100,11 +100,15 @@
   what: cmd.exe command history (Volatility cmdscan)
   location: memory image, conhost command history buffers
   meaning: Commands typed into cmd.exe consoles that were still in memory.
+  tips:
+    - 'Volatility 3 reads only conhost.exe (Windows 7 / Server 2008 R2 and later). Before that (XP, Vista, Server 2003/2008: no conhost.exe in pslist) the console history is in csrss.exe and cmdscan/consoles return 0 rows: that is not evidence that nothing was typed. Search csrss.exe with windows.memsearch (pid = its PID, text = a command or utility name you suspect), or strings with context.'
 
 - pattern: Memory.*.consoles.*
   what: Console buffers (Volatility consoles)
   location: memory image, conhost screen buffers
   meaning: What was typed in consoles and what the commands printed.
+  tips:
+    - 'conhost.exe only (Windows 7 / Server 2008 R2 and later): on older Windows the consoles live in csrss.exe, so 0 rows proves nothing; see the cmdscan tip.'
 
 - pattern: Memory.*.registry.printkey.*
   what: Registry key from memory (Volatility printkey)
