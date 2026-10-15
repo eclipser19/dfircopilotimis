@@ -50,4 +50,5 @@ Apache log times (local, -0700) converted.
 | 13 | accounts | user1 created 2015-09-02 09:05:06 (first); hacker created; 2 accounts added (T1136.001) | SAM |
 | 14 | accounts: RDP group | hacker added to "Remote Desktop Users": `ip=192.168.56.102 && net localgroup "Remote Desktop Users" hacker /add` | memory of xampp-control.exe (PID 2768) |
 | 15 | commands: firewall | `netsh firewall set service type=remotedesktop mode=enable scope=subnet` | memory, console history (cmdscan) |
+| 15b | commands: console (not in the writeup) | `net user user1 Root@psut /add` and `net localgroup "Remote Desktop Users" user1 /add` ("The command completed successfully") in csrss.exe memory, found by run 112120; plausible, not checked against the image | memory, csrss.exe |
 | 16 | user1 NT hash | `817875ce4794a9262159186413772644` | memory hashdump (not scored) |

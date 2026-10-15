@@ -123,7 +123,11 @@ questions:
         within: 300
       - id: net_localgroup
         what: net localgroup "Remote Desktop Users" hacker /add (command injection through the ip parameter; seen in xampp-control.exe memory)
+        # Run 112120 found 'net localgroup "Remote Desktop Users" user1 /add' in csrss.exe memory instead (not in
+        # the writeup, plausible): a net localgroup command adding to that group counts.
         regex: ['net\s+localgroup']
+        any: [["remote desktop users"]]
+        within: 150
       - id: command_injection
         what: Command injection through DVWA's exec page (ip=192.168.56.102 && ...)
         any: [["command injection", "os command injection", "exec/"]]
