@@ -243,6 +243,9 @@ the agent can search the memory image for it (with your approval, like any plugi
   with the readable text around it (a full URL, an HTTP request). It also finds leftovers in freed
   memory of processes that have exited. It needs neither Volatility symbols nor YARA, but it
   can't say which process the memory belonged to, and it can't see inside compressed images.
+  With `words` (up to 20 texts) it searches for all of them in one pass, e.g. the names of
+  command-line utilities, so every command line they appear in comes back with the rest of its
+  line (about 25 s per GB for 20 words).
 - `windows.memsearch` searches each running process's memory: with `text` it names the processes
   that still hold the text, with the text around it (e.g. the owner of a C2 address that netscan
   could not read); with `rules` it scans with a YARA rule file from `memory.yara_dir`. The agent

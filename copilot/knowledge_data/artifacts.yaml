@@ -122,6 +122,7 @@
   tips:
     - 'Search for what the collected data cannot explain: an IP or domain from the case (also the download server, not only the C2), a file name, a URL path. The text after the match often completes it (full URL, HTTP headers, user agent).'
     - Then run windows.memsearch with the same text to see which running process still holds it.
+    - 'To list command lines without guessing them one by one: words = the command-line utilities you would expect after this kind of intrusion (e.g. localgroup, net user, net+user, netsh, sc create, schtasks, wmic, powershell, certutil, whoami, vssadmin, wevtutil). Each hit shows the rest of its line, so one call lists every command those utilities appear in. Commands sent through a web form are URL-encoded (net+user, %20): prefer single words, or give a phrase in both forms.'
     - 'To list the web pages users visited from memory (Internet Explorer / Edge Legacy history is otherwise unreadable on an image), search for the text "Visited: " - every hit is "Visited: <user>@<url>".'
     - '<name>.<random>.partial is the temporary name Internet Explorer / Edge Legacy give a download in progress: it proves a browser download of <name>. Date it with the USN journal (FILE_CREATE and RENAME of that name).'
     - '"Visited: <user>@<url>" is a WinINet history record (Internet Explorer / Edge Legacy, stored in WebCacheV01.dat): it names the Windows account and the browser family. A URL ending in a file name (e.g. .exe) is a download. Search next for the file name the case knows, to get its full URL.'

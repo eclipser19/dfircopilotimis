@@ -57,7 +57,7 @@ class Plugin:
                  yara_string=False):
         self.names = names            # full Volatility names, newest first (renamed between versions)
         self.about = about
-        self.options = set(options)   # pid | key | recurse | contains | text | rules
+        self.options = set(options)   # pid | key | recurse | contains | text | words | rules
         self.heavy = heavy            # the agent must narrow it (pid / key / contains)
         self.needs_one_of = set(needs_one_of)   # a search: one of these options is required
         self.post = post              # rows -> rows, after Volatility (e.g. decode matched bytes)
@@ -144,9 +144,10 @@ PLUGINS = {
                               ["pid", "contains"], heavy=True),
     # --- Searching memory
     "strings": Plugin([], "Searches the image file itself for a text (IP, domain, URL, file name), ASCII and "
-                          "UTF-16, with the text around it. Finds leftovers in freed memory too; does not say "
-                          "which process (then use windows.memsearch). Fast, needs no symbols.",
-                      ["text"], needs_one_of=["text"]),
+                          "UTF-16, with the text around it; or for several words at once (words), e.g. command "
+                          "names, each hit with the rest of its line. Finds leftovers in freed memory too; does "
+                          "not say which process (then use windows.memsearch). Fast, needs no symbols.",
+                      ["text", "words"], needs_one_of=["text", "words"]),
     "windows.memsearch": Plugin(["dfir_memsearch.MemSearch"],
                                 "Searches each running process's memory: which processes hold a text (text), "
                                 "with the text around it, or match a YARA rule file from the server (rules)",
@@ -401,6 +402,8 @@ def check_options(short: str, spec: Plugin, options: dict, requested_by: str = "
                                   f"{' or '.join(sorted(spec.needs_one_of))}.")
     if "text" in options:
         options["text"] = check_text(options["text"])
+    if "words" in options:
+        options["words"] = check_words(options["words"])
     if "rules" in options:
         rule_path(options["rules"])
     if requested_by == "agent" and spec.heavy and not ({"pid", "key", "contains"} & set(options)):
@@ -408,6 +411,18 @@ def check_options(short: str, spec: Plugin, options: dict, requested_by: str = "
                            f"{' or '.join(sorted(spec.options & {'pid', 'key', 'contains'}))}, based on a lead "
                            f"(e.g. a suspicious PID from pslist or a name you already found).")
     return options
+
+
+MAX_WORDS = 20
+
+
+def check_words(words) -> list:
+    """Several texts searched in one pass (strings), e.g. the command names to list command lines."""
+    words = [words] if isinstance(words, str) else list(words or [])
+    words = list(dict.fromkeys(check_text(w) for w in words))
+    if not 1 <= len(words) <= MAX_WORDS:
+        raise MemoryAnalysisError(f"words must be 1 to {MAX_WORDS} texts.")
+    return words
 
 
 def check_text(text) -> str:
@@ -631,7 +646,7 @@ def execute(short: str, options: dict, image: str = None) -> dict:
         if cmd:
             code, stdout, stderr = _run_process(cmd)
         else:
-            found, truncated = search_image(image, options["text"])
+            found, truncated = search_image(image, options.get("words") or options["text"])
             code, stdout, stderr = 0, json.dumps(found), ""
     except subprocess.TimeoutExpired:
         code, stdout, stderr = None, "", f"Stopped after {timeout()} s (memory.timeout)."
@@ -695,15 +710,17 @@ def _context(data: bytes, start: int, end: int, step: int) -> tuple:
     return data[i:start][::step].decode("latin-1"), data[start:j][::step].decode("latin-1")
 
 
-def search_image(path: str, text: str, max_hits: int = MAX_STRING_HITS) -> tuple:
+def search_image(path: str, text, max_hits: int = MAX_STRING_HITS) -> tuple:
     """
-    The `strings` plugin: every place the image file holds `text` (case-insensitive, ASCII and
-    UTF-16LE), with the printable text around it. Returns (one row per distinct context,
-    whether it stopped at max_hits).
+    The `strings` plugin: every place the image file holds `text` (a text or a list of texts;
+    case-insensitive, ASCII and UTF-16LE), with the printable text around it. Returns (one row per
+    distinct context, whether it stopped at max_hits).
     """
-    needle = text.lower().encode("ascii")
-    needles = [(needle, 1, "ASCII"), (b"".join(bytes([c]) + b"\0" for c in needle), 2, "UTF-16")]
-    margin = (_BEFORE + _AFTER) * 2 + len(needles[1][0])
+    needles = []
+    for word in ([text] if isinstance(text, str) else text):
+        needle = word.lower().encode("ascii")
+        needles += [(needle, 1, "ASCII"), (b"".join(bytes([c]) + b"\0" for c in needle), 2, "UTF-16")]
+    margin = (_BEFORE + _AFTER) * 2 + max(len(n[0]) for n in needles)
     grouped, hits, offset = {}, 0, 0
     with open(path, "rb") as f:
         while hits < max_hits:

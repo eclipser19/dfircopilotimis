@@ -424,6 +424,23 @@ def test_strings_searches_the_image_file_without_volatility(case, mem, tmp_path,
     assert truncated and len(rows) == 1
 
 
+def test_strings_lists_command_lines_for_several_words_in_one_pass(case, mem, tmp_path, approve_all):
+    typed = "netsh firewall set service type=remotedesktop mode=enable".encode("utf-16-le")
+    injected = b"ip=10.0.0.5+%26%26+net+localgroup+x&submit=submit; net localgroup admins bob /add\0"
+    (tmp_path / "memory" / "desktop.mem").write_bytes(b"\0" * 30 + typed + b"\0" * 20 + injected + b"\0" * 8)
+    out = json.loads(tools.analyze_memory.invoke({"plugin": "strings", "words": ["netsh", "net localgroup", "schtasks"]}))
+    assert out["state"] == "FINISHED" and out["rows_read"] == 2
+    found = sorted(r["description"] for r in case.search_events("memory image holds")["records"])
+    assert any("netsh firewall set service type=remotedesktop mode=enable" in d and "(UTF-16)" in d for d in found)
+    assert any("net localgroup admins bob /add" in d for d in found)
+    assert "words=" in approve_all[0]["summary"]
+    for bad in ([], ["ok"], [f"word{i}" for i in range(21)]):
+        with pytest.raises(memory.MemoryAnalysisError):
+            memory.check_options("strings", memory.PLUGINS["strings"], {"words": bad})
+    with pytest.raises(memory.MemoryAnalysisError, match="exactly one"):
+        memory.check_options("strings", memory.PLUGINS["strings"], {"words": ["netsh"], "text": "netsh"})
+
+
 def test_searches_are_not_part_of_the_triage(case, mem):
     plugins = memory.triage_plugins("windows")
     assert "windows.pslist" in plugins and "windows.memsearch" not in plugins and "strings" not in plugins

@@ -132,7 +132,7 @@ def collect_artifact(artifact_name: str, parameters: Optional[dict] = None) -> s
 @tool
 def analyze_memory(plugin: str, pid: Optional[List[int]] = None, contains: Optional[str] = None,
                    key: Optional[str] = None, recurse: Optional[bool] = None, text: Optional[str] = None,
-                   rules: Optional[str] = None) -> str:
+                   words: Optional[List[str]] = None, rules: Optional[str] = None) -> str:
     """
     Runs a Volatility 3 plugin on the case's memory image; rows are stored as source "Memory.<plugin>"
     and queried like disk evidence. Memory shows the state at capture time: processes (also hidden or
@@ -151,10 +151,12 @@ def analyze_memory(plugin: str, pid: Optional[List[int]] = None, contains: Optio
         key: Registry key for windows.registry.printkey, e.g. 'Software\\Microsoft\\Windows\\CurrentVersion\\Run'.
         recurse: With key: include subkeys.
         text: For strings / windows.memsearch: the text to find (4+ characters; ASCII and UTF-16), e.g. an IP.
+        words: For strings: up to 20 texts in one pass, e.g. command names to list the command lines in memory.
         rules: For windows.memsearch: a YARA rule file name from the server.
     """
     from copilot import memory
-    options = {"pid": pid, "contains": contains, "key": key, "recurse": recurse, "text": text, "rules": rules}
+    options = {"pid": pid, "contains": contains, "key": key, "recurse": recurse, "text": text, "words": words,
+               "rules": rules}
     try:
         return _dump(memory.run(plugin, options, requested_by="agent"))
     except memory.MemoryAnalysisError as e:

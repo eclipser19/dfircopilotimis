@@ -41,7 +41,7 @@ execution:
   question: What ran?
   triggers: ['\bran\b', 'execut', 'launch', 'what (was )?run', 'started by', '\bcommands?\b']
   check:
-    - 'Typed commands in memory: consoles / cmdscan read conhost.exe (Windows 7+). On older Windows (no conhost.exe in pslist) they return nothing: search csrss.exe with windows.memsearch (pid, text = a command or utility you suspect) or strings.'
+    - 'Typed commands in memory: consoles / cmdscan read conhost.exe (Windows 7+). On older Windows (no conhost.exe in pslist) they return nothing. Either way, list the command lines in one call: analyze_memory strings with words = the utilities you would expect (localgroup, net user, net+user, netsh, sc create, schtasks, wmic, powershell, certutil, whoami...; web-injected commands are URL-encoded, so single words or both forms); then windows.memsearch with a command found, to see which process held it.'
     - 'Commands sent through a web application: GET parameters are in the access log; POST bodies (injected commands, web shell forms) only in memory - windows.memsearch on the web server process and its parent/control process with words of likely commands, or strings. Search memory before writing that a command cannot be determined.'
     - 'The effects of a command are evidence of it when its text is lost: accounts created (Windows.Forensics.SAM), group changes (4732), firewall or remote-access settings, new services or tasks.'
     - Prefetch (run count, last 8 run times) - strongest single execution source on workstations.
