@@ -225,6 +225,21 @@
   params: {SearchStrings: regex filter on lines, UserRegex: user filter, UploadFiles: Y/N}
   dead_disk_note: 'Works on images (Velociraptor 0.73+; "lookupSID disabled" in the log is harmless). 0 rows: nobody used an interactive PowerShell console, so also check 4104/4103 script block logs.'
 
+# ---------------------------------------------------------------- accounts
+- pattern: Windows.Forensics.SAM.Enriched*
+  what: Local accounts and groups (enriched)
+  location: 'C:\Windows\System32\config\SAM'
+  meaning: Local users with group memberships.
+  dead_disk_note: 'Needs the MACHINE_STATE permission, which the investigator API role does not have: the collection is refused (PermissionDenied). Use Windows.Forensics.SAM instead.'
+
+- pattern: Windows.Forensics.SAM*
+  what: Local accounts from the SAM hive
+  location: 'C:\Windows\System32\config\SAM'
+  meaning: 'Every local account: source CreateTimes = when each account was created; source Parsed = username, RID, account type, LastLoginDate, LoginCount, password reset and lock-out data. Works on images (verified).'
+  tips:
+    - 'Accounts created inside the incident window are the attacker''s first suspects; Security 4720 (created) and 4732 (added to a local group) give who did it, if those events were logged.'
+    - 'Group membership is not in these rows: look for 4732 events and for the commands that changed it (memory consoles/cmdscan, strings).'
+
 # ---------------------------------------------------------------- text logs
 - pattern: Generic.Detection.Logs*
   what: Lines of text log files (web server access/error logs, application logs) matching a regex

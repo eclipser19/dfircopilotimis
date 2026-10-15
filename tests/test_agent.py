@@ -185,3 +185,13 @@ def test_a_broken_saved_conversation_is_repaired_when_loaded(case):
     case.conn.commit()
     _, history = conversation.load(cases.current_id(), "system")
     assert _valid(history) and isinstance(history[-1], ToolMessage)
+
+
+def test_agent_answers_when_its_tool_steps_run_out(case, capsys):
+    # A question that used every step used to end with no answer at all.
+    llm, fin = FakeLLM(tokens_per_call=10), FakeFinalizer()
+    _process_turn(llm, [HumanMessage(content="go")], max_steps=3, max_tokens=100000, finalizer=fin)
+    assert llm.calls == 3 and fin.calls == 1
+    assert "tool-step budget" in fin.last_prompt
+    out = capsys.readouterr().out
+    assert "Summary of findings so far" in out and "Halting" not in out

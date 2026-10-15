@@ -41,7 +41,10 @@ questions:
         all: ["192.168.56.102"]
       - id: sqlmap
         what: SQL injection with sqlmap (User-Agent sqlmap/1.0-dev-nongit-20150902), first request 2015-09-02 11:15:40
-        any: [["sqlmap"]]
+        all: ["sqlmap"]
+        # Evidence words near the tool name: run 094425 matched "searches for ... SQLMap ... returned nothing".
+        any: [["user-agent", "user agent", "192.168.56.102", "/dvwa", "sqli", "?id="]]
+        within: 250
         time: "11:15:40"
         tolerance_seconds: 300
       - id: lfi_hosts

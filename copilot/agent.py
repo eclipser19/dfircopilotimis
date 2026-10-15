@@ -320,10 +320,28 @@ def _prompt_chars(history) -> int:
 
 WRAP_UP_AT = 0.8  # share of the token budget after which the agent must answer
 WRAP_UP_PROMPT = (
-    "[Copilot] The token budget for this question is nearly used. Do not call any tools. "
+    "[Copilot] The {what} for this question is used up. Do not call any tools. "
     "Answer now with what you have: findings so far (with evidence IDs and UTC times), "
     "what is still unverified, and the next steps you recommend."
 )
+
+
+def _wrap_up(llm_with_tools, finalizer, chat_history, usage, what: str) -> str:
+    """Makes the model answer without tools (the finalizer), so a turn never ends with nothing."""
+    chat_history.append(HumanMessage(content=WRAP_UP_PROMPT.format(what=what)))
+    trim_chat_history(chat_history)
+    try:
+        response = finalizer.invoke(chat_history)
+    except Exception:
+        # Some local servers don't support tool_choice="none": ask the normal model
+        # and keep only its text (unanswered tool calls would break the next request).
+        response = llm_with_tools.invoke(chat_history)
+        usage.add(response, _prompt_chars(chat_history))
+        response = AIMessage(content=answer_text(response))
+    else:
+        usage.add(response, _prompt_chars(chat_history))
+    chat_history.append(response)
+    return answer_text(response) or "(The model returned no text.)"
 
 
 def answer_text(response) -> str:
@@ -369,20 +387,7 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
         while step_count < max_steps:
             if max_tokens and finalizer is not None and usage.turn_total >= WRAP_UP_AT * max_tokens:
                 emit("notice", f"{usage.turn_total:,} of {max_tokens:,} tokens used: asking the agent to wrap up.")
-                chat_history.append(HumanMessage(content=WRAP_UP_PROMPT))
-                trim_chat_history(chat_history)
-                try:
-                    response = finalizer.invoke(chat_history)
-                except Exception:
-                    # Some local servers don't support tool_choice="none": ask the normal model
-                    # and keep only its text (unanswered tool calls would break the next request).
-                    response = llm_with_tools.invoke(chat_history)
-                    usage.add(response, _prompt_chars(chat_history))
-                    response = AIMessage(content=answer_text(response))
-                else:
-                    usage.add(response, _prompt_chars(chat_history))
-                chat_history.append(response)
-                answer, answered = answer_text(response) or "(The model returned no text.)", True
+                answer, answered = _wrap_up(llm_with_tools, finalizer, chat_history, usage, "token budget"), True
                 emit("answer", answer)
                 break
             if max_tokens and usage.turn_total >= max_tokens:
@@ -422,7 +427,12 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
                 ))
 
         if not answered and step_count >= max_steps:
-            emit("notice", "Agent reached maximum tool steps. Halting.")
+            if finalizer is not None:
+                emit("notice", f"All {max_steps} tool steps used: asking the agent to wrap up.")
+                answer, answered = _wrap_up(llm_with_tools, finalizer, chat_history, usage, "tool-step budget"), True
+                emit("answer", answer)
+            else:
+                emit("notice", "Agent reached maximum tool steps. Halting.")
 
     except Exception as e:
         emit("notice", f"Agent Error: {e}")
