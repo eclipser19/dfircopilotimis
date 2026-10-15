@@ -10,9 +10,9 @@ initial_access:
     - 'Security 4625 bursts from one IP followed by 4624 from the same IP: brute force (RDP: LogonType 10, often preceded by 1149).'
     - 'RDP from external IPs: 4624 type 10, RemoteConnectionManager 1149, LocalSessionManager 21/22.'
     - 'Before writing that the delivery method cannot be determined, check the download evidence below and the parent process of the first execution (memory pslist PPID, Prefetch of the parent).'
-    - 'Download SOURCE, cheapest first, and stop when one gives the URL: (1) Windows.Analysis.EvidenceOfDownload with the payload''s path in DirectoryPathGlob (where it was downloaded AND where it is now): its Zone.Identifier HostUrl is the download URL. (2) No HostUrl and the case has a memory image: right away, before other searches, analyze_memory strings with "Visited: " (pages visited with Internet Explorer / Edge Legacy, with the user and URL) and strings with the payload''s file name (a URL or HTTP request around it). Never strings a bare "http" (too many hits). (3) The history artifact of the browser that ran just before the payload (Prefetch: IEXPLORE.EXE, MSEDGE.EXE, CHROME.EXE, FIREFOX.EXE) if it works on images (dfir_guide on the artifact); IE and Edge Legacy (MicrosoftEdge.exe) keep history in WebCacheV01.dat, which has no parser artifact.'
+    - 'Download SOURCE, cheapest first, and stop looking for the source when one gives the URL (then still get the TIME, next point): (1) Windows.Analysis.EvidenceOfDownload with the payload''s path in DirectoryPathGlob (where it was downloaded AND where it is now): its Zone.Identifier HostUrl is the download URL. (2) No HostUrl and the case has a memory image: right away, before other searches, analyze_memory strings with "Visited: " (pages visited with Internet Explorer / Edge Legacy, with the user and URL) and strings with the payload''s file name (a URL or HTTP request around it). Never strings a bare "http" (too many hits). (3) The history artifact of the browser that ran just before the payload (Prefetch: IEXPLORE.EXE, MSEDGE.EXE, CHROME.EXE, FIREFOX.EXE) if it works on images (dfir_guide on the artifact); IE and Edge Legacy (MicrosoftEdge.exe) keep history in WebCacheV01.dat, which has no parser artifact.'
     - 'A URL found in memory proves the source when it names the payload, or when the same user visited that host just before the download time: quote it with its evidence ID as the source.'
-    - 'Download TIME: the USN journal for the file name (Windows.Forensics.Usn with FileNameRegex) shows the temporary download name being created (start) and renamed to the final name (end); the first execution (Prefetch) comes after. Report that, not just the browser''s running time.'
+    - 'Download TIME, always, also when memory gave the source: the USN journal for the file name (Windows.Forensics.Usn with FileNameRegex) shows the temporary download name being created (start) and renamed to the final name (end); the first execution (Prefetch) comes after. Report that, not just the browser''s running time.'
     - 'URLs typed into Internet Explorer: Windows.Registry.NTUser with KeyGlob Software\Microsoft\Internet Explorer\TypedURLs* (works on images).'
     - Email attachments and Office files opened (LNK, JumpLists) shortly before the first malicious execution.
     - Exposed services (web servers) with new files in web roots (MFT/USN).
@@ -85,7 +85,7 @@ lateral_movement:
   triggers: ['lateral', 'pivot', '\bmove[sd]? (to|between|from)', 'other (host|machine)s?', '\brdp\b', 'remote desktop', 'psexec']
   check:
     - 'Inbound (on the target): 4624 type 3 or 10 with a source IP; 1149; LocalSessionManager 21/22/24/25; 5140 to ADMIN$/C$; 7045 PSEXESVC.'
-    - 'Outbound (on the source): 4648 naming the target; RDPClient 1024 / 1102 (the server connected to); Prefetch/JumpLists for mstsc.exe, psexec.exe; Terminal Server Client registry MRU (Windows.Registry.NTUser). Windows Server has Prefetch off by default: no mstsc.exe Prefetch on a server proves nothing.'
+    - 'Outbound (on the source): 4648 naming the target; RDPClient 1024 / 1102 (the server connected to: search_iocs ''RDPClient'', because a search for the target''s IP is drowned by its inbound logons); Prefetch/JumpLists for mstsc.exe, psexec.exe; Terminal Server Client registry MRU (Windows.Registry.NTUser). Windows Server has Prefetch off by default: no mstsc.exe Prefetch on a server proves nothing.'
     - 'Logons INTO a domain controller from workstations (4624 type 3) are routine: Group Policy, shares, logon scripts. They are not lateral movement unless tied to the attacker (their session, a compromised account used at that time, their tools). Say which direction the movement went.'
     - Match times across both machines (allow for clock skew).
 
@@ -101,7 +101,7 @@ collection_exfiltration:
   question: Was data gathered or taken?
   triggers: ['exfil', '\bstol(e|en)\b', '\b(take|taken|took)\b', 'leak', 'archive', '\.?\bzip\b', 'upload', 'data (was )?(gathered|collected)', '\bcollect(ed)?\b', 'files? (of interest|accessed|opened)']
   check:
-    - 'Only what happened from the intrusion on (the attacker''s first logon or execution), or what is tied to the attacker''s session (logon ID, source IP, account at that time), is the attacker''s. File activity before that is the owners'' normal use: say so instead of listing it as theft.'
+    - 'Establish the intrusion start first (case_summary findings; the first logon or execution tied to the attacker). Only what happened from the intrusion on (the attacker''s first logon or execution), or what is tied to the attacker''s session (logon ID, source IP, account at that time), is the attacker''s. File activity before that is the owners'' normal use: say so instead of listing it as theft.'
     - 'Archives created then deleted: USN journal (FILE_CREATE, RENAME, FILE_DELETE) for .zip/.7z/.rar; MFT for surviving entries.'
     - 'Who did it: the user profile in the paths shows the account. A temp file in C:\Users\<name>\AppData\Local\Temp or a Recent\*.lnk under C:\Users\<name> means the action ran as <name>, even when the result lands in another user''s folder. Match it with that account''s logon session (4624/RDP 21) at the time.'
     - Files opened by the attacker's account (LNK, JumpLists, Shellbags) around the intrusion window.
@@ -114,7 +114,7 @@ anti_forensics:
   triggers: ['clear(ed)? (the )?logs?', 'timestomp', 'anti.?forensic', '\bwip(e|ed)\b', 'cover(ed)? (their |its )?tracks', 'delet(e|ed) (the )?(logs?|evidence)']
   check:
     - Log clearing (Security 1102, System 104), gaps in event logs.
-    - 'Timestomping: USN BASIC_INFO_CHANGE on a file with no data change at the same moment = its timestamps (or attributes) were set by a program. Then compare that file''s MFT $SI (0x10) and $FN (0x30) times (Windows.NTFS.MFT, FileRegex on its name; SI_Lt_FN): $SI older than $FN, or times that do not fit its USN history, show the change. Check the files the attacker touched, not a sample.'
+    - 'Timestomping: first list the files the attacker touched after the intrusion start (USN, LNK in their session), then check each of them; Windows itself changes registry hives and logs, so BASIC_INFO_CHANGE on those is routine. USN BASIC_INFO_CHANGE on a file with no data change at the same moment = its timestamps (or attributes) were set by a program. Then compare that file''s MFT $SI (0x10) and $FN (0x30) times (Windows.NTFS.MFT, FileRegex on its name; SI_Lt_FN): $SI older than $FN, or times that do not fit its USN history, show the change. Check the files the attacker touched, not a sample.'
     - Deletions in the USN journal; secure-delete tools (sdelete, cipher /w) in Prefetch.
     - Disabled logging or Defender (Defender 5001).
 

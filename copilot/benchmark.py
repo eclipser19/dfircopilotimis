@@ -314,6 +314,23 @@ def save(results: dict, out_dir: str = RESULTS_DIR) -> tuple:
 
 
 # ---------------------------------------------------------------- running
+def image_problem(summaries: list) -> str:
+    """
+    A setup check on the disk triage: collections filtered to the case's time window all came back
+    empty while unfiltered ones returned rows. That is what a client reading another image looks like
+    (its events are from other dates), so the run stops before spending tokens on questions.
+    """
+    finished = [s for s in summaries if s.get("state") == "FINISHED" and not str(s.get("artifact", "")).startswith("Memory.")]
+    windowed = [s for s in finished if s.get("time_window_applied")]
+    others = [s for s in finished if not s.get("time_window_applied")]
+    if windowed and not any(s.get("rows_collected_by_velociraptor") for s in windowed) \
+            and any(s.get("rows_collected_by_velociraptor") for s in others):
+        names = ", ".join(s["artifact"] for s in windowed)
+        return (f"Every triage collection limited to the case's time window returned 0 rows ({names}) while the "
+                f"others returned rows: the client is probably reading another image, or the case window is wrong.")
+    return ""
+
+
 def make_run_case(spec: dict, run_id: str, client_id: str = None, memory_image: str = None, log=print) -> str:
     """Writes the run's case file from the spec's case template, with benchmark settings."""
     from copilot import cases, memory
@@ -381,7 +398,8 @@ def ask(text: str, llm_with_tools, finalizer, log=print) -> dict:
 
 
 def run(spec_path: str, client_id: str = None, memory_image: str = None, from_case: str = None,
-        skip_triage: bool = False, only: list = None, model=None, out_dir: str = RESULTS_DIR, log=print) -> dict:
+        skip_triage: bool = False, only: list = None, model=None, out_dir: str = RESULTS_DIR, log=print,
+        image_check: bool = True) -> dict:
     """Runs a benchmark end to end and saves its results. model: (llm_with_tools, finalizer, name) for tests."""
     from copilot import cases, conversation, memory
     from copilot.agent import auto_collect, status_line
@@ -402,7 +420,12 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
     log(f"[*] Benchmark {spec['name']}: case {run_id} (client {case_config.client_id}, "
         f"memory {case_config.memory_image or 'none'})")
     if not from_case and not skip_triage:
-        triage += [status_line(s) for s in auto_collect(case_config)]
+        disk = auto_collect(case_config)
+        triage += [status_line(s) for s in disk]
+        problem = image_problem(disk) if image_check else ""
+        if problem:
+            raise BenchmarkError(f"{problem} Stopped before the questions (case {run_id}); check the client, "
+                                 f"or pass --no-image-check to run anyway.")
         if case_config.memory_image:
             log("[*] Memory triage ...")
             triage += [status_line(s) for s in memory.triage(progress=lambda p: log(f"    {p}"))]
@@ -503,6 +526,8 @@ def main(argv=None) -> int:
     r.add_argument("--skip-triage", action="store_true")
     r.add_argument("--questions", help="comma-separated question IDs")
     r.add_argument("--out", default=RESULTS_DIR)
+    r.add_argument("--no-image-check", action="store_true",
+                   help="run even if the time-window triage finds nothing (wrong image?)")
     s = sub.add_parser("score", help="score saved answers again")
     s.add_argument("results")
     s.add_argument("--spec")
@@ -512,7 +537,8 @@ def main(argv=None) -> int:
     try:
         if args.command == "run":
             only = [q.strip() for q in args.questions.split(",")] if args.questions else None
-            run(args.spec, args.client, args.memory_image, args.from_case, args.skip_triage, only, out_dir=args.out)
+            run(args.spec, args.client, args.memory_image, args.from_case, args.skip_triage, only, out_dir=args.out,
+                image_check=not args.no_image_check)
         elif args.command == "score":
             t = rescore(args.results, args.spec)["totals"]
             print(f"Score {t['score_percent']}%: facts {t['facts_found']}/{t['facts_total']}, "

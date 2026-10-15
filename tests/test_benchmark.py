@@ -193,3 +193,21 @@ def test_corporatesecrets_key_scores_a_good_answer_and_not_a_vague_one():
     found = {f["id"]: benchmark.score_fact(good, f, spec)["found"] for f in tor["facts"]}
     assert found == {"tor": True, "tor_path": True, "tor_user": True, "tor_runs": True}
     assert not any(benchmark.score_fact(vague, f, spec)["found"] for f in tor["facts"])
+
+
+def _triage(artifact, rows, windowed):
+    s = {"artifact": artifact, "state": "FINISHED", "rows_collected_by_velociraptor": rows}
+    if windowed:
+        s["time_window_applied"] = ["DateAfter", "DateBefore"]
+    return s
+
+
+def test_a_client_reading_another_image_stops_the_run():
+    # What run 103116 looked like: the DC benchmark against a client still remapped to another image.
+    wrong = [_triage("Generic.Client.Info", 22, False), _triage("Windows.EventLogs.RDPAuth", 0, True),
+             _triage("Windows.Sys.StartupItems", 3, False), _triage("Windows.Timeline.Prefetch", 0, True),
+             _triage("Windows.EventLogs.EvtxHunter", 0, True)]
+    assert "another image" in benchmark.image_problem(wrong)
+    right = wrong[:1] + [_triage("Windows.EventLogs.RDPAuth", 388, True)] + wrong[2:]
+    assert benchmark.image_problem(right) == ""            # Prefetch off on a server is fine
+    assert benchmark.image_problem([_triage("Generic.Client.Info", 22, False)]) == ""
