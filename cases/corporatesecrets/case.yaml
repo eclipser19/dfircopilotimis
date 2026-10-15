@@ -1,0 +1,70 @@
+# CyberDefenders "CorporateSecrets" (Champlain College DFA, spring 2020): a shared Windows 10
+# workstation of the company "Fruit Inc.", delivered as a logical image (AD1). Held-out benchmark:
+# the knowledge base was not tuned on it. The answers are in answer_key.md and benchmark.yaml,
+# which the agent never sees. Getting the AD1 into Velociraptor: see answer_key.md, "Setup".
+#     python -m copilot.benchmark run cases/corporatesecrets/benchmark.yaml --client C.<id of its client>
+
+case:
+  name: "CorporateSecrets - shared workstation"
+  analyst: "Investigator"
+  created: "2026-10-15"
+
+velociraptor:
+  client_id: ""                     # the dead-disk client reading the image's folder (C.xxxx)
+  collection_wait_seconds: 300
+
+scope:
+  # The image was taken in spring 2020; the exact period of interest is not known.
+  start_time: "2020-03-01T00:00:00Z"
+  end_time: "2020-05-01T00:00:00Z"
+  clock_offset_minutes: 0
+  description: >
+    Internal investigation at a small company. Management asked for an examination of a
+    Windows workstation shared by several employees, after concerns that staff were misusing
+    company equipment and that confidential company information was being mishandled.
+    Determine who used the computer and how, what they did on the web, which documents and
+    programs they used, what they deleted or hid, and whether company secrets were involved.
+    The evidence is a logical image (selected files and folders, no unallocated space),
+    presented to Velociraptor as a folder: the NTFS journal and deleted-file records may be
+    missing, and file times are those the image kept.
+
+iocs:
+  hashes: []
+  ips: []
+  domains: []
+  filenames: []
+  users: []
+
+# Triage collected before the agent starts (no LLM): user-activity sources for an insider case.
+collect:
+  - Generic.Client.Info
+  - Windows.Sys.Users                  # accounts and profile folders
+  - Windows.Timeline.Prefetch          # program execution
+  - Windows.Registry.UserAssist        # GUI programs each user ran
+  - Windows.Registry.RecentDocs        # documents each user opened
+  - Windows.Forensics.Lnk              # shortcuts to opened files
+  - Windows.Sys.StartupItems           # what starts automatically
+  - Windows.Forensics.RecycleBin       # deleted files
+  - Windows.Analysis.EvidenceOfDownload
+  - Windows.Applications.Chrome.History
+  - Windows.Applications.Firefox.History
+  - Windows.Applications.Edge.History
+
+collection:
+  max_rows: 50000
+  apply_time_window: true
+  agent_collections: confirm
+
+output:
+  report_formats: [html]
+
+agent:
+  approvals:
+    retract_finding: confirm
+    update_case: confirm
+    switch_case: confirm
+    create_case: confirm
+    memory: confirm
+  allow_raw_vql: false
+  max_steps: 15
+  max_tokens_per_turn: 300000

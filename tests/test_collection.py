@@ -208,10 +208,18 @@ def test_live_only_artifact_refused_before_collecting(case):
 
 def test_disabled_plugin_in_flow_log_is_explained(case):
     # Artifacts not (yet) marked live-only in the knowledge base are still explained afterwards.
-    logs = [{"level": "DEFAULT", "message": "Call to function lookupSID disabled"}]
+    logs = [{"level": "DEFAULT", "message": "Call to plugin wmi disabled"}]
     summary = collection.collect("Windows.System.TaskScheduler",
                                  vql=FakeVQL(rows={}, reported_rows=0, flow_logs=logs), sleep=lambda s: None)
-    assert "lookupSID" in summary["note"] and "running system" in summary["note"]
+    assert "wmi" in summary["note"] and "running system" in summary["note"]
+
+
+def test_lookupsid_disabled_is_not_blamed(case):
+    # Velociraptor 0.73+ finds user names in the registry when lookupSID is disabled (browser history etc.).
+    logs = [{"level": "DEFAULT", "message": "Call to function lookupSID disabled"}]
+    summary = collection.collect("Windows.Applications.Firefox.History",
+                                 vql=FakeVQL(rows={}, reported_rows=0, flow_logs=logs), sleep=lambda s: None)
+    assert "running system" not in summary.get("note", "")
 
 
 def test_a_disabled_function_the_artifact_does_without_is_not_blamed(case):

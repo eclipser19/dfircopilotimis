@@ -210,8 +210,8 @@
   what: UserAssist
   location: 'NTUSER.DAT: Software\Microsoft\Windows\CurrentVersion\Explorer\UserAssist'
   meaning: GUI programs a user launched, with run count and last run time (names are ROT13-encoded in the hive).
-  live_only: true
-  dead_disk_note: 'Calls lookupSID, which is disabled for disk images: it returns 0 rows with "Call to function lookupSID disabled" in the log (verified). On an image use Windows.Registry.NTUser with KeyGlob on the UserAssist key (value names are ROT13), or analyze_memory windows.registry.userassist.'
+  params: {UserFilter: regex on the user name}
+  dead_disk_note: 'Works on images (Velociraptor 0.73+ finds users in the registry; "lookupSID disabled" in the log is harmless). Do not pass ExecutionTimeAfter: it filters on a column the artifact does not have and always returns 0 rows (verified); filter the results afterwards.'
 
 - pattern: Windows.Forensics.SRUM*
   what: System Resource Usage Monitor
@@ -223,10 +223,19 @@
   location: 'C:\Users\*\AppData\Roaming\Microsoft\Windows\PowerShell\PSReadLine\ConsoleHost_history.txt'
   meaning: Commands typed in interactive PowerShell consoles. No timestamps; correlate with logon sessions.
   params: {SearchStrings: regex filter on lines, UserRegex: user filter, UploadFiles: Y/N}
-  live_only: true
-  dead_disk_note: 'Calls lookupSID, which is disabled for disk images: it returns 0 rows with "Call to function lookupSID disabled" in the log (verified). On an image use PowerShell 4104/4103 script block logs, and the memory image (consoles, strings with a command you suspect).'
+  dead_disk_note: 'Works on images (Velociraptor 0.73+; "lookupSID disabled" in the log is harmless). 0 rows: nobody used an interactive PowerShell console, so also check 4104/4103 script block logs.'
 
 # ---------------------------------------------------------------- file system
+- pattern: Windows.Search.FileFinder*
+  what: Files (or registry values) by glob, with size, times, hashes and an optional YARA content match
+  location: Any path glob; with Accessor registry, any registry key
+  meaning: 'Which files exist where (e.g. C:\Users\*\Downloads\*), their hashes (Calculate_Hash: MD5/SHA1/SHA256), and which contain a string (YaraRule). With Accessor "registry" it reads machine registry values (Data.value), which no other artifact does: computer name, OS build, time zone, network, last logged-on user.'
+  params: {Glob: one path glob (older Velociraptor versions call it SearchFilesGlob - check describe_artifact), Accessor: auto or registry, Calculate_Hash: Y/N, YaraRule: YARA rule text, Upload_File: leave N}
+  tips:
+    - 'Keep the glob narrow (a folder, an extension): ** over a whole drive with a YaraRule reads every file.'
+    - 'Machine registry on images (verified): HKEY_LOCAL_MACHINE\Software\... and HKEY_LOCAL_MACHINE\System\ControlSet001\... (an image has no CurrentControlSet). Useful keys: System\ControlSet001\Control\ComputerName\ComputerName\*, Software\Microsoft\Windows NT\CurrentVersion\* (ProductName, CurrentBuild, InstallDate), System\ControlSet001\Control\TimeZoneInformation\*, System\ControlSet001\Services\Tcpip\Parameters\Interfaces\*\* (DhcpIPAddress, DhcpDomain), Software\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\* (LastLoggedOnUser), Software\Microsoft\Windows NT\CurrentVersion\Winlogon\*.'
+    - 'Generic.Client.Info cannot describe an image (it asks WMI): the host name it shows is the virtual client''s. Take system facts from the registry as above.'
+
 - pattern: Windows.NTFS.MFT*
   what: NTFS Master File Table
   location: 'C:\$MFT'
@@ -267,6 +276,7 @@
   meaning: Files and folders a user opened, with target path, target times and volume/network origin; survives deletion of the target.
   tips:
     - 'The profile the LNK lives in (C:\Users\<name>\...\Recent) is the account that opened the target, whoever owns the target folder.'
+    - 'When it was opened: SourceFile.Btime = first open, SourceFile.Mtime = last open (the link file''s own times). ShellLinkHeader Creation/Access/WriteTime are the TARGET''s times copied at that moment, not the open time.'
 
 - pattern: '*JumpList*'
   what: Jump Lists
@@ -321,16 +331,17 @@
   location: 'C:\Windows\System32\config\{SYSTEM,SOFTWARE,SAM,SECURITY}, C:\Users\*\NTUSER.DAT, UsrClass.dat'
   meaning: System and user configuration, persistence keys and user activity traces.
 
-# Browsers. Verified on a dead-disk Velociraptor server (Windows 10 image): Chrome.History,
-# Edge.History, PSReadline and NirsoftBrowserViewer return nothing from an image (lookupSID). Internet Explorer / Edge Legacy history
+# Browsers. Chrome, Edge (Chromium) and Firefox history work on images with Velociraptor 0.73+
+# (verified on 0.77.2 with a folder-mounted image): users are found in the registry, so the
+# "lookupSID disabled" log line is harmless. Internet Explorer / Edge Legacy history
 # (WebCacheV01.dat) has no parser artifact on a standard server: prove downloads with the
 # Zone.Identifier stream (Windows.Analysis.EvidenceOfDownload), Prefetch of the browser and LNK files.
 - pattern: Windows.Applications.Chrome.History*
   what: Chrome browsing history
   location: 'C:\Users\*\AppData\Local\Google\Chrome\User Data\*\History'
-  meaning: URLs visited and downloads in Chrome.
-  live_only: true
-  dead_disk_note: 'Calls lookupSID, which is disabled for disk images: it returns 0 rows with "Call to function lookupSID disabled" in the log.'
+  meaning: URLs visited and downloads in Chrome, per user.
+  params: {userRegex: user filter, urlSQLQuery: SQL on the History database}
+  dead_disk_note: 'Works on images. 0 rows: that user or browser has no Chrome profile.'
 
 - pattern: Windows.Applications.NirsoftBrowserViewer*
   what: Browsing history via NirSoft BrowsingHistoryView
@@ -347,17 +358,15 @@
 - pattern: Windows.Applications.Firefox.*
   what: Firefox history and downloads
   location: 'C:\Users\*\AppData\Roaming\Mozilla\Firefox\Profiles\*\places.sqlite'
-  meaning: URLs visited and files downloaded with Firefox, with times.
+  meaning: URLs visited and files downloaded with Firefox, with times, per user.
   params: {userRegex: user filter, URLRegex: URL filter}
-  live_only: true
-  dead_disk_note: 'Calls lookupSID, which is disabled for disk images: it returns 0 rows with "Call to function lookupSID disabled" in the log (verified). (History and Downloads.)'
+  dead_disk_note: 'Works on images (History and Downloads). 0 rows: that user has no Firefox profile.'
 
 - pattern: Windows.Applications.Edge.History*
   what: Edge (Chromium) browsing history
   location: 'C:\Users\*\AppData\Local\Microsoft\Edge\User Data\*\History'
   meaning: URLs visited and downloads in the new (Chromium) Edge. Not Internet Explorer or Edge Legacy.
-  live_only: true
-  dead_disk_note: 'Calls lookupSID, which is disabled for disk images: it returns 0 rows with "Call to function lookupSID disabled" in the log (verified). Use Zone.Identifier (Windows.Analysis.EvidenceOfDownload), Prefetch, and a strings search of the memory image for the URL or host.'
+  dead_disk_note: 'Works on images. 0 rows: no Chromium Edge profile (Edge Legacy / IE history is in WebCacheV01.dat: use Zone.Identifier, Prefetch, and a strings search of the memory image).'
 
 - pattern: Windows.Detection.Yara.Process*
   what: YARA scan of running processes

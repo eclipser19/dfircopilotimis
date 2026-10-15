@@ -30,7 +30,9 @@ pip install -r requirements.txt
    ```
    The image then appears as a client. Put its client ID in `case.yaml` under
    `velociraptor.client_id`. Check `deaddisk --help` on your version for other
-   options (e.g. Linux images). Avoid remapping a live drive (`file_nocase` on
+   options (e.g. Linux images). A logical image (AD1) or a folder of collected files works too:
+   open it as a folder (FTK Imager mount or export) and use `--add_windows_directory=<folder that
+   holds Windows and Users>`. Avoid remapping a live drive (`file_nocase` on
    `C:\`): running Windows keeps event logs, registry hives and `$MFT` locked, so
    most artifacts come back empty.
 
@@ -363,9 +365,14 @@ tool calls, steps, tokens and time, and scores each expected fact:
 - **forbidden claims:** e.g. another host's events.
 
 The scorecard is written to `benchmark_results/<run>.json` and `.md`. The questions and answers
-are also the run case's chat, so you can open the run in the app. The first benchmark is the
-Szechuan Sauce domain controller (`cases/szechuan-dc/`: `case.yaml`, `benchmark.yaml`,
-`answer_key.md`); the desktop case was used to tune the knowledge, so it isn't a fair test.
+are also the run case's chat, so you can open the run in the app. Benchmarks:
+- `cases/szechuan-dc/`: the Szechuan Sauce domain controller (disk + memory, intrusion). Its first
+  runs were used to fix the knowledge, so it is no longer fully blind.
+- `cases/corporatesecrets/`: CyberDefenders "CorporateSecrets" (disk only, insider / HR case),
+  held out. It comes as an AD1 logical image: `answer_key.md` explains how to present it to
+  Velociraptor as a folder (`deaddisk --add_windows_directory`).
+
+The desktop case (`cases/szechuan/`) was used to tune the knowledge, so it isn't a fair test.
 
 ## Tests
 

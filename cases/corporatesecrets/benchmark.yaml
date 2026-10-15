@@ -1,0 +1,147 @@
+# Benchmark for the CyberDefenders "CorporateSecrets" image (shared Windows 10 workstation of
+# "Fruit Inc."). Read by copilot/benchmark.py only; the agent never sees this file. Matching rules:
+# see cases/szechuan-dc/benchmark.yaml. Human-readable answers, sources and setup: answer_key.md.
+#
+# Held out: the knowledge base was not tuned on this image. Only questions an investigator would
+# ask and the copilot can reach (registry, browser history, Prefetch, LNK/RecentDocs, Recycle Bin,
+# file names) are here; the CTF's hash, carving and MFT-offset questions are left out.
+# Times are true UTC (no clock skew on this image); the scorer compares the time of day only.
+
+name: corporatesecrets
+case_file: case.yaml
+clock_offset_minutes: 0
+time_tolerance_seconds: 120
+
+questions:
+  - id: system
+    ask: Describe this computer - its name, Windows version and build, the network it was last connected to (domain and IP address) and the user accounts on it.
+    facts:
+      - id: computer_name
+        what: Computer name DESKTOP-3A4NLVQ (SYSTEM ComputerName)
+        all: ["DESKTOP-3A4NLVQ"]
+      - id: os_build
+        what: Windows 10 build 16299 (version 1709)
+        all: ["16299"]
+      - id: dhcp_domain
+        what: DHCP domain fruitinc.xyz
+        all: ["fruitinc.xyz"]
+      - id: last_ip
+        what: Last DHCP address 192.168.2.242
+        all: ["192.168.2.242"]
+      - id: users
+        what: Six user profiles - admin, hansel.apricot, jim.tomato, miriam.grapes, suzy.strawberry, tim.apple
+        all: ["hansel.apricot", "jim.tomato", "miriam.grapes", "suzy.strawberry", "tim.apple"]
+        regex: ['\badmin\b']
+
+  - id: accounts
+    ask: Which account was used last on this computer, and how many times has each account logged on?
+    facts:
+      - id: last_user
+        what: jim.tomato was the last used user name (Winlogon LastUsedUsername)
+        all: ["jim.tomato"]
+        any: [["last used", "lastusedusername", "last logged", "last logon", "last user", "most recent", "lastloggedonuser", "last to log"]]
+        within: 200
+      - id: admin_logons
+        what: admin logged on 10 times (SAM login count)
+        regex: ['\badmin\b', '(?<![\w:.-])(?:10|ten)(?![\w:.-])']
+        within: 150
+
+  - id: web
+    ask: What did the users of this computer search for or watch on the web that the company should know about (HR problems, misconduct, hacking)? For each, give the user, the browser and the time.
+    facts:
+      - id: secretary
+        what: tim.apple (Firefox) searched "is it ok to flirt with my secretary", 2020-04-09
+        any: [["secretary"]]
+        time: "20:45:07"
+        tolerance_seconds: 300
+      - id: stinky
+        what: tim.apple (Chrome) searched "how do i nicely fire my stinky employee" (letters doubled), 2020-04-09
+        regex: ['st+i+n+k+y+']
+        time: "20:36:29"
+        tolerance_seconds: 300
+      - id: hacking_video
+        what: jim.tomato (Chrome) watched the YouTube video "How To Hack Into a Computer" (v=Y-CsIqTFEyY), 2020-04-12
+        any: [["Y-CsIqTFEyY", "how to hack into a computer"]]
+        time: "04:39:33"
+        tolerance_seconds: 300
+      - id: vsco
+        what: Firefox search "what kind of phones do vsco girls enjoy" (miriam.grapes per the challenge), 2020-04-11
+        any: [["vsco"]]
+        time: "20:00:09"
+        tolerance_seconds: 300
+
+  - id: privacy_tools
+    ask: Is there any software on this computer that could hide what a user does online? Where is it installed, who used it and how often?
+    facts:
+      - id: tor
+        what: Tor Browser is on the computer
+        regex: ['\btor\b']
+      - id: tor_path
+        what: Installed in the non-standard folder C:\Program1
+        regex: ['\btor\b']
+        any: [["program1"]]
+        within: 400
+      - id: tor_user
+        what: jim.tomato used it (Start Tor Browser.lnk on his desktop, RecentApps)
+        all: ["jim.tomato"]
+        regex: ['\btor\b']
+        within: 300
+      - id: tor_runs
+        what: jim.tomato launched it twice (NTUSER RecentApps LaunchCount 2, last 2020-04-16 04:52:28)
+        regex: ['\btor\b', '(?<![\w:.-])(?:2|two|twice)(?![\w:.-])']
+        within: 200
+        scored: false
+        note: a bare "2" near "Tor" is a weak match
+
+  - id: documents
+    ask: Which documents containing company secrets or plans did users open, keep or delete, and when was a Word (.docx) document last opened on this computer?
+    facts:
+      - id: docx_last_open
+        what: Last .docx opened 2020-04-11 23:23:36 (jim.tomato RecentDocs\.docx LastWrite)
+        any: [["docx"]]
+        time: "23:23:36"
+      - id: company_secrets_docx
+        what: CompanySecrets.docx in jim.tomato's RecentDocs
+        any: [["companysecrets"]]
+      - id: ceo_plans
+        what: secret.odt in tim.apple's Documents ("Super secret CEO plans", incl. firing Jim Tomato)
+        regex: ['secret\.odt']
+      - id: secrets_content
+        what: The deleted "Fruit inc. company secrets" document lists "Customer data is not stored securely"
+        any: [["customer data is not stored securely"]]
+        scored: false
+        note: needs reading the document's text, which the copilot cannot do yet
+
+  - id: installs
+    ask: Which programs did users download or install themselves, and who did it?
+    facts:
+      - id: librecad
+        what: miriam.grapes downloaded and ran LibreCAD-Installer-2.1.3.exe (Downloads + Prefetch)
+        all: ["librecad"]
+        any: [["miriam.grapes", "miriam"]]
+        within: 400
+
+  - id: archives
+    ask: Was any data packed into archives or disguised (for example a file whose name or extension hides what it really is)? Who did it and when?
+    facts:
+      - id: sevenzip_last_run
+        what: 7-Zip GUI (7zG.exe) ran, last at 2020-04-12 02:32:09 (Prefetch; also 04-11 23:17-23:23 and 04-12 01:29)
+        any: [["7zg", "7-zip", "7zip"]]
+        time: "02:32:09"
+      - id: disguised_archive
+        what: C:\Users\miriam.grapes\Pictures\vegetable has no extension and is a 7z archive
+        all: ["vegetable"]
+        any: [["7z", "7-zip", "archive"]]
+        within: 300
+
+  - id: deleted
+    ask: What did users delete (Recycle Bin), and whose files were they?
+    facts:
+      - id: dog_photo
+        what: $RGETALS.jpg (a dog photo) in hansel.apricot's Recycle Bin (SID ...-1005)
+        all: ["hansel.apricot"]
+        any: [["rgetals"]]
+        within: 400
+      - id: secrets_docx_deleted
+        what: $RQ1FSDY.docx, the "Fruit inc. company secrets" document, in the Recycle Bin of SID ...-1003
+        any: [["rq1fsdy"]]

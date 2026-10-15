@@ -2,7 +2,7 @@
 Lessons learned: knowledge the agent and the investigators add while working.
 
 The agent PROPOSES a lesson (propose_lesson tool) when it verified something reusable, e.g.
-"Chrome.History calls lookupSID and returns nothing from disk images". The proposal goes
+"Windows.System.Services needs WMI and returns nothing from disk images". The proposal goes
 through the approval queue like any other change. Evidence is attacker-written, so nothing is
 ever learned without a person approving it.
 

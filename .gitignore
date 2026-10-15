@@ -29,3 +29,9 @@ learned_knowledge.yaml
 # Benchmark runs (cases/bench-*/ and their results; data lives in case_data/)
 cases/bench-*/
 benchmark_results/
+
+# Evidence images kept next to the code (never commit evidence)
+imagetest/
+*.ad1
+*.E0[0-9]
+*.mem

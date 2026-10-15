@@ -378,7 +378,8 @@ def _finish(flow_id: str, status: dict, vql) -> dict:
             # Some artifacts call a live-only function only for a detail (e.g. Prefetch: winobj to show
             # drive letters) and work without it: the knowledge base lists those as harmless.
             from copilot.knowledge import artifact_info
-            harmless = {h.lower() for h in artifact_info(summary.get("artifact") or "").get("harmless_disabled") or []}
+            # lookupSID: since Velociraptor 0.73 the artifacts find user names in the registry instead.
+            harmless = {"lookupsid"} | {h.lower() for h in artifact_info(summary.get("artifact") or "").get("harmless_disabled") or []}
             disabled = [d for d in disabled if d.lower() not in harmless]
             if disabled:
                 summary["note"] = (

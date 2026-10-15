@@ -71,7 +71,8 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
 | `copilot/iocs.py`, `commands.py`, `selftest.py` | IOC extraction, `/cases` `/case` `/help` chat commands, setup check. |
 | `copilot/benchmark.py` | Benchmark runner: fresh `bench-*` case, triage, fixed questions in fresh conversations, scoring in code (facts, true-UTC times near the fact's words, uncorrected times, invalid IDs, forbidden claims), results in `benchmark_results/`. |
 | `cases/szechuan/` | Example case (DFIR Madness "Szechuan Sauce" desktop) and `answer_key.md`; used to tune the knowledge. |
-| `cases/szechuan-dc/` | The same case's domain controller: `case.yaml`, `benchmark.yaml` (questions and expected facts), `answer_key.md`. The benchmark image. |
+| `cases/szechuan-dc/` | The same case's domain controller: `case.yaml`, `benchmark.yaml` (questions and expected facts), `answer_key.md`. Benchmark (no longer fully blind). |
+| `cases/corporatesecrets/` | CyberDefenders "CorporateSecrets" (insider case, AD1 logical image read as a folder): held-out benchmark; `answer_key.md` has the setup. |
 | `tests/conftest.py` | `FakeVQL` (answers Velociraptor queries; `artifact_params` take names or dicts), fixtures `case`, `approve_all`, and isolation from real `server.yaml`/accounts/lessons. |
 
 ## Things that span several files
@@ -91,13 +92,18 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
 - **VQL safety.** Every value goes to Velociraptor as an env variable with a `Dfir` prefix (VQL
   resolves built-in names first); nothing is formatted into query text. Velociraptor silently
   ignores undeclared artifact parameters, hence the parameter-name check for agent collections.
-- **Dead-disk limits.** Artifacts calling `lookupSID` return nothing from images (mark them
-  `live_only` in `artifacts.yaml`); the `mft` accessor is not remapped, so `Windows.NTFS.ADSHunter`
-  returns nothing (use `Windows.Analysis.EvidenceOfDownload`). Check Velociraptor's own artifact
+- **Dead-disk limits.** WMI, process and network plugins are disabled on images (`live_only` in
+  `artifacts.yaml`). `lookupSID` is disabled too, but since Velociraptor 0.73 artifacts find user
+  names in the registry instead, so browser history, UserAssist and PSReadline work (verified on
+  0.77.2; the log line is treated as harmless). The `mft` accessor is not remapped, so
+  `Windows.NTFS.ADSHunter` returns nothing (use `Windows.Analysis.EvidenceOfDownload`).
+  `Generic.Client.Info` can't describe an image (WMI): machine registry values come from
+  `Windows.Search.FileFinder` with `Accessor: registry`. Check Velociraptor's own artifact
   YAML (`github.com/Velocidex/velociraptor`, `artifacts/definitions/`) before assuming parameters.
 - **Knowledge must stay generic.** The answer keys (`answer_key.md`, `benchmark.yaml`) score the
   agent, so prompts, tool descriptions and `knowledge_data/` must not contain facts of the test
-  cases (their file names, IPs, users). Improve the agent on the desktop case, measure on the DC.
+  cases (their file names, IPs, users). Improve the agent on the desktop case, measure on the
+  benchmarks; `cases/corporatesecrets/` is still held out, so don't tune on it.
 - **Streamlit quirks.** `RerunException`/`StopException` are `BaseException` (they can cut a turn
   short: `repair_history`); widget state is dropped when a widget is not drawn, so selections are
   copied to plain keys in `on_change`; `AppTest` cannot keep `st.dialog` open, so editors live in

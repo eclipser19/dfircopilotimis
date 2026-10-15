@@ -72,7 +72,7 @@ def test_lessons_about_a_playbook_come_with_it(tmp_path, monkeypatch):
 def test_collections_of_artifacts_that_cannot_work_on_images_are_marked(case):
     import json
     from copilot import tools
-    case.upsert_collection("F.EDGE", client_id="C.1", artifact="Windows.Applications.Edge.History",
+    case.upsert_collection("F.EDGE", client_id="C.1", artifact="Windows.Network.Netstat",
                            state="FINISHED", rows_ingested=0)
     case.upsert_collection("F.MFT", client_id="C.1", artifact="Windows.NTFS.MFT", state="FINISHED", rows_ingested=0)
     listed = {c["flow_id"]: c for c in json.loads(tools.list_collections.invoke({}))}

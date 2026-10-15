@@ -173,3 +173,23 @@ def test_within_ties_the_words_of_a_fact_together_and_cut_ids_are_invalid(tmp_pa
     assert benchmark.match_fact(far, dict(fact, within=None))[0]          # without within: anywhere
     cites = benchmark.check_citations("see `ba06dfce83ba6f8` and `0123456789abcdef0`", db=None)
     assert cites["evidence_invalid"] == ["ba06dfce83ba6f8", "0123456789abcdef0"]
+
+
+@pytest.mark.parametrize("name", ["szechuan-dc", "corporatesecrets"])
+def test_shipped_benchmarks_load_and_their_case_files_parse(name):
+    root = os.path.join(os.path.dirname(__file__), "..", "cases", name)
+    spec = benchmark.load_spec(os.path.join(root, "benchmark.yaml"))
+    with open(os.path.join(root, spec["case_file"]), encoding="utf-8") as f:
+        assert yaml.safe_load(f)["collect"]
+
+
+def test_corporatesecrets_key_scores_a_good_answer_and_not_a_vague_one():
+    spec = benchmark.load_spec(os.path.join(os.path.dirname(__file__), "..", "cases", "corporatesecrets",
+                                            "benchmark.yaml"))
+    tor = next(q for q in spec["questions"] if q["id"] == "privacy_tools")
+    good = ("Tor Browser is installed in C:\\Program1. jim.tomato used Tor: a Start Tor Browser.lnk "
+            "is on his desktop and RecentApps shows 2 launches.")
+    vague = "No anonymisation software found. Users: jim.tomato, tim.apple. Programs in C:\\Program1 are unknown."
+    found = {f["id"]: benchmark.score_fact(good, f, spec)["found"] for f in tor["facts"]}
+    assert found == {"tor": True, "tor_path": True, "tor_user": True, "tor_runs": True}
+    assert not any(benchmark.score_fact(vague, f, spec)["found"] for f in tor["facts"])

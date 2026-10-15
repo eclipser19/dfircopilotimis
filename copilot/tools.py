@@ -589,7 +589,7 @@ dfir_guide.description = dfir_guide.description.replace("{playbooks}", _playbook
 def propose_lesson(topic: str, lesson: str, unusable_on_images: Optional[bool] = None) -> str:
     """
     Proposes a lesson for every future investigation on this server. Only something you VERIFIED here
-    that holds in general, e.g. "returns 0 rows on disk images: it calls lookupSID (flow log)", "the
+    that holds in general, e.g. "returns 0 rows on disk images: it needs WMI (flow log)", "the
     parameter is FileNameRegex, not FileRegex". Never case facts (IPs, hashes, hosts, users, times).
     The investigator approves it.
     Args:

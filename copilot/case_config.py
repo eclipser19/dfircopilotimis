@@ -25,6 +25,7 @@ DEFAULT_ARTIFACT_ALLOWLIST = [
     "Windows.Persistence.*",
     "Windows.Applications.*",
     "Windows.Analysis.EvidenceOfDownload",
+    "Windows.Search.FileFinder",
     "Windows.Sys.Users",
     "Windows.Sys.StartupItems",
     "Windows.System.Amcache*",
