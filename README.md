@@ -118,10 +118,16 @@ you can extend without touching code:
 | `event_ids.yaml` | Windows event IDs per log channel, with notes | Report annotations and "Event IDs referenced"; `dfir_guide` |
 | `logon_types.yaml` | 4624 LogonType values | Report annotations |
 | `playbooks.yaml` | For each investigation question, which sources to check | `dfir_guide` |
+| `forensic_artifacts.yaml` | Where Windows and applications keep ~350 kinds of data (file globs, registry keys), converted from [ForensicArtifacts](https://github.com/ForensicArtifacts/artifacts) (Apache-2.0, `forensic_artifacts.LICENSE`) | `find_data_location`: returns ready `Windows.Search.FileFinder` / `Windows.Registry.NTUser` parameters |
 
 Patterns in `artifacts.yaml` are matched in order (first match wins), so put specific
 entries above general ones. Only list parameter names under `params` once a real
 collection has confirmed them.
+
+`forensic_artifacts.yaml` is generated; don't edit it. To update it, check out the
+ForensicArtifacts repository and run `python -m copilot.forensic_artifacts import <checkout>`.
+Placeholders become globs for an image mounted as C: (`%%users.homedir%%` -> `C:\Users\*`,
+CurrentControlSet -> ControlSet001); WMI and command sources (live systems only) are dropped.
 
 ## Playbooks on every question
 

@@ -19,7 +19,8 @@ names and follow its `tips` (e.g. MFT FileRegex matches file names only; use Pat
 A result marked truncated is incomplete: narrow it rather than reasoning from what's missing.
 
 Use `dfir_guide` (cheap, no data access) for investigation playbooks, event ID meanings and
-artifact know-how before deciding what to query or collect.
+artifact know-how before deciding what to query or collect. When no artifact you know covers some
+data, `find_data_location` says where Windows or an application keeps it, with ready parameters.
 
 **Step 2 — Analyze:** Collected rows are normalized automatically. All times are UTC.
 - `activity_histogram`: start here to find bursts of activity worth zooming into.

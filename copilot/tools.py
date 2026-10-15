@@ -577,6 +577,22 @@ def dfir_guide(topic: str) -> str:
     return guide(topic)
 
 
+@tool
+def find_data_location(keyword: str) -> str:
+    """
+    Where Windows or an application keeps a kind of data (ForensicArtifacts reference, no data access):
+    file globs and registry keys, with ready collect_artifact parameters. Binary files found this way
+    still need a parser artifact.
+    Args:
+        keyword: What you look for, e.g. 'time zone', 'mounted devices', 'typed urls', 'scheduled tasks'.
+    """
+    from copilot.forensic_artifacts import search
+    found = search(keyword)
+    if not found:
+        return f"No location known for '{keyword}'. Try other words, or list_artifacts."
+    return _dump({"matches": found})
+
+
 def _playbook_names() -> str:
     from copilot import knowledge
     return ", ".join(knowledge.playbooks() or {})
@@ -887,7 +903,7 @@ tools = [
     search_clients, collect_artifact, check_collection, list_collections,
     list_artifacts, describe_artifact, analyze_memory, list_memory_plugins,
     activity_histogram, context_window, query_timeline, search_iocs, pivot_entity, get_event_detail,
-    case_summary, record_finding, retract_finding, dfir_guide, propose_lesson,
+    case_summary, record_finding, retract_finding, dfir_guide, find_data_location, propose_lesson,
     generate_report, export_case, export_results, export_evidence,
     list_cases, switch_case, create_case, update_case,
 ]
