@@ -1,10 +1,10 @@
 # Benchmark for the Open University "Compromised Windows Server 2022 (simulation)" image.
 # Read by copilot/benchmark.py only; the agent never sees this file. Matching rules: see
-# cases/szechuan-dc/benchmark.yaml.
+# cases/szechuan-dc/benchmark.yaml. The questions follow the dataset's own briefing.
 #
-# NO ANSWER KEY YET: the questions have no facts. A run saves the answers; once the facts are added
-# here (from a writeup or our own checks, with their sources in answer_key.md), score the saved run
-# with: python -m copilot.benchmark score benchmark_results/<run>.json
+# NO ANSWER KEY YET: there is no published solution. A run saves the answers; the key is built
+# afterwards from checks that do not depend on the agent (answer_key.md, "Building the key"), then
+# saved runs are scored with: python -m copilot.benchmark score benchmark_results/<run>.json
 # Held out: the knowledge base is not tuned on this image.
 
 name: ou-server2022
@@ -13,19 +13,21 @@ clock_offset_minutes: 0
 time_tolerance_seconds: 120
 
 questions:
+  - id: system
+    ask: Which operating system and version was this server running, was it up to date with security patches (which are missing), and which services (file sharing, remote desktop, web) did it offer?
   - id: entry
-    ask: Was this server compromised? If so, how did the attacker get in, from where, and when?
-  - id: weaknesses
-    ask: What made the attack possible - which Windows version and patch level, which exposed services, which weak or reused passwords?
+    ask: How did the attacker get in and how did the ransomware get onto the system - from where, when, and was a vulnerability exploited?
   - id: accounts
-    ask: Which accounts did the attacker use, create or change, and how did they get the credentials?
+    ask: Were any accounts compromised, created or changed, and did any account have a weak password?
   - id: tools
-    ask: What programs or scripts did the attacker bring onto or run on this server, and when?
+    ask: What tools, techniques and procedures did the attacker use on this server - programs, scripts and commands - and when?
   - id: persistence
     ask: How did the attacker keep access to this server?
   - id: ransomware
-    ask: What encrypted the data on this server, when did it run, how was it started, and what did it touch?
+    ask: What ransomware ran, when, how was it started, and what did it do to the system?
   - id: data
-    ask: Was any data collected or taken from this server before the ransomware ran?
-  - id: anti_forensics
-    ask: Did the attacker try to hide their tracks or weaken defences, such as deleting files, clearing logs or disabling security tools?
+    ask: Was any data collected, exfiltrated or stolen from this server before the ransomware ran?
+  - id: identifiers
+    ask: Which identifiers can be obtained from this host for blocking and hunting - source IP addresses, user names, file names and hashes?
+  - id: timeline
+    ask: Give the timeline of the incident - what happened before, immediately before, on and after 12 February 2024, including any containment steps.

@@ -18,11 +18,14 @@ scope:
   end_time: "2024-02-13T00:00:00Z"
   clock_offset_minutes: 0
   description: >
-    A small UK office ran a Windows Server 2022 machine from September 2023. To support home
-    working the administrator enabled remote access to it. On 12 February 2024 the server stopped
-    responding and showed a ransomware message. The disk was decrypted and imaged. Determine how
-    the attacker got in, from where and when, which accounts they used or created, what they ran,
-    how they kept access, what the ransomware did and when, and whether data was taken first.
+    Simulated UK-based small office network running from September 2023 to February 2024 (all
+    names and IP addresses synthetic). The administrator opened RDP to facilitate working from
+    home. On 12 February 2024 the server was found no longer responding, with 'Red Petya'
+    ransomware displayed on the screen. Forensic experts decrypted the disk and imaged it.
+    Determine what happened before, immediately before, on and after 12 February 2024: how the
+    ransomware got onto the system, which vulnerabilities and accounts were used, whether data was
+    taken, which identifiers (source IPs, user names, file hashes) and TTPs can be found, and the
+    server's OS version, patch level, services and password weaknesses.
 
 iocs:
   hashes: []
