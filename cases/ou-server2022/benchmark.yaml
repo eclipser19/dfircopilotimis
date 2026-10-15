@@ -2,9 +2,10 @@
 # Read by copilot/benchmark.py only; the agent never sees this file. Matching rules: see
 # cases/szechuan-dc/benchmark.yaml. The questions follow the dataset's own briefing.
 #
-# NO ANSWER KEY YET: there is no published solution. A run saves the answers; the key is built
-# afterwards from checks that do not depend on the agent (answer_key.md, "Building the key"), then
-# saved runs are scored with: python -m copilot.benchmark score benchmark_results/<run>.json
+# There is no published solution. The key was built from blind run 123740 by checking each claim
+# against the raw record it cites (`benchmark evidence`), Hayabusa rules run in Velociraptor (no
+# agent involved) and Microsoft's update list; only what those show is a fact. Sources and the
+# claims that were rejected: answer_key.md. Times are true UTC (the host clock was right).
 # Held out: the knowledge base is not tuned on this image.
 
 name: ou-server2022
@@ -12,22 +13,236 @@ case_file: case.yaml
 clock_offset_minutes: 0
 time_tolerance_seconds: 120
 
+# Wrong wherever they appear (one line at a time).
+forbidden:
+  - pattern: '(?m)^(?![^\n]*195\.21\.1\.97)[^\n]*(?:36\.133\.110\.87[^\n]*08:52|08:52[^\n]*36\.133\.110\.87)'
+    why: the 2024-02-05 08:52:06 Administrator RDP logon came from 195.21.1.97 (its 4624 and 4648 records), not from the password-guessing address 36.133.110.87
+  - pattern: '(?m)^(?![^\n]*(?:edge|microsoft|legitimate|benign))[^\n]*cookie_exporter'
+    why: cookie_exporter.exe is Microsoft Edge's own program (Program Files (x86)\Microsoft\EdgeCore\121.0.2277.106), not attacker tooling
+
 questions:
   - id: system
     ask: Which operating system and version was this server running, was it up to date with security patches (which are missing), and which services (file sharing, remote desktop, web) did it offer?
+    facts:
+      - id: os
+        what: Windows Server 2022 Standard (21H2)
+        all: ["server 2022"]
+        any: [["standard"]]
+      - id: build
+        what: Build 20348.1850 (UBR 1850)
+        all: ["20348"]
+        any: [["1850"]]
+      - id: not_patched
+        what: Not up to date - nothing after build 20348.1850
+        all: ["1850"]
+        any: [["not up to date", "not fully patched", "out of date", "outdated", "unpatched", "missing", "behind"]]
+        within: 400
+      - id: patch_month
+        what: 20348.1850 is the July 2023 cumulative update (KB5028171); August 2023 (KB5029250) to January 2024 are missing
+        any: [["july 2023", "kb5028171", "2023-07"]]
+      - id: smb
+        what: SMB file sharing - LanmanServer starts automatically (Start=2) and has a Shares key
+        any: [["lanmanserver", "smb"], ["start=2", "start = 2", "automatic", "shares"]]
+        within: 300
+      - id: rdp
+        what: Remote Desktop offered and used (TermService; type 10 logons)
+        any: [["rdp", "remote desktop", "termservice"], ["termservice", "type 10", "type-10", "logon type 10", "1149", "fdenytsconnections", "3389"]]
+        within: 300
+      - id: iis
+        what: IIS packages in the component store
+        any: [["iis"]]
+        scored: false
+        note: package keys under Component Based Servicing exist on every Server 2022; they do not prove the web server role or W3SVC was installed
+
   - id: entry
     ask: How did the attacker get in and how did the ransomware get onto the system - from where, when, and was a vulnerability exploited?
+    facts:
+      - id: compromise_logon
+        what: Administrator network logon (type 3, NTLMv2, workstation kali) from 185.229.66.183, 2024-02-05 22:55:18, after failed logons from 22:54:02
+        all: ["185.229.66.183"]
+        any: [["administrator"], ["4624", "logon", "logged on", "authenticat"]]
+        within: 400
+        time: "22:54:02-22:55:18"
+      - id: password_guessing
+        what: Password guessing against Administrator from 36.133.110.87 (workstation kali), failed logons from 2024-02-04 23:37 on
+        all: ["36.133.110.87"]
+        any: [["4625", "failed", "password guess", "password-guess"]]
+        within: 300
+      - id: admin_rdp
+        what: RDP (type 10) as admin from 31.220.85.162, 2024-02-06 20:11:00
+        all: ["31.220.85.162"]
+        time: "20:11:00"
+      - id: payload_written
+        what: rename.exe written to C:\Users\admin\Desktop 2024-02-06 20:13:40, in that RDP session
+        any: [["rename.exe"]]
+        time: "20:13:40"
+      - id: browser_download
+        what: important[1].zip downloaded by the browser (admin's INetCache) 2024-02-06 20:09:25
+        any: [["important[1].zip", "important.zip"]]
+        time: "20:09:25"
+        scored: false
+        note: likely how rename.exe arrived (four minutes before it), but no record links the two
+      - id: no_exploit
+        what: Valid credentials over exposed remote access; no software vulnerability shown
+        any: [["no software vulnerability", "no vulnerability", "not a vulnerability", "no exploit", "valid credentials", "valid account"]]
+        scored: false
+        note: nothing in the records shows an exploit, but nothing rules one out
+
   - id: accounts
     ask: Were any accounts compromised, created or changed, and did any account have a weak password?
+    facts:
+      - id: administrator_compromised
+        what: The built-in Administrator account was used by the attacker (logon from 185.229.66.183 at 22:55:18)
+        all: ["185.229.66.183"]
+        any: [["administrator"]]
+        within: 400
+      - id: admin_created
+        what: Account admin ("A Admin", RID 2611) created by Administrator 2024-02-05 23:02:00 (4720)
+        # The account, not a file under C:\Users\admin created at some time.
+        any: [["creat", "4720", "new account"], ["account", "4720"]]
+        regex: ['(?<!\w)(?<!users\\)(?<!users/)admin(?![\\@\w])']
+        within: 150
+        time: "23:02:00"
+      - id: admin_privileged
+        what: admin added to Administrators 23:02:22 (4732) and Domain Admins 23:24:35 (4728)
+        any: [["domain admins", "4728"]]
+        regex: ['(?<!\w)(?<!users\\)(?<!users/)admin(?![\\@\w])']
+        within: 300
+        time: "23:02:22-23:24:35"
+      - id: weak_password
+        what: admin's password letmein (in the scheduled task's command line)
+        all: ["letmein"]
+
   - id: tools
     ask: What tools, techniques and procedures did the attacker use on this server - programs, scripts and commands - and when?
+    facts:
+      - id: sysinternals
+        what: SysinternalsSuite.zip in admin's Downloads, extracted 2024-02-05 23:13:40-23:14:40
+        any: [["sysinternals"]]
+        time: "23:13:40-23:14:40"
+      - id: psexec_targets
+        what: PsExec run against Desktop-001 to Desktop-006 as admin
+        any: [["psexec"], ["desktop-00"]]
+        within: 400
+      - id: task
+        what: Scheduled task \Enterpries backup registered 2024-02-06 21:49:21
+        any: [["enterpries"]]
+        time: "21:49:21"
+      - id: nmap
+        what: Nmap installed in Program Files (x86)\Nmap (Amcache 2024-02-06 21:01:08)
+        any: [["nmap"]]
+      - id: dir_exe
+        what: dir.exe on admin's Desktop (SHA-1 d1c62ac62e68875085b62fa651fb17d4d7313887)
+        any: [["dir.exe"]]
+        scored: false
+        note: purpose unknown (not a Windows program; dir is a cmd built-in)
+
   - id: persistence
     ask: How did the attacker keep access to this server?
+    facts:
+      - id: task
+        what: Scheduled task \Enterpries backup (2024-02-06 21:49:21) running PsExec as admin with highest privileges
+        any: [["enterpries"]]
+        time: "21:49:21"
+      - id: admin_account
+        what: The created account admin, a domain admin with a known password
+        any: [["account"], ["created", "creation", "4720", "new account", "domain admins"]]
+        regex: ['(?<!\w)(?<!users\\)(?<!users/)admin(?![\\@\w])']
+        within: 300
+
   - id: ransomware
     ask: What ransomware ran, when, how was it started, and what did it do to the system?
+    facts:
+      - id: payload
+        what: C:\Users\admin\Desktop\rename.exe (SHA-1 39b6d40906c7f7f080e6befa93324dddadcbd9fa)
+        any: [["rename.exe"]]
+      - id: payload_written
+        what: rename.exe written 2024-02-06 20:13:40
+        any: [["rename.exe"]]
+        time: "20:13:40"
+      - id: launch
+        what: Started by PsExec from the scheduled task \Enterpries backup
+        any: [["psexec"], ["enterpries", "scheduled task"]]
+        within: 400
+      - id: targets
+        what: Copied and run on Desktop-001 to Desktop-006 (PsExec -c -d -u admin -p letmein)
+        any: [["desktop-00"]]
+      - id: ransom_note
+        what: RyukReadMe.txt on admin's Desktop, created 2024-02-06 20:46:53 ($FN)
+        any: [["ryukreadme"]]
+        time: "20:46:53"
+      - id: note_timestomped
+        what: The note's $SI times (2024-02-07 04:46:00, zero sub-seconds) are later than its $FN creation - altered
+        any: [["timestomp", "time stomp", "time-stomp", "altered", "manipulat", "backdat", "forward-dat", "inconsisten"]]
+        all: ["ryukreadme"]
+        within: 400
+        scored: false
+        note: anti-forensics sign the question does not ask for directly
+
   - id: data
     ask: Was any data collected, exfiltrated or stolen from this server before the ransomware ran?
+    facts:
+      - id: share_zip
+        what: C:\Users\admin\Desktop\share.zip created 2024-02-05 23:28:30 (closed 23:36:06), 33 minutes after the attacker's logon
+        any: [["share.zip"]]
+        time: "23:28:30"
+
   - id: identifiers
     ask: Which identifiers can be obtained from this host for blocking and hunting - source IP addresses, user names, file names and hashes?
+    facts:
+      - id: ip_compromise
+        what: 185.229.66.183 (Administrator logon, kali)
+        all: ["185.229.66.183"]
+      - id: ip_guessing
+        what: 36.133.110.87 (password guessing, kali)
+        all: ["36.133.110.87"]
+      - id: ip_admin_rdp
+        what: 31.220.85.162 (RDP as admin)
+        all: ["31.220.85.162"]
+      - id: workstation_kali
+        what: Workstation name kali in the logon events
+        any: [["kali"]]
+      - id: user_admin
+        what: Account admin
+        regex: ['(?<!\w)(?<!users\\)(?<!users/)admin(?![\\@\w])']
+      - id: rename_hash
+        what: rename.exe SHA-1 39b6d40906c7f7f080e6befa93324dddadcbd9fa
+        all: ["39b6d40906c7f7f080e6befa93324dddadcbd9fa"]
+      - id: task_name
+        what: Task \Enterpries backup
+        any: [["enterpries"]]
+
   - id: timeline
     ask: Give the timeline of the incident - what happened before, immediately before, on and after 12 February 2024, including any containment steps.
+    facts:
+      - id: compromise_logon
+        what: 2024-02-05 22:55:18 Administrator logon from 185.229.66.183
+        all: ["185.229.66.183"]
+        time: "22:54:02-22:55:18"
+      - id: admin_created
+        what: 2024-02-05 23:02:00 account admin created
+        # The account, not a file under C:\Users\admin created at some time.
+        any: [["creat", "4720", "new account"], ["account", "4720"]]
+        regex: ['(?<!\w)(?<!users\\)(?<!users/)admin(?![\\@\w])']
+        within: 150
+        time: "23:02:00"
+      - id: share_zip
+        what: 2024-02-05 23:28:30 share.zip created
+        any: [["share.zip"]]
+        time: "23:28:30"
+      - id: admin_rdp
+        what: 2024-02-06 20:11:00 RDP as admin from 31.220.85.162
+        all: ["31.220.85.162"]
+        time: "20:11:00"
+      - id: payload_written
+        what: 2024-02-06 20:13:40 rename.exe written
+        any: [["rename.exe"]]
+        time: "20:13:40"
+      - id: ransom_note
+        what: 2024-02-06 20:46:53 RyukReadMe.txt
+        any: [["ryukreadme"]]
+        time: "20:46:53"
+      - id: task
+        what: 2024-02-06 21:49:21 task \Enterpries backup
+        any: [["enterpries"]]
+        time: "21:49:21"

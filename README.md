@@ -381,10 +381,11 @@ are also the run case's chat, so you can open the run in the app. Benchmarks:
   held out. It comes as an AD1 logical image: `answer_key.md` explains how to present it to
   Velociraptor as a folder (`deaddisk --add_windows_directory`).
 - `cases/injector/`: CyberDefenders "Injector" (raw disk + memory, web server breached through
-  its web application), held out.
+  its web application). Its runs led to the web-attack knowledge, so it is no longer fully blind.
 - `cases/ou-server2022/`: Open University "Compromised Windows Server 2022 (simulation)" (E01,
-  RDP and ransomware), held out. No answer key yet: a run saves the answers, which are scored
-  with `benchmark score` once the facts are filled in.
+  RDP and ransomware), held out. There is no published solution: the key was built from a blind
+  run's cited records, Hayabusa rules and reference lookups (`answer_key.md`), and saved runs
+  were scored afterwards with `benchmark score`.
 
 The desktop case (`cases/szechuan/`) was used to tune the knowledge, so it isn't a fair test.
 

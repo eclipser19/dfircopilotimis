@@ -74,8 +74,8 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
 | `cases/szechuan/` | Example case (DFIR Madness "Szechuan Sauce" desktop) and `answer_key.md`; used to tune the knowledge. |
 | `cases/szechuan-dc/` | The same case's domain controller: `case.yaml`, `benchmark.yaml` (questions and expected facts), `answer_key.md`. Benchmark (no longer fully blind). |
 | `cases/corporatesecrets/` | CyberDefenders "CorporateSecrets" (insider case, AD1 logical image read as a folder): held-out benchmark; `answer_key.md` has the setup. |
-| `cases/injector/` | CyberDefenders "Injector" (web server breach, raw disk + memory): held-out benchmark; web logs via `Generic.Detection.Logs`. |
-| `cases/ou-server2022/` | Open University "Compromised Windows Server 2022 (simulation)" (E01, RDP + ransomware): held out, questions only until the key is written (saved runs are re-scored then). |
+| `cases/injector/` | CyberDefenders "Injector" (web server breach, raw disk + memory): benchmark (no longer fully blind); web logs via `Generic.Detection.Logs`. |
+| `cases/ou-server2022/` | Open University "Compromised Windows Server 2022 (simulation)" (E01, RDP + ransomware): held out; no published solution, so its key was built from a blind run's cited records, Hayabusa hits and lookups (`answer_key.md`). |
 | `tests/conftest.py` | `FakeVQL` (answers Velociraptor queries; `artifact_params` take names or dicts), fixtures `case`, `approve_all`, and isolation from real `server.yaml`/accounts/lessons. |
 
 ## Things that span several files
