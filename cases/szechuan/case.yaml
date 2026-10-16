@@ -51,7 +51,7 @@ collect:
   - artifact: Windows.EventLogs.EvtxHunter   # key event IDs only: logons, service installs,
     parameters:                              # process creation, tasks, log clearing
       IocRegex: "."
-      IdRegex: "^(4624|4625|4634|4647|4648|4688|4697|4698|4720|7045|1102|104|1149|21|22|23|24|25)$"
+      IdRegex: "^(4624|4625|4634|4647|4648|4688|4697|4698|4702|4720|4722|4724|4726|4728|4732|4756|4781|7045|1102|104|1116|1117|5001|1149|21|22|23|24|25)$"
 
 # Memory image of the same desktop (Volatility 3; see server.yaml memory:). Pick it in the app
 # (Case settings > Memory image) or write its file name here, as it is in memory.images_dir.

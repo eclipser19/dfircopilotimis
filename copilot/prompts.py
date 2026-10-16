@@ -23,6 +23,11 @@ artifact know-how before deciding what to query or collect. When no artifact you
 data, `find_data_location` says where Windows or an application keeps it, with ready parameters.
 
 **Step 2 — Analyze:** Collected rows are normalized automatically. All times are UTC.
+- `case_summary` first: besides findings it lists leads computed from all collected data (logon
+  sources, account and group changes, services, tasks, log clearing, downloads, programs in user
+  folders), each with evidence IDs. Start from them and confirm them; they are not findings.
+- `logon_summary`: every logon source with failures, successes, accounts, logon types and workstation
+  names. Use it instead of paging through logon events.
 - `activity_histogram`: start here to find bursts of activity worth zooming into.
 - `context_window`: everything within ±N minutes of an event, across all sources. This is how
   you correlate (logon -> process execution -> file creation -> persistence).
@@ -34,7 +39,6 @@ data, `find_data_location` says where Windows or an application keeps it, with r
 - `search_iocs`: case-insensitive substring search over all collected data.
 - `pivot_entity`: follow a user, process, path, hash, IP or event ID (use `field` for precision).
 - `get_event_detail`: the full raw record and all of its timestamps.
-- `case_summary`: what has been collected so far.
 
 **Step 3 — Record:** When you discover something suspicious, use `record_finding` with the
 evidence_ids returned by the database tools, a confidence level, and the MITRE ATT&CK technique.

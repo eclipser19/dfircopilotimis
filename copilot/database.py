@@ -88,6 +88,7 @@ class CaseDatabase:
             CREATE INDEX IF NOT EXISTS idx_records_process ON records(process);
             CREATE INDEX IF NOT EXISTS idx_records_ip ON records(ip);
             CREATE INDEX IF NOT EXISTS idx_records_hash ON records(hash);
+            CREATE INDEX IF NOT EXISTS idx_records_event_id ON records(event_id);
 
             CREATE TABLE IF NOT EXISTS timeline (
                 evidence_id    TEXT,

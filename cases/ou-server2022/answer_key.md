@@ -98,18 +98,31 @@ That run cited records the first one never reached. Each was checked in its evid
 | 24 | Patch level corroborated: LCUVer 10.0.20348.1850, CBS Package_for_RollupFix~...~20348.1850.1.11 (key 2023-07-07) | 8844fd3aa9ab1452, 50bc196b528e676a |
 | 25 | Baseline, not the attacker: Administrator downloaded SysinternalsSuite.zip from download.sysinternals.com on 2023-11-04 (Zone.Identifier HostUrl); the 08:52:03 type 2 logons are UMFD font-driver sessions of the 08:52 RDP logon | d36586cf25ff758b, fec48d052694236b, 1a4e051914d34362 |
 
+### Added from run 111125 (third run, with the new record summaries)
+
+| # | Fact | Record(s) |
+|---|---|---|
+| 26 | **The guessing from 36.133.110.87 worked:** Administrator network logon (type 3, workstation kali) at 2024-02-05 10:55:56, logon ID 654401398, ended at 10:55:57: a credential check, twelve hours before 185.229.66.183 used the account | 4cffe6a417eabcfb, a7d759f753dd536c |
+| 27 | Failures from 185.229.66.183 (kali) started by 22:43:02 | 460c742a8c32ab74 |
+| 28 | 23:00:25 Administrator network logon from 185.229.66.183, then 23:00:28 **RDP (type 10) as Administrator** from it (logon ID 707067993; 4648 via svchost): the attacker's interactive session, 92 s before admin was created | b55c00485116d0e7, 0ff0687d0f39ce9b, 254bcf1c2f89e637 |
+| 29 | admin's network logons from 185.229.66.183 at 23:05:20 and 23:24:50, and from 31.220.85.162 (kali) at 2024-02-06 19:53:08 | 6168a36f41595c8e, 557303ec3e1755d1, 4bbb208b82a5eae1 |
+| 30 | admin used explicit credentials for Desktop-001 (10.44.24.1) at 23:19:01, three minutes before desktop-005 | 1d1f8bcb8f918837 |
+| 31 | admin opened C:\share\Clark.Nicholson\Documents\account_password.xlsx at 23:09:16 (Recent LNK) | 24f0d48758b6fad1 |
+| 32 | A remote folder "branchoffice.example.com on 185.239.106.67" (Internet shell folder, as Explorer names an FTP site) opened from admin's session 2024-02-06 19:56:19, changed 2024-02-07 16:57:31 | ca127cf45ca0be6b |
+| 33 | **195.21.1.97 is the administrator working from home:** its logons name workstation ADMIN-WFH (and come at office hours). Calling it the attacker is now a forbidden claim. | 110e8ff313b7cd2c, 8459d2d7059f3b8c |
+
 ### Still open (not in the key)
 
-- **Who created `admin`.** The 4720, 4732 and 4728 events come from Administrator's logon ID
-  8503211, which is neither the 22:55:18 network session (706976421) nor an RDP session in the
-  cited records. The account is tied to the attacker anyway by fact 16. Searching the case for
-  `8503211` would show where that session came from.
+- **Which session created `admin`.** The 4720, 4732 and 4728 events give Administrator's logon ID
+  8503211, not the attacker's RDP session of 23:00:28 (707067993). The account is the attacker's
+  anyway (facts 16, 28): created 92 s into their RDP session and used from their address three
+  minutes later.
 - **What rename.exe and dir.exe are.** Look up SHA-1 39b6d40906c7f7f080e6befa93324dddadcbd9fa
   (rename.exe, the payload the task pushes; is it Red Petya?) and
   d1c62ac62e68875085b62fa651fb17d4d7313887 (dir.exe) on VirusTotal. PsExec's
   3e2272b916da4be3c120d17490423230ab62c174 should be the signed Sysinternals PsExec 2.43.
-- **Whether 195.21.1.97 is the administrator.** It is not scored either way. Only linking it to
-  the password guessing is forbidden.
+- **What went to 185.239.106.67.** The remote folder (fact 32) is a possible transfer destination;
+  no record shows what was copied.
 
 ## Setup
 
@@ -131,18 +144,19 @@ Times are UTC (the host clock was right). Host WIN-NI9FBK23SLO, domain BRANCHOFF
 | # | Question (benchmark id) | Answer | Source |
 |---|---|---|---|
 | 1 | OS, patches, services (`system`) | Windows Server 2022 Standard 21H2, build 20348.1850 (July 2023, KB5028171; LCUVer and the RollupFix package agree). August 2023 to January 2024 cumulative updates missing. SMB file sharing (LanmanServer automatic, shares) and RDP (enabled 2024-01-21). IIS not shown. | 1b-12, 23, 24, Microsoft |
-| 2 | Entry and ransomware arrival (`entry`) | Password guessing from 185.229.66.183 (kali) from 22:50:45, Administrator network logon from it at 2024-02-05 22:55:18, then RDP as the new admin from the same address at 23:05:22. Separate password guessing from 36.133.110.87 (kali) from 2024-02-04 23:37. rename.exe arrived in admin's RDP session from 31.220.85.162 (logon 2024-02-06 20:11:00), written to the Desktop at 20:13:40. No exploit shown. | 1, 1b, 1c, 6, 15, 16 |
+| 2 | Entry and ransomware arrival (`entry`) | Password guessing from 36.133.110.87 (kali) from 2024-02-04 23:37 worked at 2024-02-05 10:55:56 (Administrator, type 3). From 185.229.66.183 (kali): guessing from 22:43:02, Administrator network logon 22:55:18, RDP as Administrator 23:00:28, then RDP as the new admin at 23:05:22. rename.exe arrived in admin's RDP session from 31.220.85.162 (logon 2024-02-06 20:11:00), written to the Desktop at 20:13:40. No exploit shown. | 1, 1b, 1c, 6, 15, 16 |
 | 3 | Accounts (`accounts`) | Administrator used by the attacker. admin created 23:02:00 (4720), added to Administrators 23:02:22 and Domain Admins 23:24:35, used over RDP from 185.229.66.183 at 23:05:22. admin's password is letmein. | 1b, 2, 13, 16, Hayabusa |
 | 4 | Tools and techniques (`tools`) | SysinternalsSuite.zip extracted 2024-02-05 23:13:40-23:14:40 (zip deleted 23:14:49). Explicit credentials for desktop-005 at 23:22:19. Nmap and Npcap installed 23:42. Task \Enterpries backup (2024-02-06 21:49:21) runs PsExec -c -d -u admin -p letmein rename.exe against Desktop-001 to Desktop-006. | 3, 8, 17-19 |
 | 5 | Persistence (`persistence`) | Task \Enterpries backup (highest privileges, as admin) and the domain-admin account admin with a known password. | 2, 8 |
 | 6 | Ransomware (`ransomware`) | C:\Users\admin\Desktop\rename.exe (SHA-1 39b6d409...), written 2024-02-06 20:13:40, launched with PsExec by the task and pushed to Desktop-001..006. Ransom note RyukReadMe.txt 20:46:53 ($SI times altered). | 6, 8 |
 | 7 | Data (`data`) | share.zip (695 MB) on admin's Desktop created 2024-02-05 23:28:30 (staging), deleted to the Recycle Bin 2024-02-06 22:14:44. No exfiltration shown. | 4, 20 |
-| 8 | Identifiers (`identifiers`) | IPs 185.229.66.183, 36.133.110.87, 31.220.85.162; workstation kali; account admin; rename.exe SHA-1 39b6d40906c7f7f080e6befa93324dddadcbd9fa; task \Enterpries backup. | above |
+| 8 | Identifiers (`identifiers`) | IPs 185.229.66.183, 36.133.110.87, 31.220.85.162, 185.239.106.67 (not 195.21.1.97, the administrator at home); workstation kali; account admin; rename.exe SHA-1 39b6d40906c7f7f080e6befa93324dddadcbd9fa; task \Enterpries backup. | above |
 | 9 | Timeline (`timeline`) | 02-05 22:50:45 guessing; 22:55:18 compromise; 23:02:00 admin created; 23:05:22 RDP as admin; 23:28:30 share.zip; 02-06 20:11:00 RDP as admin; 20:13:40 rename.exe; 20:46:53 ransom note; 21:49:21 task; 22:12:49 network logon as admin; 22:14:44 share.zip deleted. Nothing recorded for 12 February. | above |
 
 ### Scores
 
 | Run | Score | Facts | Times | Forbidden | Notes |
 |---|---|---|---|---|---|
-| 123740 (blind, scored afterwards) | 57.4% | 29/45 | 10/23 | 2 | Entry blamed the 08:52 logon from 195.21.1.97 on the password guessing; called Edge's cookie_exporter.exe attacker tooling; missed the group changes, letmein as a weak password (accounts), 185.229.66.183 and 31.220.85.162 as identifiers, the July 2023 patch month. (65.5% on the first key, before facts 15-25.) |
-| 085524 (after rule 11 "correlate before claiming") | 45.6% | 23/45 | 8/23 | 0 | **Setup:** the event-log triage was still running when the questions started (picked up during `entry`). No forbidden claims, and new correct facts (the group changes, Nmap's install time, share.zip deleted, the guessing from 22:50:45). But it hedged ("cannot attribute") where one more record would have settled it: the record summaries left out the logon's source IP and the task's arguments, so the tools answer said both were unknown and ransomware found nothing. The summaries now include them (normalizer 5), and runs wait for triage. |
+| 123740 (blind, scored afterwards) | 52.0% | 29/49 | 10/26 | 2 | Entry blamed the 08:52 logon from 195.21.1.97 on the password guessing; called Edge's cookie_exporter.exe attacker tooling; missed the group changes, letmein as a weak password (accounts), 185.229.66.183 and 31.220.85.162 as identifiers, the July 2023 patch month. (65.5% on the first key; 57.4% with facts 15-25.) |
+| 085524 (after rule 11 "correlate before claiming") | 41.3% | 23/49 | 8/26 | 1 | **Setup:** the event-log triage was still running when the questions started (picked up during `entry`). No forbidden claims, and new correct facts (the group changes, Nmap's install time, share.zip deleted, the guessing from 22:50:45). But it hedged ("cannot attribute") where one more record would have settled it: the record summaries left out the logon's source IP and the task's arguments, so the tools answer said both were unknown and ransomware found nothing. The summaries now include them (normalizer 5), and runs wait for triage. Forbidden: called the 08:52 logon from 195.21.1.97 the initial compromise. |
+| 111125 (new summaries, triage complete) | 50.7% | 27/49 | 11/26 | 1 | 45 min. Found the success from 36.133.110.87, the RDP as Administrator, account_password.xlsx, the remote folder. Each question re-investigated from scratch and the answers disagreed: identifiers called 195.21.1.97 (ADMIN-WFH) the primary attacker while timeline had the right chain; entry and ransomware stopped at hedges. Next: leads computed without the model in case_summary, logon_summary, account changes and file sources in the triage. |

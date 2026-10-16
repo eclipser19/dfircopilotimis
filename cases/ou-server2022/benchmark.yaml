@@ -2,8 +2,8 @@
 # Read by copilot/benchmark.py only; the agent never sees this file. Matching rules: see
 # cases/szechuan-dc/benchmark.yaml. The questions follow the dataset's own briefing.
 #
-# There is no published solution. The key was built from blind run 123740 and extended with run
-# 085524 by checking each claim against the raw record it cites (`benchmark evidence`), Hayabusa
+# There is no published solution. The key was built from blind run 123740 and extended with runs
+# 085524 and 111125 by checking each claim against the raw record it cites (`benchmark evidence`), Hayabusa
 # rules run in Velociraptor (no agent involved) and Microsoft's update list; only what those show
 # is a fact. Sources and the
 # claims that were rejected: answer_key.md. Times are true UTC (the host clock was right).
@@ -18,6 +18,8 @@ time_tolerance_seconds: 120
 forbidden:
   - pattern: '(?m)^(?![^\n]*195\.21\.1\.97)[^\n]*(?:36\.133\.110\.87[^\n]*08:52|08:52[^\n]*36\.133\.110\.87)'
     why: the 2024-02-05 08:52:06 Administrator RDP logon came from 195.21.1.97 (its 4624 and 4648 records), not from the password-guessing address 36.133.110.87
+  - pattern: '(?m)^(?![^\n]*(?:\bnot\b|legitimate|admin-wfh|from home|benign))(?=[^\n]*195\.21\.1\.97)[^\n]*\b(?:attacker|compromis)'
+    why: 195.21.1.97 is the administrator working from home (workstation ADMIN-WFH, logons at office hours over the months), not the attacker
   - pattern: '(?m)^(?![^\n]*(?:edge|microsoft|legitimate|benign))[^\n]*cookie_exporter'
     why: cookie_exporter.exe is Microsoft Edge's own program (Program Files (x86)\Microsoft\EdgeCore\121.0.2277.106), not attacker tooling
 
@@ -65,22 +67,29 @@ questions:
     ask: How did the attacker get in and how did the ransomware get onto the system - from where, when, and was a vulnerability exploited?
     facts:
       - id: compromise_logon
-        what: Administrator network logon (type 3, NTLMv2, workstation kali) from 185.229.66.183, 2024-02-05 22:55:18, after failed logons from 22:50:45 (still failing at 23:00:07)
+        what: Administrator network logon (type 3, NTLMv2, workstation kali) from 185.229.66.183, 2024-02-05 22:55:18, after failed logons from 22:43:02 (still failing at 23:00:07)
         all: ["185.229.66.183"]
         any: [["administrator"], ["4624", "logon", "logged on", "authenticat"]]
         within: 400
-        time: "22:50:45-22:55:18"
-      - id: rdp_as_admin
-        what: RDP (type 10) as the new account admin from the same 185.229.66.183, 2024-02-05 23:05:22
+        time: "22:43:02-22:55:18"
+      - id: attacker_rdp
+        what: RDP (type 10) from 185.229.66.183 as Administrator at 23:00:28, then as the new account admin at 23:05:22
         all: ["185.229.66.183"]
         any: [["rdp", "remote desktop", "type 10", "type-10", "logon type 10"]]
         within: 300
-        time: "23:05:22"
+        time: "23:00:28-23:05:22"
       - id: password_guessing
         what: Password guessing against Administrator from 36.133.110.87 (workstation kali), failed logons from 2024-02-04 23:37 on
         all: ["36.133.110.87"]
         any: [["4625", "failed", "password guess", "password-guess"]]
         within: 300
+      - id: guessing_succeeded
+        what: The guessing from 36.133.110.87 worked - Administrator network logon (type 3, kali) at 2024-02-05 10:55:56, ended a second later (a credential check)
+        # "success" near the address also matches "the success came from another address": the time decides.
+        all: ["36.133.110.87"]
+        regex: ['\b10:5[5-6]']
+        within: 300
+        time: "10:55:56"
       - id: admin_rdp
         what: RDP (type 10) as admin from 31.220.85.162, 2024-02-06 20:11:00
         all: ["31.220.85.162"]
@@ -158,11 +167,11 @@ questions:
         any: [["nmap", "npcap"]]
         time: "23:42:06-23:42:42"
       - id: explicit_credentials
-        what: admin used explicit credentials for desktop-005 (10.44.24.9), 2024-02-05 23:22:19 (4648)
-        all: ["desktop-005"]
-        any: [["4648", "explicit credential", "10.44.24.9"]]
+        what: admin used explicit credentials for Desktop-001 (10.44.24.1) at 23:19:01 and desktop-005 (10.44.24.9) at 23:22:19 (4648)
+        # The task's PsExec target list also names the desktops: the 4648 words or addresses must be close.
+        any: [["4648", "explicit credential", "10.44.24.9", "10.44.24.1"], ["desktop-001", "desktop-005"]]
         within: 300
-        time: "23:22:19"
+        time: "23:19:01-23:22:19"
       - id: dir_exe
         what: dir.exe on admin's Desktop (SHA-1 d1c62ac62e68875085b62fa651fb17d4d7313887)
         any: [["dir.exe"]]
@@ -218,6 +227,15 @@ questions:
         what: C:\Users\admin\Desktop\share.zip created 2024-02-05 23:28:30 (closed 23:36:06), 33 minutes after the attacker's logon
         any: [["share.zip"]]
         time: "23:28:30"
+      - id: password_file
+        what: account_password.xlsx (C:\share\Clark.Nicholson\Documents) opened from the admin session, Recent LNK 2024-02-05 23:09:16
+        any: [["account_password"]]
+        time: "23:09:16"
+      - id: remote_folder
+        what: A remote folder at 185.239.106.67 (Recent LNK "branchoffice.example.com on 185.239.106.67", Internet shell folder) opened from admin's session 2024-02-06 19:56:19, changed 2024-02-07 16:57:31
+        all: ["185.239.106.67"]
+        scored: false
+        note: a possible transfer destination; no record shows what was copied
       - id: share_zip_deleted
         what: share.zip (694,728,396 bytes) deleted to admin's Recycle Bin 2024-02-06 22:14:44
         # "deleted" alone also matches advice such as "look for deleted entries".
@@ -237,6 +255,9 @@ questions:
       - id: ip_admin_rdp
         what: 31.220.85.162 (RDP as admin)
         all: ["31.220.85.162"]
+      - id: ip_remote_folder
+        what: 185.239.106.67 (remote folder opened from admin's session)
+        all: ["185.239.106.67"]
       - id: workstation_kali
         what: Workstation name kali in the logon events
         any: [["kali"]]
@@ -254,9 +275,15 @@ questions:
     ask: Give the timeline of the incident - what happened before, immediately before, on and after 12 February 2024, including any containment steps.
     facts:
       - id: compromise_logon
-        what: 2024-02-05 22:55:18 Administrator logon from 185.229.66.183 (guessing from 22:50:45)
+        what: 2024-02-05 22:55:18 Administrator logon from 185.229.66.183 (guessing from 22:43:02)
         all: ["185.229.66.183"]
-        time: "22:50:45-22:55:18"
+        time: "22:43:02-22:55:18"
+      - id: guessing_succeeded
+        what: 2024-02-05 10:55:56 Administrator logon from 36.133.110.87 after its guessing
+        all: ["36.133.110.87"]
+        regex: ['\b10:5[5-6]']
+        within: 300
+        time: "10:55:56"
       - id: rdp_as_admin
         what: 2024-02-05 23:05:22 RDP as admin from 185.229.66.183
         all: ["185.229.66.183"]

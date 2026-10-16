@@ -398,16 +398,49 @@ def get_event_detail(evidence_id: str) -> str:
 @tool
 def case_summary() -> str:
     """
-    Case overview: record and event counts, undated records, time range, counts per artifact, and ALL
-    findings (also from earlier sessions) with their IDs. Read it before a report or summary.
+    Case overview: record counts, time range, counts per artifact, ALL findings (also from earlier
+    sessions), and leads computed from the data without the model (logon sources, account and group
+    changes, services, tasks, log clearing, downloads, programs in user folders) with evidence IDs.
+    Start every question here and confirm the leads that matter.
     """
+    from copilot import leads
     stats = case_db.get_stats()
     findings = case_db.get_findings()
     stats["findings"] = [{"id": f["finding_id"], "time_recorded": f["timestamp_utc"], "title": f["title"],
                           "confidence": f["confidence"], "mitre": f["mitre_technique"]} for f in findings]
     retracted = case_db.get_findings(include_retracted=True)
     stats["retracted_findings"] = len(retracted) - len(findings)
+    stats["leads"] = leads.leads(case_db)
     return _dump(stats)
+
+
+@tool
+def logon_summary(ip: Optional[str] = None, account: Optional[str] = None,
+                  start_time: Optional[str] = None, end_time: Optional[str] = None) -> str:
+    """
+    Logons grouped by source address over ALL collected logon events: failures, successes, accounts,
+    logon types, workstation names, first/last of each with evidence IDs, and whether a success followed
+    failures from the same address. Use it before deciding who logged on from where.
+    Args:
+        ip: Only this source address.
+        account: Only this account (substring).
+        start_time: ISO 8601 recorded time.
+        end_time: ISO 8601 recorded time.
+    """
+    from copilot import leads
+    from copilot.normalize import normalize_bound
+    try:
+        start, end = normalize_bound(start_time), normalize_bound(end_time)
+    except ValueError as e:
+        return str(e)
+    res = leads.logon_sources(case_db, ip=ip, account=account, start=start, end=end,
+                              limit=40 if ip or account else 25)
+    case_db.log_query("logon_summary", f"ip={ip} account={account} start={start_time} end={end_time}",
+                      res["sources_total"])
+    if not res["sources"]:
+        return ("No logon events with a source address in the collected data. Collect "
+                "Windows.EventLogs.RDPAuth, or EvtxHunter with 4624/4625, first.")
+    return _dump(res)
 
 
 @tool
@@ -922,7 +955,7 @@ tools = [
     search_clients, collect_artifact, check_collection, list_collections,
     list_artifacts, describe_artifact, analyze_memory, list_memory_plugins,
     activity_histogram, context_window, query_timeline, search_iocs, pivot_entity, get_event_detail,
-    case_summary, record_finding, retract_finding, dfir_guide, find_data_location, propose_lesson,
+    case_summary, logon_summary, record_finding, retract_finding, dfir_guide, find_data_location, propose_lesson,
     generate_report, export_case, export_results, export_evidence,
     list_cases, switch_case, create_case, update_case,
 ]

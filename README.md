@@ -204,6 +204,14 @@ one event caused another needs a second record that agrees (a logon's own source
 logon ID, path or hash), and it says when a claim rests on one record. A finding recorded as
 "high" confidence with only one record (or the same event collected twice) is saved as "medium".
 
+Before the model reads anything, the data is summarised without it: the case summary every
+question starts with lists leads with their evidence IDs. They cover logons grouped by source
+address (failures, successes, accounts, logon types, workstation names, and guessing that worked),
+account and group changes, services installed, scheduled tasks with stored passwords or commands in
+user folders, log clearing and Defender events, downloads by origin, and programs in user folders.
+`logon_summary` gives every logon source on request. This replaces dozens of searches through
+hundreds of thousands of logon events, and keeps the answers to different questions consistent.
+
 The HTML report includes charts (activity over the incident window and around the
 findings, the findings in sequence, and which indicators connect which findings), drawn as
 static SVG with a "Show data" table under each. It is self-contained and safe to open: evidence text is shown as text (never
