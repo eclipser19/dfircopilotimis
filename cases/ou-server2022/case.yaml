@@ -1,7 +1,6 @@
 # Open University ORDO dataset "Compromised Windows Server 2022 (simulation)" (B. Donnachie; data
-# synthetic: users, IPs). Disk image only (E01). Held-out benchmark: no answer key yet, so a run
-# saves the answers and benchmark.yaml gets its facts later (then: python -m copilot.benchmark
-# score benchmark_results/<run>.json). Setup: answer_key.md.
+# synthetic: users, IPs). Disk image only (E01). Benchmark; there is no published solution, so the
+# key was built from a blind run's cited records and Hayabusa hits. Setup and key: answer_key.md.
 
 case:
   name: "Compromised Windows Server 2022 (OU simulation)"

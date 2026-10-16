@@ -54,6 +54,27 @@ def test_record_finding_rejects_unknown_evidence(case):
     assert out.startswith("Finding recorded") and len(case.get_findings()) == 1
 
 
+def test_high_confidence_needs_two_records_that_agree(case):
+    rows = [{"EventID": 4624, "Channel": "Security", "EventRecordID": 7, "Message": "logon"},
+            {"EventID": 4720, "Channel": "Security", "EventRecordID": 8, "Message": "account created"}]
+    case.ingest_artifact_results(rows, "Windows.EventLogs.EvtxHunter", client_id="C.1")
+    # The same 4624 collected by a second artifact is the same record, not corroboration.
+    case.ingest_artifact_results(rows[:1], "Windows.EventLogs.RDPAuth", client_id="C.1")
+    logon, copy = [r["evidence_id"] for r in case.search_events("logon")["records"]]
+    created = case.search_events("account created")["records"][0]["evidence_id"]
+
+    out = tools.record_finding.invoke({"title": "t", "description": "d", "evidence_ids": [logon],
+                                       "confidence": "high"})
+    assert "Recorded as medium" in out
+    out = tools.record_finding.invoke({"title": "t", "description": "d", "evidence_ids": [logon, copy],
+                                       "confidence": "high"})
+    assert "Recorded as medium" in out
+    out = tools.record_finding.invoke({"title": "t", "description": "d", "evidence_ids": [logon, created],
+                                       "confidence": "high"})
+    assert "Recorded as medium" not in out
+    assert [f["confidence"] for f in case.get_findings()].count("high") == 1
+
+
 def test_evidence_ids_are_stable(case):
     rows = [{"Message": "a"}, {"Message": "b"}]
     assert case.ingest_artifact_results(rows, "S", client_id="C.1") == 2

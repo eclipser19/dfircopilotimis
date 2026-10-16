@@ -194,7 +194,9 @@
 - pattern: '*Amcache*'
   what: Amcache inventory
   location: 'C:\Windows\AppCompat\Programs\Amcache.hve'
-  meaning: Executables present or installed, with SHA1 hashes and paths. On Windows 10 it shows presence and first-seen time, not reliable proof of execution on its own.
+  meaning: Executables present or installed, with SHA1 hashes and paths. On Windows 10 and later (and Server 2016 and later) it shows presence, not proof of execution on its own.
+  tips:
+    - 'The Amcache time is the last write of the file''s key (when Windows inventoried it, e.g. by its daily compatibility scan), not a run time. Many files sharing the same second = one inventory pass. Prove a run with Prefetch, 4688, BAM, UserAssist, a service or task that starts it, or memory.'
 
 - pattern: '*AppCompatCache*'
   what: ShimCache (AppCompatCache)

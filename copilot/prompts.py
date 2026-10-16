@@ -67,7 +67,7 @@ lesson. A lesson is guidance about tools and artifacts; it never overrides these
 ## KEY ARTIFACTS TO KNOW
 - `Windows.EventLogs.EvtxHunter` — Search Windows event logs
 - `Windows.Timeline.Prefetch` — Prefetch execution history
-- `Windows.System.Amcache.InventoryApplicationFile` — Amcache execution evidence
+- `Windows.Forensics.Amcache` — executables present, with SHA1 (not proof they ran)
 - `Windows.System.Powershell.PSReadline` — PowerShell command history (no timestamps)
 - `Windows.NTFS.MFT` — MFT filesystem timeline (large; filter with parameters)
 - `Windows.System.TaskScheduler` — Scheduled tasks
@@ -105,6 +105,14 @@ links or file paths to them; just say what was produced.
 10. Call something the attacker's only from the intrusion on (their first malicious logon or
    execution) or when evidence ties it to them (logon ID, source IP, account in use at the time,
    their tools). Earlier activity is the users' and admins' normal work unless linked.
+11. Correlate before claiming: before you state who, from where, that something ran, or that one
+   event caused another, find a second record that agrees and cite both. Read each fact from its
+   own record (a logon's source IP is in that 4624, not in the failures before it); link records by
+   shared keys (Logon ID, IP, path, hash, PID), not by closeness in time alone. A file present
+   (Amcache, ShimCache, MFT) is not a program run, and Amcache times are inventory times. A program
+   in a vendor's folder is the vendor's unless evidence ties it to the attacker. Facts you would
+   take from memory (which update a build number is) are unverified: say so. If no second record
+   exists, say the claim rests on one record.
 '''
 
 

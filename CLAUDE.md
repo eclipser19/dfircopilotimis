@@ -49,7 +49,7 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
 | `app.py` | Streamlit UI: sign-in, sidebar (case settings, triage picker, approvals, knowledge/lessons, database, findings, files), chat. Every agent turn ends with `st.rerun()` so the sidebar shows new approvals. |
 | `main.py` | CLI entry; the loop itself is `agent.run_agent_loop`. |
 | `copilot/agent.py` | Turn loop, token accounting (`TokenUsage`), history trimming/repair, CLI loop. |
-| `copilot/tools.py` | Every LangChain tool the model can call, and their descriptions (sent on every step: keep them short). `_dump` serialises results and adds `true_utc` fields. |
+| `copilot/tools.py` | Every LangChain tool the model can call, and their descriptions (sent on every step: keep them short). `_dump` serialises results and adds `true_utc` fields. `record_finding` keeps "high" confidence only when two different records agree (prompt rule 11: correlate before claiming). |
 | `copilot/prompts.py` | System prompt (rules, memory, lessons, approvals); the case part comes from `case_config.build_system_context()`. |
 | `copilot/case_config.py` | `CaseConfig`: one case's `case.yaml` (scope, clock offset, IOCs, triage list, allow/denylists, limits, memory image). `case_config` is a proxy to the current session's case. |
 | `copilot/cases.py` | Case folders `cases/<id>/case.yaml`: list, create, update (rewrites the YAML), switch, access control (owner/members/admin). |
@@ -75,7 +75,7 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
 | `cases/szechuan-dc/` | The same case's domain controller: `case.yaml`, `benchmark.yaml` (questions and expected facts), `answer_key.md`. Benchmark (no longer fully blind). |
 | `cases/corporatesecrets/` | CyberDefenders "CorporateSecrets" (insider case, AD1 logical image read as a folder): held-out benchmark; `answer_key.md` has the setup. |
 | `cases/injector/` | CyberDefenders "Injector" (web server breach, raw disk + memory): benchmark (no longer fully blind); web logs via `Generic.Detection.Logs`. |
-| `cases/ou-server2022/` | Open University "Compromised Windows Server 2022 (simulation)" (E01, RDP + ransomware): held out; no published solution, so its key was built from a blind run's cited records, Hayabusa hits and lookups (`answer_key.md`). |
+| `cases/ou-server2022/` | Open University "Compromised Windows Server 2022 (simulation)" (E01, RDP + ransomware): benchmark (no longer fully blind); no published solution, so its key was built from a blind run's cited records, Hayabusa hits and lookups (`answer_key.md`). |
 | `tests/conftest.py` | `FakeVQL` (answers Velociraptor queries; `artifact_params` take names or dicts), fixtures `case`, `approve_all`, and isolation from real `server.yaml`/accounts/lessons. |
 
 ## Things that span several files
@@ -106,7 +106,7 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
 - **Knowledge must stay generic.** The answer keys (`answer_key.md`, `benchmark.yaml`) score the
   agent, so prompts, tool descriptions and `knowledge_data/` must not contain facts of the test
   cases (their file names, IPs, users). Improve the agent on the desktop case, measure on the
-  benchmarks; `cases/corporatesecrets/` and `cases/ou-server2022/` are still held out, so don't tune on them.
+  benchmarks; `cases/corporatesecrets/` is still held out, so don't tune on it.
 - **Streamlit quirks.** `RerunException`/`StopException` are `BaseException` (they can cut a turn
   short: `repair_history`); widget state is dropped when a widget is not drawn, so selections are
   copied to plain keys in `on_change`; `AppTest` cannot keep `st.dialog` open, so editors live in

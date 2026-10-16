@@ -423,7 +423,7 @@ def record_finding(title: str, description: str, evidence_ids: list,
         title: Short title, e.g. 'Webshell detected'.
         description: What it shows and why it matters; corrected and recorded times if the clock was skewed.
         evidence_ids: Supporting evidence IDs.
-        confidence: 'low', 'medium' or 'high'.
+        confidence: 'low', 'medium' or 'high' (high: two different records agree).
         mitre_technique: ATT&CK technique ID, e.g. 'T1505.003'.
         timestamp_utc: Only if no evidence has a time (recorded host time).
     """
@@ -431,13 +431,19 @@ def record_finding(title: str, description: str, evidence_ids: list,
     from copilot.report import finding_time
     if not evidence_ids:
         return "Not recorded: a finding needs at least one evidence_id from the case database."
-    unknown = [e for e in evidence_ids if not case_db.get_event_detail(str(e))]
+    records = {str(e): case_db.get_event_detail(str(e)) for e in evidence_ids}
+    unknown = [e for e, record in records.items() if not record]
     if unknown:
         return (f"Not recorded: these evidence_ids do not exist in the case database: {unknown}. "
                 f"Use IDs returned by query_timeline/search_iocs/pivot_entity.")
     confidence = (confidence or "medium").lower()
     if confidence not in ("low", "medium", "high"):
         confidence = "medium"
+    note = ""
+    if confidence == "high" and len({_record_key(e, r) for e, r in records.items()}) < 2:
+        confidence = "medium"
+        note = (" Recorded as medium: 'high' needs two different records that agree (e.g. the logon and"
+                " what that session did, the file and its execution), not one record.")
     window = (normalize_bound(case_config.start_time), normalize_bound(case_config.end_time)) \
         if case_config.has_scope else (None, None)
     when = finding_time(case_db, evidence_ids, window)  # from the FIRST evidence ID
@@ -447,7 +453,18 @@ def record_finding(title: str, description: str, evidence_ids: list,
         except ValueError:
             when = None
     fid = case_db.record_finding(title, description, evidence_ids, confidence, mitre_technique, when)
-    return f"Finding recorded with ID: {fid} (time from evidence: {when or 'none'})"
+    return f"Finding recorded with ID: {fid} (time from evidence: {when or 'none'}).{note}"
+
+
+def _record_key(evidence_id: str, record: dict):
+    """The same event collected by two artifacts (EvtxHunter and RDPAuth) is one record, not two."""
+    try:
+        raw = json.loads(record.get("raw_data") or "{}")
+    except (TypeError, ValueError):
+        raw = {}
+    if isinstance(raw, dict) and raw.get("EventRecordID") is not None:
+        return ("event", raw.get("Channel"), raw.get("EventRecordID"))
+    return ("record", evidence_id)
 
 
 # Functions and plugins that execute, write, upload, reach the network or change

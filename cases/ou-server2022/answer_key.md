@@ -7,8 +7,10 @@ IP addresses) is synthetic. A small UK office network ran from September 2023 to
 administrator enabled remote access for home working; on 12 February 2024 the server stopped
 responding and showed ransomware. The disk was decrypted and imaged as E01.
 
-**Held out.** The copilot's knowledge is not tuned on this image. Do not add facts from it to
-prompts, tool descriptions or `copilot/knowledge_data/`.
+**No longer blind.** Run 123740's mistakes led to generic fixes (prompt rule 11 "correlate before
+claiming", the accounts and impact playbooks, Amcache times, the source IP of a logon). Facts of
+this image (its IPs, accounts, file and task names) must still never go into prompts, tool
+descriptions or `copilot/knowledge_data/`.
 
 Briefing (dataset description): "Simulated UK-based small office network running from Sept 2023 to
 Feb 2024. The administrator opened RDP to facilitate working from home. As part of the scenario, on

@@ -57,6 +57,11 @@ def test_questions_get_the_matching_playbook():
     assert knowledge.playbooks_for("When did the attacker log off, and did they log on again later?") == ["sessions"]
     assert "Logon ID" in knowledge.with_playbooks("did they log off?")
     assert knowledge.playbooks_for("summarize the case") == []
+    assert knowledge.playbooks_for("Were any accounts created or changed?")[0] == "accounts"
+    assert "SubjectLogonId" in knowledge.with_playbooks("Were any accounts compromised?")
+    assert "impact" in knowledge.playbooks_for("What ransomware ran and what did it do?")
+    assert knowledge.playbooks_for("Was the server up to date with security patches?") == ["system_info"]
+    assert knowledge.playbooks_for("How did the attacker keep access?") == ["persistence"]
     attached = knowledge.with_playbooks("How did coreupdater.exe get onto this machine?")
     assert attached.startswith("How did coreupdater.exe get onto this machine?\n\n[Copilot] Playbook")
     assert "EvidenceOfDownload" in attached and "Prefetch" in attached

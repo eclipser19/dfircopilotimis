@@ -199,6 +199,11 @@ In the Streamlit app:
   lists recent files. Ask e.g. "export the timeline 02:30-03:00 as a file" or "give me the
   full records of the evidence for finding 3".
 
+The agent is told to correlate before it claims: who, from where, that something ran, or that
+one event caused another needs a second record that agrees (a logon's own source IP, the same
+logon ID, path or hash), and it says when a claim rests on one record. A finding recorded as
+"high" confidence with only one record (or the same event collected twice) is saved as "medium".
+
 The HTML report includes charts (activity over the incident window and around the
 findings, the findings in sequence, and which indicators connect which findings), drawn as
 static SVG with a "Show data" table under each. It is self-contained and safe to open: evidence text is shown as text (never
@@ -383,9 +388,9 @@ are also the run case's chat, so you can open the run in the app. Benchmarks:
 - `cases/injector/`: CyberDefenders "Injector" (raw disk + memory, web server breached through
   its web application). Its runs led to the web-attack knowledge, so it is no longer fully blind.
 - `cases/ou-server2022/`: Open University "Compromised Windows Server 2022 (simulation)" (E01,
-  RDP and ransomware), held out. There is no published solution: the key was built from a blind
-  run's cited records, Hayabusa rules and reference lookups (`answer_key.md`), and saved runs
-  were scored afterwards with `benchmark score`.
+  RDP and ransomware). There is no published solution: the key was built from a blind run's
+  cited records, Hayabusa rules and reference lookups (`answer_key.md`). That run's mistakes led
+  to generic fixes (correlation rule, accounts and impact playbooks), so it is no longer blind.
 
 The desktop case (`cases/szechuan/`) was used to tune the knowledge, so it isn't a fair test.
 

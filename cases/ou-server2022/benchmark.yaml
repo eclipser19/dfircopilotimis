@@ -6,7 +6,7 @@
 # against the raw record it cites (`benchmark evidence`), Hayabusa rules run in Velociraptor (no
 # agent involved) and Microsoft's update list; only what those show is a fact. Sources and the
 # claims that were rejected: answer_key.md. Times are true UTC (the host clock was right).
-# Held out: the knowledge base is not tuned on this image.
+# No longer blind: run 123740's mistakes led to generic fixes; facts of this image stay out of the knowledge.
 
 name: ou-server2022
 case_file: case.yaml

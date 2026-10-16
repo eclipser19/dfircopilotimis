@@ -24,7 +24,7 @@ windows:
     why: Scheduled tasks (persistence)
   - artifact: Windows.Timeline.Prefetch
     why: Program execution with run times
-  - artifact: Windows.System.Amcache
+  - artifact: Windows.Forensics.Amcache
     why: Executables present on the system, with SHA1
   - artifact: Windows.Registry.AppCompatCache
     why: ShimCache, executables seen by the system
