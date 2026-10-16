@@ -67,7 +67,8 @@ impact:
   question: What did the ransomware or destructive tool do, and how was it started?
   triggers: ['ransom', 'encrypt', '\bwiper\b', '\bimpact\b', 'destroy']
   check:
-    - 'Payload: executables written in the attacker''s session (USN FILE_CREATE, MFT) and what starts them: scheduled tasks, services (7045), PsExec, GPO scripts. Task and service arguments also name the remote targets and the credentials used.'
+    - 'Start from what is already known (case_summary findings): the attacker''s sessions and the tasks and services they created. A task or service that starts a program from a user folder names the payload in its command and arguments (get_event_detail on the task record), with the remote targets and credentials.'
+    - 'Payload: executables written in the attacker''s session (USN FILE_CREATE, MFT) and what starts them: scheduled tasks, services (7045), PsExec, GPO scripts. Searching for the family name shown on screen rarely finds anything: payloads and notes have other names.'
     - 'Ransom notes: text or HTML files created in many folders at once (USN), or on the desktop; their $SI/$FN times. The note names a family; the family shown on screen can differ: report both, verify neither from memory.'
     - 'Encryption: mass renames to one new extension and FILE_CREATE + DELETE pairs in the USN journal; the first and last of them date it.'
     - 'Recovery blocked: shadow copies or backups deleted (vssadmin, wmic shadowcopy, wbadmin), bcdedit recovery settings changed (Prefetch, 4688, PowerShell 4104, memory), services stopped or disabled (System 7036/7040), logs cleared (1102, 104).'

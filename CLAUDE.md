@@ -55,7 +55,7 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
 | `copilot/cases.py` | Case folders `cases/<id>/case.yaml`: list, create, update (rewrites the YAML), switch, access control (owner/members/admin). |
 | `copilot/session.py` | One `Session` (active case + its DB connection + user) per browser session or CLI process. `PROVIDER` lets the app supply its own. |
 | `copilot/database.py` | SQLite per case: records, timeline, FTS, collections, findings, audit log, outputs, conversation. `data_dir_for()` decides where. |
-| `copilot/normalize.py` | Raw row -> record: timestamps, entities, event types, description templates. Bump `NORMALIZER_VERSION` when templates/entities change (stored descriptions are rebuilt). |
+| `copilot/normalize.py` | Raw row -> record: timestamps, entities, event types, description templates. Windows event rows lead with `event_fields` (LogonType, user, ip, workstation, logon_id, by...; from EventData or the message text). Bump `NORMALIZER_VERSION` when templates/entities change (stored descriptions are rebuilt). |
 | `copilot/collection.py` | Velociraptor collections: schedule, poll, ingest; time window into artifact date params; agent rules (parameter names must exist, heavy artifacts need a filter, csv params get their header); empty-result notes. |
 | `copilot/vql_client.py` | gRPC client (pyvelociraptor), lazy, `api_client.yaml` / `DFIR_API_CONFIG`. |
 | `copilot/memory.py` | Volatility 3 as a subprocess (`-r json`), plugin allowlist `PLUGINS`, triage, `strings` search done in Python, settings from `server.yaml` `memory:`. |
@@ -70,7 +70,7 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
 | `copilot/conversation.py` | Saves/restores each user's chat per case (`ui@user` / `agent@user`). |
 | `copilot/settings.py`, `llm.py`, `auth.py` | `server.yaml` (env vars win), the chat model, local accounts (PBKDF2, lockout). |
 | `copilot/iocs.py`, `commands.py`, `selftest.py` | IOC extraction, `/cases` `/case` `/help` chat commands, setup check. |
-| `copilot/benchmark.py` | Benchmark runner: fresh `bench-*` case, triage, fixed questions in fresh conversations, scoring in code (facts, true-UTC times near the fact's words, uncorrected times, invalid IDs, forbidden claims), results in `benchmark_results/`. |
+| `copilot/benchmark.py` | Benchmark runner: fresh `bench-*` case, triage (waits for unfinished flows: `finish_triage`), fixed questions in fresh conversations, scoring in code (facts, true-UTC times near the fact's words, uncorrected times, invalid IDs, forbidden claims), results in `benchmark_results/`. |
 | `cases/szechuan/` | Example case (DFIR Madness "Szechuan Sauce" desktop) and `answer_key.md`; used to tune the knowledge. |
 | `cases/szechuan-dc/` | The same case's domain controller: `case.yaml`, `benchmark.yaml` (questions and expected facts), `answer_key.md`. Benchmark (no longer fully blind). |
 | `cases/corporatesecrets/` | CyberDefenders "CorporateSecrets" (insider case, AD1 logical image read as a folder): held-out benchmark; `answer_key.md` has the setup. |

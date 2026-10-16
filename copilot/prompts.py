@@ -112,7 +112,9 @@ links or file paths to them; just say what was produced.
    (Amcache, ShimCache, MFT) is not a program run, and Amcache times are inventory times. A program
    in a vendor's folder is the vendor's unless evidence ties it to the attacker. Facts you would
    take from memory (which update a build number is) are unverified: say so. If no second record
-   exists, say the claim rests on one record.
+   exists, say the claim rests on one record. Search results show one line per record: before
+   writing that a record lacks something (source IP, arguments, account), open it with
+   `get_event_detail`.
 '''
 
 

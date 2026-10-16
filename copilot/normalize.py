@@ -152,8 +152,16 @@ DESCRIPTION_TEMPLATES = [
     ("Memory.strings*", 'memory image holds "[{Before}]{Match}"[ ({Encoding})][, {Hits}x][ first at {Offset}]'),
     ("Memory.*memsearch*", '{Process}[ PID {PID}] memory holds "[{Before}]{Match}"[ ({Encoding})][, {Hits}x][, rule {Rule}]'),
     ("Memory.*yarascan*", '[{Process} ]PID {PID} memory holds "{Match}"[ ({Encoding})][, {Hits}x][, rule {Rule}]'),
+    # Disk artifacts whose deciding field is not their first one (a task's arguments, a deleted
+    # file's original path, a download's URL).
+    ("Windows.System.TaskScheduler*", "task [{TaskName}|{OSPath}][: {Command}][ {Arguments}][ as {UserId}]"
+                                      "[ ({LogonType} logon)][ {RunLevel}]"),
+    ("Windows.Forensics.RecycleBin*", "[{OriginalFilePath}|{OSPath}] deleted to the Recycle Bin[ ({FileSize} bytes)]"
+                                      "[ as {RecyclePath}]"),
+    ("Windows.Analysis.EvidenceOfDownload*", "downloaded file {DownloadedFilePath}[ from {HostUrl}| (no HostUrl)]"
+                                             "[, referrer {ReferrerUrl}][, ZoneId {ZoneId}]"),
 ]
-NORMALIZER_VERSION = 4
+NORMALIZER_VERSION = 5
 _FIELD_RE = re.compile(r"\{([^{}]+)\}")
 
 # Fields that make the best one-line description, in order of preference.
@@ -295,6 +303,77 @@ def extract_entities(row: dict, cap: int = 1000, source: str = "") -> dict:
 
 # Short fields that say what kind of event a row is; shown before long messages.
 KEY_FIELDS = ["LogonType", "Reason", "ServiceName", "TaskName", "Channel"]
+
+# Windows event fields that say who, from where and in which session, in description order, with
+# their label. Rows without EventData (or with only part of it) get them from the message text,
+# which a description would otherwise cut before its "New Logon" and "Network Information" parts.
+EVENT_FIELDS = [("LogonType", "LogonType"), ("TargetUserName", "user"), ("TargetDomainName", "domain"),
+                ("IpAddress", "ip"), ("WorkstationName", "workstation"), ("TargetLogonId", "logon_id"),
+                ("SubjectUserName", "by"), ("SubjectLogonId", "by_logon_id"), ("TargetServerName", "server"),
+                ("MemberName", "member"), ("MemberSid", "member_sid")]
+# Top-level columns some event artifacts compute (e.g. Windows.EventLogs.RDPAuth).
+_EVENT_COLUMNS = {"LogonType": "LogonType", "UserName": "TargetUserName", "DomainName": "TargetDomainName",
+                  "SourceIP": "IpAddress"}
+# (message section, label) -> field, as Windows writes the Security log messages.
+_MESSAGE_FIELDS = {
+    ("new logon", "account name"): "TargetUserName", ("new logon", "account domain"): "TargetDomainName",
+    ("new logon", "logon id"): "TargetLogonId",
+    ("account for which logon failed", "account name"): "TargetUserName",
+    ("account for which logon failed", "account domain"): "TargetDomainName",
+    ("account whose credentials were used", "account name"): "TargetUserName",
+    ("new account", "account name"): "TargetUserName", ("group", "group name"): "TargetUserName",
+    ("network information", "source network address"): "IpAddress",
+    ("network information", "network address"): "IpAddress",
+    ("network information", "workstation name"): "WorkstationName",
+    ("logon information", "logon type"): "LogonType", ("", "logon type"): "LogonType",
+    ("subject", "account name"): "SubjectUserName", ("subject", "logon id"): "SubjectLogonId",
+    ("target server", "target server name"): "TargetServerName",
+    ("member", "account name"): "MemberName", ("member", "security id"): "MemberSid",
+}
+_EMPTY_EVENT_VALUES = {"", "-", "0", "0x0", "null", "none", "null sid", "s-1-0-0"}
+
+
+def _message_fields(message: str) -> dict:
+    fields, section = {}, ""
+    for line in message.splitlines():
+        label, sep, value = line.strip().partition(":")
+        if not sep:
+            continue
+        label, value = label.strip().lower(), value.strip()
+        if not line.startswith((" ", "\t")):
+            if not value:              # "New Logon:" starts a section
+                section = label
+                continue
+            key = ("", label)          # "Logon Type:   3" outside any section
+        else:
+            key = (section, label)
+        field = _MESSAGE_FIELDS.get(key)
+        if field and field not in fields and value.lower() not in _EMPTY_EVENT_VALUES:
+            fields[field] = value
+    return fields
+
+
+def event_fields(row: dict) -> list:
+    """[(label, value)] of a Windows event row: account, logon type, source, session; [] for other rows."""
+    if not isinstance(row, dict) or not any(k.lower() == "eventid" for k in row):
+        return []
+    found = {}
+    data = row.get("EventData")
+    if isinstance(data, dict):
+        found.update({k: str(v) for k, v in data.items() if k in dict(EVENT_FIELDS) and v is not None})
+    for column, field in _EVENT_COLUMNS.items():
+        if row.get(column) is not None:
+            found.setdefault(field, str(row[column]))
+    found = {k: v for k, v in found.items() if v.strip().lower() not in _EMPTY_EVENT_VALUES}
+    if isinstance(row.get("Message"), str):
+        for field, value in _message_fields(row["Message"]).items():
+            found.setdefault(field, value)
+    if found.get("SubjectUserName", "").endswith("$"):    # the machine itself: noise in a one-liner
+        found.pop("SubjectUserName")
+        found.pop("SubjectLogonId", None)
+    group_change = "MemberSid" in found or "MemberName" in found     # 4728/4732/4756: the target is the group
+    return [("group" if group_change and field == "TargetUserName" else label, found[field])
+            for field, label in EVENT_FIELDS if found.get(field)]
 # Entities in the order they should appear; path last (often just the log file).
 DESCRIPTION_ENTITIES = ["event_id", "user", "ip", "process", "command_line", "hash"]
 
@@ -333,15 +412,21 @@ def describe(row: dict, entities: dict, limit: int = 500, source: str = "") -> s
         if value not in (None, "") and not isinstance(value, bool):
             fields.setdefault(_last_segment(key).lower(), str(value))
     primary = next((fields[f] for f in DESCRIPTION_FIELDS if f in fields), "")
+    # Only the start of a long message survives the cut: a value further in still goes up front.
+    shown = primary[:150]
+    event = event_fields(row) if isinstance(row, dict) else []
+    event_values = {value for _, value in event}
     parts = []
     for entity in DESCRIPTION_ENTITIES:
         value = entities.get(entity)
-        if value and value not in primary:
+        if value and value not in shown and value not in event_values:
             parts.append(f"{entity}={value}")
     for name in KEY_FIELDS:
         value = fields.get(name.lower())
-        if value and value not in primary and name != "Channel":
+        if value and value not in shown and name != "Channel" and value not in event_values:
             parts.insert(1 if parts and parts[0].startswith("event_id=") else 0, f"{name}={value}")
+    at = 1 if parts and parts[0].startswith("event_id=") else 0
+    parts[at:at] = [f"{label}={value}" for label, value in event]
     parts.append(primary)
     if entities.get("path") and entities["path"] not in primary:
         parts.append(f"path={entities['path']}")

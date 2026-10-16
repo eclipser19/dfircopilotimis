@@ -33,6 +33,8 @@ from datetime import datetime, timezone
 import yaml
 
 RESULTS_DIR = "benchmark_results"
+TRIAGE_WAIT_MINUTES = 60     # how long a run waits for triage collections still running
+TRIAGE_POLL_SECONDS = 30
 RUN_PREFIX = "bench-"
 CONTEXT_CHARS = 400          # how far from a fact's words its time may be
 _TIME_RE = re.compile(r"(?<![\d:])([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?(?![\d:])")
@@ -403,9 +405,38 @@ def ask(text: str, llm_with_tools, finalizer, log=print) -> dict:
             "seconds": round(time.monotonic() - started, 1)}
 
 
+def finish_triage(summaries: list, wait_minutes: float = TRIAGE_WAIT_MINUTES, log=print,
+                  sleep=time.sleep, check=None) -> list:
+    """
+    Waits for triage collections that were still running when their own wait ran out, so every run
+    of a benchmark starts from the same data (a run whose event-log triage is still running answers
+    without the logons). Returns the summaries with the final states.
+    """
+    from copilot import collection
+    check = check or collection.check
+    summaries = list(summaries)
+    pending = [i for i, s in enumerate(summaries)
+               if s.get("flow_id") and s.get("state") not in collection.TERMINAL_STATES]
+    deadline = time.monotonic() + wait_minutes * 60
+    if pending:
+        log(f"[*] Waiting up to {wait_minutes:g} min for triage still running: "
+            f"{', '.join(summaries[i].get('artifact') or summaries[i]['flow_id'] for i in pending)}")
+    while pending and time.monotonic() < deadline:
+        sleep(TRIAGE_POLL_SECONDS)
+        for i in list(pending):
+            try:
+                summaries[i] = check(summaries[i]["flow_id"])
+            except collection.CollectionError as e:
+                summaries[i] = {**summaries[i], "state": "ERROR", "error": str(e)}
+            if summaries[i].get("state") in collection.TERMINAL_STATES:
+                pending.remove(i)
+                log(f"    {summaries[i].get('artifact')}: {summaries[i].get('state')}")
+    return summaries
+
+
 def run(spec_path: str, client_id: str = None, memory_image: str = None, from_case: str = None,
         skip_triage: bool = False, only: list = None, model=None, out_dir: str = RESULTS_DIR, log=print,
-        image_check: bool = True) -> dict:
+        image_check: bool = True, triage_wait: float = TRIAGE_WAIT_MINUTES) -> dict:
     """Runs a benchmark end to end and saves its results. model: (llm_with_tools, finalizer, name) for tests."""
     from copilot import cases, conversation, memory
     from copilot.agent import auto_collect, status_line
@@ -425,9 +456,16 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
     cases.consume_switch()
     log(f"[*] Benchmark {spec['name']}: case {run_id} (client {case_config.client_id}, "
         f"memory {case_config.memory_image or 'none'})")
+    setup = []
     if not from_case and not skip_triage:
-        disk = auto_collect(case_config)
+        disk = finish_triage(auto_collect(case_config), triage_wait, log)
         triage += [status_line(s) for s in disk]
+        from copilot.collection import TERMINAL_STATES
+        unfinished = [f"{s.get('artifact')} ({s.get('state')})" for s in disk
+                      if s.get("flow_id") and s.get("state") not in TERMINAL_STATES]
+        if unfinished:     # the questions start without that data: not comparable with other runs
+            setup.append(f"Triage still running after {triage_wait:g} min: {', '.join(unfinished)}; "
+                         f"the answers lack its data")
         problem = image_problem(disk) if image_check else ""
         if problem:
             raise BenchmarkError(f"{problem} Stopped before the questions (case {run_id}); check the client, "
@@ -435,7 +473,6 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
         if case_config.memory_image:
             log("[*] Memory triage ...")
             triage += [status_line(s) for s in memory.triage(progress=lambda p: log(f"    {p}"))]
-    setup = []
     memory_broken = memory.unreadable_reason(case_config.memory_image) if case_config.memory_image else ""
     if memory_broken:      # a setup problem (e.g. no symbol table), not the agent's: memory questions are skipped
         setup.append(f"Volatility cannot read the memory image: {memory_broken[:300]}")
@@ -527,6 +564,12 @@ def rescore(results_path: str, spec_path: str = None, out_dir: str = None) -> di
         results = json.load(f)
     spec = load_spec(spec_path or results["spec"])
     by_id = {q["id"]: q for q in spec["questions"]}
+    # Runs saved before unfinished triage was waited for: the questions started without that data.
+    running = [line.split(" -> ")[0] for line in results.get("triage") or []
+               if re.search(r"-> (IN_PROGRESS|RUNNING|WAITING|UNRESPONSIVE)\b", line)]
+    if running and not any("Triage still running" in s for s in results.get("setup") or []):
+        results["setup"] = list(results.get("setup") or []) + [
+            f"Triage still running when the questions started: {', '.join(running)}; the answers lack its data"]
     # Runs saved before setup problems were recorded: every memory triage plugin failed on symbols.
     memory_lines = [line for line in results.get("triage") or [] if line.startswith("Memory.")]
     if memory_lines and all("-> ERROR" in line for line in memory_lines) and \
@@ -583,6 +626,8 @@ def main(argv=None) -> int:
     r.add_argument("--out", default=RESULTS_DIR)
     r.add_argument("--no-image-check", action="store_true",
                    help="run even if the time-window triage finds nothing (wrong image?)")
+    r.add_argument("--triage-wait", type=float, default=TRIAGE_WAIT_MINUTES,
+                   help=f"minutes to wait for triage collections still running (default {TRIAGE_WAIT_MINUTES})")
     s = sub.add_parser("score", help="score saved answers again")
     s.add_argument("results")
     s.add_argument("--spec")
@@ -595,7 +640,7 @@ def main(argv=None) -> int:
         if args.command == "run":
             only = [q.strip() for q in args.questions.split(",")] if args.questions else None
             run(args.spec, args.client, args.memory_image, args.from_case, args.skip_triage, only, out_dir=args.out,
-                image_check=not args.no_image_check)
+                image_check=not args.no_image_check, triage_wait=args.triage_wait)
         elif args.command == "score":
             t = rescore(args.results, args.spec)["totals"]
             print(f"Score {t['score_percent']}%: facts {t['facts_found']}/{t['facts_total']}, "

@@ -156,3 +156,46 @@ def test_web_log_line_time_is_converted_to_utc():
     line = '10.0.0.5 - - [10/Oct/2023:13:55:36 -0700] "GET /index.php?id=2 HTTP/1.1" 200 2326 "-" "curl/8.0"'
     found = extract_timestamps({"Line": line, "OSPath": "C:\\web\\logs\\access.log"})
     assert [ts for ts, _ in found] == ["2023-10-10T20:55:36.000000Z"]
+
+
+LOGON_MESSAGE = ("An account was successfully logged on.\n\nSubject:\n\tSecurity ID:\t\tS-1-5-18\n"
+                 "\tAccount Name:\t\tSRV01$\n\tLogon ID:\t\t999\n\nLogon Information:\n\tLogon Type:\t\t10\n"
+                 + "\tVirtual Account:\t\tNo\n" * 20 +
+                 "\nNew Logon:\n\tSecurity ID:\t\tS-1-5-21-1-2-3-1001\n\tAccount Name:\t\tjdoe\n"
+                 "\tAccount Domain:\t\tCORP\n\tLogon ID:\t\t707379083\n\nNetwork Information:\n"
+                 "\tWorkstation Name:\tWS7\n\tSource Network Address:\t203.0.113.7\n\tSource Port:\t\t0\n")
+
+
+def test_a_long_event_message_still_shows_who_from_where_and_the_session():
+    # Without EventData the account and source are far into the message, past the description's cut.
+    row = {"EventID": 4624, "Channel": "Security", "Message": LOGON_MESSAGE}
+    text = describe(row, extract_entities(row))
+    assert text.startswith("event_id=4624; LogonType=10; user=jdoe; domain=CORP; ip=203.0.113.7; "
+                           "workstation=WS7; logon_id=707379083; An account")
+    assert "SRV01$" not in text.split("; An account")[0]     # the machine as subject is noise
+
+    failed = {"EventID": 4625, "Message": "An account failed to log on.\n\nSubject:\n\tAccount Name:\t\t-\n\n"
+              "Logon Type:\t\t\t3\n\nAccount For Which Logon Failed:\n\tAccount Name:\t\tAdministrator\n\n"
+              "Network Information:\n\tWorkstation Name:\tATTACKER\n\tSource Network Address:\t198.51.100.9\n"}
+    assert describe(failed, extract_entities(failed)).startswith(
+        "event_id=4625; LogonType=3; user=Administrator; ip=198.51.100.9; workstation=ATTACKER;")
+
+    added = {"EventID": 4732, "EventData": {"MemberSid": "S-1-5-21-1-2-3-2611", "TargetUserName": "Administrators",
+                                            "SubjectUserName": "Administrator", "SubjectLogonId": "0x81c0ab"}}
+    assert describe(added, extract_entities(added)).startswith(
+        "event_id=4732; group=Administrators; by=Administrator; by_logon_id=0x81c0ab; member_sid=S-1-5-21-1-2-3-2611")
+
+
+def test_tasks_deleted_files_and_downloads_show_their_deciding_field():
+    task = {"TaskName": "\\t1", "Command": "c:\\tools\\psexec.exe", "Arguments": "\\\\host1 -u bob -p pw x.exe",
+            "UserId": "bob", "LogonType": "Password", "OSPath": "C:\\Windows\\System32\\Tasks\\t1"}
+    assert describe(task, extract_entities(task), source="Windows.System.TaskScheduler/Analysis") == \
+        "task \\t1: c:\\tools\\psexec.exe \\\\host1 -u bob -p pw x.exe as bob (Password logon)"
+    deleted = {"OSPath": "C:\\$Recycle.Bin\\S-1\\$IAB.zip", "OriginalFilePath": "C:\\Users\\bob\\data.zip",
+               "FileSize": 42}
+    assert describe(deleted, {}, source="Windows.Forensics.RecycleBin").startswith(
+        "C:\\Users\\bob\\data.zip deleted to the Recycle Bin (42 bytes)")
+    download = {"DownloadedFilePath": "C:\\Users\\bob\\Downloads\\a.exe", "HostUrl": None, "ZoneId": "3"}
+    assert describe(download, {}, source="Windows.Analysis.EvidenceOfDownload") == \
+        "downloaded file C:\\Users\\bob\\Downloads\\a.exe (no HostUrl), ZoneId 3"
+

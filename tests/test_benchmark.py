@@ -164,6 +164,24 @@ def test_rescoring_an_old_run_skips_memory_questions_when_volatility_could_not_r
     assert "⚠ **Setup:** Volatility cannot read the memory image" in report and "## Triage" in report
 
 
+def test_triage_still_running_is_waited_for_and_reported_if_it_never_ends(tmp_path, monkeypatch):
+    monkeypatch.setattr(benchmark, "TRIAGE_POLL_SECONDS", 0)
+    states = iter(["IN_PROGRESS", "FINISHED"])
+    check = lambda flow_id: {"flow_id": flow_id, "artifact": "Windows.EventLogs.EvtxHunter", "state": next(states)}
+    summaries = [{"flow_id": "F.1", "artifact": "Generic.Client.Info", "state": "FINISHED"},
+                 {"flow_id": "F.2", "artifact": "Windows.EventLogs.EvtxHunter", "state": "IN_PROGRESS"}]
+    done = benchmark.finish_triage(summaries, 1, log=lambda *a: None, sleep=lambda s: None, check=check)
+    assert [s["state"] for s in done] == ["FINISHED", "FINISHED"]
+    # Nothing waits when everything finished; a run saved without waiting gets a setup warning.
+    assert benchmark.finish_triage(done, 1, log=lambda *a: None, check=None) == done
+    results = {"name": "mini", "spec": _spec(tmp_path), "run_id": "bench-mini-2", "case_id": "bench-mini-2",
+               "triage": ["Windows.EventLogs.EvtxHunter -> IN_PROGRESS (time window: DateAfter, DateBefore)"],
+               "questions": [{"id": "entry", "ask": "?", "answer": "nothing"}]}
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps(results))
+    assert "Triage still running" in benchmark.rescore(str(path))["setup"][0]
+
+
 def test_within_ties_the_words_of_a_fact_together_and_cut_ids_are_invalid(tmp_path):
     spec = benchmark.load_spec(_spec(tmp_path))
     fact = {"id": "dl", "what": "download from the IP", "all": ["194.61.24.102"], "any": [["download"]], "within": 60}

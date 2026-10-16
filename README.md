@@ -378,6 +378,8 @@ tool calls, steps, tokens and time, and scores each expected fact:
 - **citations:** evidence and finding IDs that don't exist in the case;
 - **forbidden claims:** e.g. another host's events.
 
+A run waits up to `--triage-wait` minutes (default 60) for triage collections still running, so
+every run starts from the same data; if one never finishes, the scorecard says so under Setup.
 The scorecard is written to `benchmark_results/<run>.json` and `.md`. The questions and answers
 are also the run case's chat, so you can open the run in the app. Benchmarks:
 - `cases/szechuan-dc/`: the Szechuan Sauce domain controller (disk + memory, intrusion). Its first
