@@ -7,7 +7,8 @@ disk image through Velociraptor (dead-disk virtual client, gRPC API) and a memor
 Volatility 3. Everything collected goes into a per-case SQLite database; the agent queries it with
 tools, records findings with evidence IDs, and writes a templated report. Two front ends: a
 Streamlit web app for several signed-in investigators (`app.py`) and a CLI (`main.py`).
-`README.md` is the user guide; `PLAN.md` tracks status.
+`README.md` is the user guide; `PLAN.md` tracks status and next steps; `BENCHMARKS.md` records every
+benchmark run that matters (add a row after each); `CONTRIBUTING.md` says where to make which change.
 
 ## Commands
 

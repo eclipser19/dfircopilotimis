@@ -1,8 +1,30 @@
 # DFIR Copilot
 
-An LLM agent that investigates a forensic disk image through Velociraptor, keeps
-everything it collects in a local SQLite case database, records findings with
-evidence references, and produces a DFIR report. See `PLAN.md` for status.
+An LLM agent that investigates a forensic disk image through Velociraptor (and a memory image
+through Volatility 3), keeps everything it collects in a local SQLite case database, records
+findings with evidence references, and produces a DFIR report.
+
+Status and next steps: [PLAN.md](PLAN.md). Measured results: [BENCHMARKS.md](BENCHMARKS.md).
+Working on the code: [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md).
+
+## Quick start
+
+From a fresh clone to a first answer. Each step is explained under [Setup](#setup).
+
+1. `pip install -r requirements.txt` (Python 3.10+).
+2. Run a Velociraptor server (0.77.2 is the version tested) and save an API client config with the
+   `investigator` role as `api_client.yaml` ([Setup](#setup) step 1).
+3. Present the image as a client with `velociraptor deaddisk` and start that client; note its
+   client ID (step 2).
+4. `copy server.example.yaml server.yaml` (`cp` on Linux) and set the model and API key. Create
+   your account: `python -m copilot.auth add <you> --admin`.
+5. Check the Velociraptor side without the model: `python -m copilot.selftest`.
+6. `streamlit run app.py`, sign in, create a case in the sidebar (**New case**: ID, name, client
+   ID, incident window), run the triage it offers, then ask a question, e.g. "How did the attacker
+   get in?". The terminal version is `python main.py`.
+
+`cases/szechuan/case.yaml` is a complete example case file. The benchmarks in `cases/` show what
+to expect, with answer keys.
 
 ## Setup
 
