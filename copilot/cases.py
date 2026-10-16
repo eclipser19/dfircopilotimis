@@ -254,7 +254,7 @@ def create(case_id: str, name: str, client_id: str = "", start_time: str = "", e
                     "Windows.Timeline.Prefetch", "Windows.System.TaskScheduler"],
         "collection": {"max_rows": 50000, "apply_time_window": True, "agent_collections": "confirm"},
         "output": {"report_formats": ["html"]},
-        "agent": {"allow_raw_vql": False, "max_steps": 15, "max_tokens_per_turn": 300000,
+        "agent": {"allow_raw_vql": False, "max_steps": 20, "max_tokens_per_turn": 300000,
                   "approvals": {"retract_finding": "confirm", "update_case": "confirm",
                                 "switch_case": "confirm", "create_case": "confirm", "memory": "confirm"}},
     }

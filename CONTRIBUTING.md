@@ -38,6 +38,10 @@ query could do in one. Each time it went wrong, it trusted one record or its own
 Keep tool descriptions and the system prompt short: they are sent on every model step and cost
 tokens every time. Prefer a playbook line (sent only when the question matches) over a prompt rule.
 
+A playbook line steers every question that matches it, on every image. Re-run all benchmarks after
+adding one, not just the one that inspired it. A line about IIS, written for one server, made the
+agent call another server's Apache bundle "IIS". Name all the candidates, not the one you saw.
+
 ### Adding a tool
 
 A `@tool` function in `copilot/tools.py` with a short docstring and `Args:`, added to the `tools`

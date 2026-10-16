@@ -262,7 +262,7 @@
   what: Files (or registry values) by glob, with size, times, hashes and an optional YARA content match
   location: Any path glob; with Accessor registry, any registry key
   meaning: 'Which files exist where (e.g. C:\Users\*\Downloads\*), their hashes (Calculate_Hash: MD5/SHA1/SHA256), and which contain a string (YaraRule). With Accessor "registry" it reads machine registry values (Data.value), which no other artifact does: computer name, OS build, time zone, network, last logged-on user.'
-  params: {Glob: one path glob (older Velociraptor versions call it SearchFilesGlob - check describe_artifact), Accessor: auto or registry, Calculate_Hash: Y/N, YaraRule: YARA rule text, Upload_File: leave N}
+  params: {Glob: one path glob (older Velociraptor versions call it SearchFilesGlob - check describe_artifact), SearchFilesGlobTable: a list of globs searched in one collection (verified on 0.77.2), Accessor: auto or registry, Calculate_Hash: Y/N, YaraRule: YARA rule text, Upload_File: leave N}
   tips:
     - 'Keep the glob narrow (a folder, an extension): ** over a whole drive with a YaraRule reads every file.'
     - 'Machine registry on images (verified): HKEY_LOCAL_MACHINE\Software\... and HKEY_LOCAL_MACHINE\System\ControlSet001\... (an image has no CurrentControlSet). Useful keys: System\ControlSet001\Control\ComputerName\ComputerName\*, Software\Microsoft\Windows NT\CurrentVersion\* (ProductName, CurrentBuild, InstallDate), System\ControlSet001\Control\TimeZoneInformation\*, System\ControlSet001\Services\Tcpip\Parameters\Interfaces\*\* (DhcpIPAddress, DhcpDomain), Software\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\* (LastLoggedOnUser), Software\Microsoft\Windows NT\CurrentVersion\Winlogon\*.'

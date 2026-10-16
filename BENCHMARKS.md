@@ -34,7 +34,8 @@ Minutes are wall-clock for the whole run (triage + all questions) on the develop
 | 20261015-083214 | **95.7%** | 13/13 | 9/10 | 9.0 | After those fixes |
 | 20261015-103116 | (34.8%) | 8/13 | 0/10 | 15.1 | **Invalid:** the Velociraptor client was still reading the Injector image. Led to the image check (`d533b15`): a run now stops when the time-window triage finds nothing |
 | 20261015-105830 | 73.9% | 11/13 | 6/10 | 12.4 | Run-to-run variance, plus the download time missing (playbook fixed in `d533b15`) |
-| *pending* | | | | | First run with the correlation rule, the new record summaries, leads in `case_summary` and the larger triage (`52663f2`..`9a5a2fc`) |
+| 20261016-124015 | 73.9% | 10/13 | 7/10 | 10.0 | First run with the correlation rule, the new record summaries, leads in `case_summary` and the larger triage (`52663f2`..`9a5a2fc`). Same score as the last valid run. Lost the brute force: the failures carry no source address (RDP with NLA), so the agent refused to tie them to the attacker's address. Missed `secret.zip` and the timestomp (it checked one file). Fixed next: failures without an address grouped by workstation name, NLA note in the entry playbook |
+| *next* | | | | | With those fixes and 20 tool steps per question |
 
 ### injector
 
@@ -43,7 +44,8 @@ Minutes are wall-clock for the whole run (triage + all questions) on the develop
 | 20261015-094425 | 4.8% | 1/16 | 0/5 | 4.5 | The agent spent all its tool steps without answering, and the web server's logs were never read. Fixed by the wrap-up when the steps run out (`4591811`), Apache log times and `Generic.Detection.Logs` (`ea57106`), the web-attack playbook |
 | 20261015-095938 | 69.6% | 13/18 | 3/5 | 4.7 | 75.0% (14/19) once the key's matching was corrected |
 | 20261015-112120 | **83.3%** | 15/19 | 5/5 | 16.2 | Commands found in memory (several words in one strings pass, `8f67eca`) |
-| *pending* | | | | | Same changes as the pending DC run |
+| 20261016-130324 | 62.5% | 12/19 | 3/5 | 18.4 | Same changes. Regression on two questions. *system*: called the web server IIS (a checklist line added for OU pointed at W3SVC and `C:\inetpub`; this server has IIS installed too, but XAMPP serves the site). *entry* 0/5: spent its 15 steps on IIS logs and memory, found the Apache logs on its last step and never read them. Fixed next: no IIS pull in the system checklist, all candidate web logs in one FileFinder call (`SearchFilesGlobTable`), 20 tool steps |
+| *next* | | | | | With those fixes |
 
 ### ou-server2022
 

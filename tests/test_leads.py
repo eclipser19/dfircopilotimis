@@ -65,6 +65,19 @@ def test_logon_sources_put_guessing_that_worked_first(case):
     assert [s["ip"] for s in only] == ["10.0.0.5"]
 
 
+def test_failures_without_an_address_are_kept_by_workstation_name(case):
+    # RDP with NLA: 4625 with no source address, only the client's name; the success names both.
+    rows = [_logon(4625, f"2024-02-05T02:{m:02d}:00Z", "Administrator", "-", "ATTACKER", record=m) for m in range(19, 21)]
+    rows.append(_logon(4624, "2024-02-05T02:21:47Z", "Administrator", "198.51.100.9", "ATTACKER", 3, "77", record=99))
+    rows.append(_logon(4624, "2024-02-05T03:00:00Z", "svc", "-", "SRV01", 5, "88", record=100))   # local: not a source
+    case.ingest_artifact_results(rows, "Windows.EventLogs.EvtxHunter", client_id="C.1")
+    sources = {s["ip"]: s for s in leads.logon_sources(case)["sources"]}
+    assert set(sources) == {"198.51.100.9", "(no address) ATTACKER"}
+    nla = sources["(no address) ATTACKER"]
+    assert nla["failures"] == 2 and nla["scope"] == "no address recorded" and nla["workstations"] == {"ATTACKER": 2}
+    assert sources["198.51.100.9"]["workstations"] == {"ATTACKER": 1}
+
+
 def test_leads_name_account_changes_services_tasks_and_downloads(case):
     _seed(case)
     out = leads.leads(case)

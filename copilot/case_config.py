@@ -228,7 +228,7 @@ class CaseConfig:
     @property
     def max_steps(self) -> int:
         """LLM calls allowed per investigator turn."""
-        return int((self.data.get("agent", {}) or {}).get("max_steps", 15))
+        return int((self.data.get("agent", {}) or {}).get("max_steps", 20))
 
     @property
     def max_tokens_per_turn(self) -> int:

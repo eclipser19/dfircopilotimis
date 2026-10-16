@@ -16,6 +16,7 @@ from collections import Counter
 _FIELD_RE = re.compile(r"(?:^|; )(LogonType|user|domain|ip|workstation|logon_id|by|by_logon_id|server|group|"
                        r"member|member_sid)=([^;]*)")
 LOGON_EVENTS = ("4624", "4625", "4648", "1149", "21", "25")
+NO_ADDRESS = "(no address)"
 ACCOUNT_EVENTS = {"4720": "account created", "4722": "account enabled", "4724": "password reset",
                   "4725": "account disabled", "4726": "account deleted", "4781": "account renamed",
                   "4728": "added to a global group", "4732": "added to a local group",
@@ -77,7 +78,11 @@ def logon_sources(db, ip: str = None, account: str = None, start: str = None, en
         f = _fields(row["description"])
         address = f.get("ip", "")
         if not address or address in ("-", "::", "0.0.0.0"):
-            continue
+            # RDP with Network Level Authentication logs failures without the source address, with the
+            # client's workstation name: keep them, grouped by that name.
+            if row["event_id"] != "4625" or not f.get("workstation") or ip:
+                continue
+            address = f"{NO_ADDRESS} {f['workstation']}"
         if ip and address != ip:
             continue
         if account and account.lower() not in (f.get("user") or "").lower():
@@ -87,7 +92,8 @@ def logon_sources(db, ip: str = None, account: str = None, start: str = None, en
         if key in seen:
             continue
         seen.add(key)
-        s = sources.setdefault(address, {"ip": address, "scope": _scope(address), "failures": 0, "successes": 0,
+        scope = "no address recorded" if address.startswith(NO_ADDRESS) else _scope(address)
+        s = sources.setdefault(address, {"ip": address, "scope": scope, "failures": 0, "successes": 0,
                                          "explicit_credentials": 0, "rdp_events": 0, "_failed": Counter(),
                                          "_accounts": Counter(), "_types": Counter(), "_workstations": Counter()})
         if f.get("workstation"):
@@ -115,7 +121,8 @@ def logon_sources(db, ip: str = None, account: str = None, start: str = None, en
 
     def order(s):
         # Guessing that worked first, then outside addresses that got in, then the rest by volume.
-        return (not s.get("success_after_failures"), s["scope"] != "external", s["successes"] == 0,
+        return (not s.get("success_after_failures"), s["scope"] not in ("external", "no address recorded"),
+                s["successes"] == 0,
                 -(s["failures"] + s["successes"]))
 
     ranked = sorted(sources.values(), key=order)
@@ -130,8 +137,9 @@ def logon_sources(db, ip: str = None, account: str = None, start: str = None, en
         out.append(item)
     return {"sources": out, "sources_total": len(sources), "logon_events": len(seen),
             "note": "Logon types: 2 console, 3 network (SMB, credential checks), 10 RDP. A success right after "
-                    "failures from the same address is guessing that worked. Workstation names are set by the "
-                    "client. Confirm with the cited records."}
+                    "failures from the same address is guessing that worked. '(no address) NAME': failed logons "
+                    "logged without a source address (RDP with NLA), grouped by the client's workstation name; the "
+                    "same name on a successful logon gives their address. Confirm with the cited records."}
 
 
 def _rows(db, where: str, params=()) -> list:

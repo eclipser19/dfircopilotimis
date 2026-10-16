@@ -66,5 +66,5 @@ agent:
     create_case: confirm
     memory: confirm
   allow_raw_vql: false
-  max_steps: 15
+  max_steps: 20
   max_tokens_per_turn: 300000
