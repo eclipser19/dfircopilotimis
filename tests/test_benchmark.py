@@ -255,3 +255,21 @@ def test_evidence_dump_shows_the_raw_records_an_answer_cites(bench_dirs):
     dump = open(benchmark.evidence_dump(str(path)), encoding="utf-8").read()
     assert f"### `{real}` Generic.Client.Info" in dump and "WS01" in dump
     assert "`0123456789abcdef`: NOT IN THE CASE" in dump and "(no evidence IDs cited)" in dump
+
+
+def test_clean_removes_run_folders_with_their_data(tmp_path, monkeypatch):
+    monkeypatch.setenv("DFIR_CASES_DIR", str(tmp_path / "cases"))
+    monkeypatch.delenv("DFIR_DATA_DIR", raising=False)
+    monkeypatch.delenv("DFIR_CASE_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    for run_id in ("bench-x-1", "bench-x-2"):
+        os.makedirs(tmp_path / "cases" / run_id)
+        (tmp_path / "cases" / run_id / "case.yaml").write_text("case:\n  name: x\n")
+    os.makedirs(tmp_path / "cases" / "bench-x-1" / "data")                 # data in the case's folder
+    os.makedirs(tmp_path / "case_data" / "bench-x-2")                      # data from before the move
+    (tmp_path / "case_data" / "bench-x-2" / "case.db").write_text("db")
+    os.makedirs(tmp_path / "cases" / "keep")
+    (tmp_path / "cases" / "keep" / "case.yaml").write_text("case:\n  name: k\n")
+    assert benchmark.clean(yes=True, log=lambda *a: None) == ["bench-x-1", "bench-x-2"]
+    assert sorted(os.listdir(tmp_path / "cases")) == ["keep"]
+    assert not (tmp_path / "case_data" / "bench-x-2").exists()

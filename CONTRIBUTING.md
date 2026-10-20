@@ -62,7 +62,8 @@ through `approvals.gate(kind, ...)`. Add a test.
 - **Times.** The database stores the host's recorded time. Tools add the corrected `true_utc`
   (case clock offset). Never let the model do the arithmetic.
 - **Never commit** `api_client.yaml`, `server.yaml`, `auth.yaml`, `learned_knowledge.yaml`,
-  `.streamlit/secrets.toml`, `case_data/`, `benchmark_results/` or evidence images (all git-ignored).
+  `.streamlit/secrets.toml`, `cases/*/data/`, `case_data/`, `benchmark_results/` or evidence images
+  (all git-ignored).
 - The Velociraptor API user should have the `investigator` role: it is the real safety net behind
   the copilot's own artifact allowlist.
 

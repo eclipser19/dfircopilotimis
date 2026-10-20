@@ -180,3 +180,37 @@ def test_cli_keeps_a_chat_per_case(two_cases, monkeypatch, capsys):
     assert [m["content"] for m in beta_ui][:2] == ["first beta question", "answer to: first beta question"]
     assert "first beta question" in [m.content for m in beta_history]
     assert [m["content"] for m in alpha_ui] == ["alpha question", "answer to: alpha question"]
+
+
+def test_a_case_keeps_its_data_in_its_own_folder_and_old_data_can_be_moved(tmp_path, monkeypatch):
+    # Default layout: cases/<id>/case.yaml and cases/<id>/data/ under one roof.
+    monkeypatch.setenv("DFIR_CASES_DIR", str(tmp_path / "cases"))
+    monkeypatch.delenv("DFIR_DATA_DIR", raising=False)
+    monkeypatch.delenv("DFIR_CASE_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)
+    for name in ("fresh", "old"):
+        os.makedirs(tmp_path / "cases" / name)
+        (tmp_path / "cases" / name / "case.yaml").write_text("case:\n  name: x\n")
+    assert database.data_dir_for(str(tmp_path / "cases" / "fresh" / "case.yaml")) == \
+        str(tmp_path / "cases" / "fresh" / "data")
+
+    # Data from before (case_data/<id>) is still used until it is moved.
+    os.makedirs(tmp_path / "case_data" / "old" / "outputs")
+    (tmp_path / "case_data" / "old" / "case.db").write_text("db")
+    os.makedirs(tmp_path / "case_data" / "gone")            # a case folder that no longer exists
+    old_case = str(tmp_path / "cases" / "old" / "case.yaml")
+    assert database.data_dir_for(old_case) == os.path.join("case_data", "old")
+
+    logs = []
+    assert cases.move_data(yes=False, log=logs.append) == ["old"]
+    assert (tmp_path / "case_data" / "old" / "case.db").exists()            # a dry run moves nothing
+    assert cases.move_data(yes=True, log=logs.append) == ["old"]
+    assert (tmp_path / "cases" / "old" / "data" / "case.db").read_text() == "db"
+    assert (tmp_path / "cases" / "old" / "data" / "outputs").is_dir()
+    assert database.data_dir_for(old_case) == str(tmp_path / "cases" / "old" / "data")
+    assert any("Skipped" in line and "gone" in line for line in logs)
+
+    # With DFIR_DATA_DIR the data is meant to live elsewhere: nothing moves.
+    monkeypatch.setenv("DFIR_DATA_DIR", str(tmp_path / "elsewhere"))
+    assert cases.move_data(yes=True, log=logs.append) == []
+    assert database.data_dir_for(old_case) == os.path.join(str(tmp_path / "elsewhere"), "old")

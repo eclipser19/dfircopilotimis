@@ -511,19 +511,35 @@ def _compact(row: dict) -> dict:
     return {k: v for k, v in row.items() if v not in (None, "")}
 
 
+# Where data lived before each case folder held its own (and where the legacy root case.yaml keeps it).
+LEGACY_DATA_ROOT = "case_data"
+CASE_DATA_FOLDER = "data"
+
+
 def data_dir_for(case_file: str) -> str:
     """
-    Where a case keeps its database and outputs. DFIR_CASE_DIR wins; a case file at
-    <cases_dir>/<id>/case.yaml uses <data root>/<id>; the legacy root case.yaml uses the root.
+    Where a case keeps its database and outputs:
+    - DFIR_CASE_DIR: that folder;
+    - DFIR_DATA_DIR: <that root>/<case id>, to keep the data elsewhere (e.g. another disk);
+    - otherwise in the case's own folder, next to its settings: <cases_dir>/<id>/data. A case
+      whose data is still in the old case_data/<id> keeps using it until it is moved
+      (python -m copilot.cases move-data).
+    The legacy root case.yaml uses the data root itself.
     """
     if os.environ.get("DFIR_CASE_DIR"):
         return os.environ["DFIR_CASE_DIR"]
     from copilot.case_config import cases_dir
-    root = os.environ.get("DFIR_DATA_DIR", "case_data")
     folder = os.path.dirname(os.path.abspath(case_file))
-    if os.path.dirname(folder) == os.path.abspath(cases_dir()):
-        return os.path.join(root, os.path.basename(folder))
-    return root
+    in_cases = os.path.dirname(folder) == os.path.abspath(cases_dir())
+    root = os.environ.get("DFIR_DATA_DIR")
+    if root or not in_cases:
+        root = root or LEGACY_DATA_ROOT
+        return os.path.join(root, os.path.basename(folder)) if in_cases else root
+    own = os.path.join(folder, CASE_DATA_FOLDER)
+    old = os.path.join(LEGACY_DATA_ROOT, os.path.basename(folder))
+    if not os.path.isdir(own) and os.path.isfile(os.path.join(old, "case.db")):
+        return old              # not moved yet
+    return own
 
 
 # The active case's database in the current session (see copilot/session.py).

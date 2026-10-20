@@ -80,12 +80,21 @@ pip install -r requirements.txt
 
 ## Cases
 
-Each investigation is a folder with its own settings, database and outputs:
+Each investigation is one folder, named by its case ID, with its settings and its data:
 
 ```
-cases/<case-id>/case.yaml        settings (scope, client ID, IOCs, triage list, limits)
-case_data/<case-id>/case.db      collected data, findings, audit log
-case_data/<case-id>/outputs/     reports and exports (unless output.dir is set)
+cases/<case-id>/case.yaml          settings (scope, client ID, IOCs, triage list, limits)
+cases/<case-id>/data/case.db       collected data, findings, chats, audit log
+cases/<case-id>/data/outputs/      reports and exports (unless output.dir is set)
+```
+
+`data/` holds evidence and is git-ignored; `case.yaml` is not. Data from before this layout
+(`case_data/<case-id>/`) is still read where it is; move it into the case folders once, with the
+app and the CLI stopped:
+
+```bash
+python -m copilot.cases move-data          # shows what would move
+python -m copilot.cases move-data --yes    # moves it
 ```
 
 - Start in a case: `$env:DFIR_CASE = "szechuan"` (or `DFIR_CASE_FILE` with a path). Without
@@ -105,7 +114,8 @@ case_data/<case-id>/outputs/     reports and exports (unless output.dir is set)
   case.yaml without its comments.
 - A new case on the same evidence can **copy the collected data** of another case instead of
   re-collecting (same client ID only; findings are not copied). Ask the agent or use the form.
-- `DFIR_CASES_DIR` and `DFIR_DATA_DIR` change the two root folders.
+- `DFIR_CASES_DIR` changes the cases folder. `DFIR_DATA_DIR` keeps the data apart instead, in
+  `<DFIR_DATA_DIR>/<case-id>/` (e.g. on a larger disk).
 
 Each browser session has its own active case, so several investigators can work at the same
 time; with sign-in, each sees only their own cases (see [Sign-in](#sign-in)). The CLI has
@@ -197,13 +207,13 @@ python main.py          # terminal
 streamlit run app.py    # web chat
 ```
 
-The case database lives in `case_data/` (or `DFIR_CASE_DIR`). Reports are written as HTML
+The case database lives in the case's `data/` folder (see [Cases](#cases)). Reports are written as HTML
 by default; set `output.report_formats: [html, md]` in the case file for Markdown too (the
 second format costs no LLM tokens), or pick formats in the Streamlit sidebar. The agent
 cannot choose the format. Files the
 copilot produces (reports, case exports, CSV exports of query results, JSON evidence
 extracts) go to the output directory: `DFIR_OUTPUT_DIR`, else `output.dir` in the case
-file (e.g. `/uploads` on a server), else `case_data/outputs/`.
+file (e.g. `/uploads` on a server), else the case's `data/outputs/`.
 
 In the Streamlit app:
 - an empty case offers the triage collection (same as the CLI's first question), and the

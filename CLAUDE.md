@@ -114,12 +114,15 @@ No linter or formatter is configured. Tests pass in any order (they must keep do
   copied to plain keys in `on_change`; `AppTest` cannot keep `st.dialog` open, so editors live in
   the main area.
 - **Never commit** `api_client.yaml`, `server.yaml`, `auth.yaml`, `learned_knowledge.yaml`,
-  `.streamlit/secrets.toml` or `case_data/` (evidence). They are git-ignored.
+  `.streamlit/secrets.toml`, `cases/*/data/` or `case_data/` (evidence). They are git-ignored.
 
 ## Configuration and data locations
 
 - Cases: `DFIR_CASES_DIR` (default `cases/`); first case `DFIR_CASE_FILE` / `DFIR_CASE`.
-- Case data (database, outputs): `DFIR_DATA_DIR` (default `case_data/`)`/<case-id>/`, or `DFIR_CASE_DIR`.
+- Case data (database, chats, outputs): `cases/<case-id>/data/`, next to its `case.yaml`
+  (`database.data_dir_for`). `DFIR_DATA_DIR` puts it in `<DFIR_DATA_DIR>/<case-id>/` instead,
+  `DFIR_CASE_DIR` in one folder. Old `case_data/<case-id>/` is still read until moved with
+  `python -m copilot.cases move-data`.
 - Server settings: `server.yaml` (`DFIR_SETTINGS`), copied from `server.example.yaml`: `llm`, `login`,
   `memory` (images_dir, symbols_dir, offline, timeout, yara_dir), `knowledge.learned_file`.
 - Accounts: `auth.yaml` (`DFIR_AUTH_FILE`). Velociraptor API: `api_client.yaml` (`DFIR_API_CONFIG`).

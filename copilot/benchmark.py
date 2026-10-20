@@ -604,10 +604,13 @@ def clean(yes: bool = False, log=print) -> list:
         data = data_dir_for(case_file)
         log(f"{'Removing' if yes else 'Would remove'} {os.path.dirname(case_file)} and {data}")
         if yes:
-            # Only a data folder of this run: with DFIR_CASE_DIR set, every case shares one folder.
-            if os.path.basename(os.path.normpath(data)) == run_id:
+            # The data inside the run's folder goes with it. A data folder elsewhere is removed only if it
+            # is this run's own (with DFIR_CASE_DIR set, every case shares one folder).
+            case_folder = os.path.abspath(os.path.dirname(case_file))
+            inside = os.path.abspath(data).startswith(case_folder + os.sep)
+            if not inside and os.path.basename(os.path.normpath(data)) == run_id:
                 shutil.rmtree(data, ignore_errors=True)
-            shutil.rmtree(os.path.dirname(case_file), ignore_errors=True)
+            shutil.rmtree(case_folder, ignore_errors=True)
     if runs and not yes:
         log("Run again with --yes to remove them.")
     return runs

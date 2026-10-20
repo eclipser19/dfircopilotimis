@@ -13,7 +13,9 @@ __pycache__/
 .venv/
 venv/
 
-# Generated reports / evidence output (case database contains evidence)
+# Case data: databases (evidence), chats and outputs. Each case keeps it in cases/<id>/data/;
+# case_data/ is the layout from before (and the legacy root case).
+cases/*/data/
 case_data/
 reports/
 output/
@@ -26,7 +28,7 @@ server.yaml
 # Lessons learned on this server (shared by its cases; may describe your environment)
 learned_knowledge.yaml
 
-# Benchmark runs (cases/bench-*/ and their results; data lives in case_data/)
+# Benchmark runs (cases/bench-*/, data included, and their results)
 cases/bench-*/
 benchmark_results/
 

@@ -73,7 +73,7 @@ collection:
 # converted locally); list only what you want to keep.
 output:
   report_formats: [html]   # html, md, or both: [html, md]
-  # dir: /uploads          # default: case_data/outputs
+  # dir: /uploads          # default: data/outputs in this case's folder
 
 agent:
   # What the agent may do on its own. confirm: you approve each request (default) | auto | off.

@@ -1,8 +1,8 @@
 """
 Multiple investigations side by side, each bound to the accounts that may work on it.
 
-Each case is a folder <cases_dir>/<case-id>/ with its case.yaml; its database and
-outputs live in <data root>/<case-id>/ (see database.data_dir_for). Every investigator
+Each case is a folder <cases_dir>/<case-id>/ with its case.yaml and, in data/, its database,
+chats and outputs (see database.data_dir_for; DFIR_DATA_DIR keeps the data elsewhere). Every investigator
 session has its own active case (copilot/session.py); switching reloads that session's
 case_config and case_db. The conversation must restart after a switch (the system prompt
 describes the case); UIs check consume_switch() after each turn.
@@ -23,7 +23,7 @@ import yaml
 
 from copilot import session
 from copilot.case_config import CLIENT_ID_RE, case_config, cases_dir
-from copilot.database import case_db, data_dir_for
+from copilot.database import CASE_DATA_FOLDER, LEGACY_DATA_ROOT, case_db, data_dir_for
 
 CASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 LEGACY_ID = "default"
@@ -476,15 +476,70 @@ def legacy_data_hint() -> str:
     Before cases were separated, every case used case_data/case.db. If that file exists
     and the active case has no database yet, tell the investigator how to move it.
     """
-    root = os.environ.get("DFIR_DATA_DIR", "case_data")
+    root = os.environ.get("DFIR_DATA_DIR", LEGACY_DATA_ROOT)
     legacy = os.path.join(root, "case.db")
     if session.current_user() is not None:
         return ""   # the hint names server paths: only for a single investigator without sign-in
     case_id = current_id()
     if case_id == LEGACY_ID or os.environ.get("DFIR_CASE_DIR") or not os.path.isfile(legacy):
         return ""
-    target = os.path.join(root, case_id)
+    target = data_dir_for(_case_file(case_id))
     if case_db.get_stats()["total_records"] or case_db.get_collections() or case_db.get_findings(True):
         return ""
     return (f"Found {legacy} from before cases were separated. If it belongs to case '{case_id}', stop the "
             f"copilot and move it (and its outputs folder) into {target}{os.sep}.")
+
+
+def move_data(yes: bool = False, log=print) -> list:
+    """
+    Moves each case's data from the old case_data/<id>/ into its own folder (<cases_dir>/<id>/data),
+    so a case's settings and data share one folder. Run it with the app and the CLI stopped: open
+    databases can't be moved. Data folders without a case folder are left where they are.
+    """
+    import shutil
+    if os.environ.get("DFIR_DATA_DIR") or os.environ.get("DFIR_CASE_DIR"):
+        log("DFIR_DATA_DIR or DFIR_CASE_DIR is set: the data is meant to stay where it is. Nothing moved.")
+        return []
+    moved = []
+    names = sorted(os.listdir(LEGACY_DATA_ROOT)) if os.path.isdir(LEGACY_DATA_ROOT) else []
+    for name in names:
+        old = os.path.join(LEGACY_DATA_ROOT, name)
+        if not os.path.isdir(old):
+            continue                           # e.g. the legacy root case's own case.db
+        case_folder = os.path.join(cases_dir(), name)
+        new = os.path.join(case_folder, CASE_DATA_FOLDER)
+        if not os.path.isfile(os.path.join(case_folder, "case.yaml")):
+            log(f"Skipped {old}: no case folder {case_folder}")
+            continue
+        if os.path.exists(new):
+            log(f"Skipped {old}: {new} already exists (move or merge it by hand)")
+            continue
+        log(f"{'Moving' if yes else 'Would move'} {old} -> {new}")
+        if yes:
+            try:
+                shutil.move(old, new)
+            except OSError as e:
+                log(f"  failed ({e}): stop the app and the CLI, then run this again")
+                continue
+        moved.append(name)
+    if moved and not yes:
+        log("Run again with --yes to move them (stop the app and the CLI first).")
+    elif not moved:
+        log("Nothing to move.")
+    return moved
+
+
+def main(argv=None) -> int:
+    import argparse
+    parser = argparse.ArgumentParser(prog="python -m copilot.cases")
+    sub = parser.add_subparsers(dest="command", required=True)
+    m = sub.add_parser("move-data", help="move case data from case_data/<id> into cases/<id>/data")
+    m.add_argument("--yes", action="store_true", help="really move (default: only show what would move)")
+    args = parser.parse_args(argv)
+    if args.command == "move-data":
+        move_data(args.yes)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
