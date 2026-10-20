@@ -24,7 +24,8 @@ benchmark file.
 
 ## Results
 
-Minutes are wall-clock for the whole run (triage + all questions) on the developer's laptop.
+Minutes are as the scorecard reports them: the questions (and, from 091413, the investigation), without the
+triage, on the developer's laptop.
 Every run below answered its questions **without** a case dossier. From the commit that added
 `copilot/dossier.py`, runs investigate first by default (the investigation's steps, tokens and
 minutes count in the totals); note that in each new row, and use `--no-investigate` to compare
@@ -40,6 +41,7 @@ with the rows below.
 | 20261015-105830 | 73.9% | 11/13 | 6/10 | 12.4 | Run-to-run variance, plus the download time missing (playbook fixed in `d533b15`) |
 | 20261016-124015 | 73.9% | 10/13 | 7/10 | 10.0 | First run with the correlation rule, the new record summaries, leads in `case_summary` and the larger triage (`52663f2`..`9a5a2fc`). Same score as the last valid run. Lost the brute force: the failures carry no source address (RDP with NLA), so the agent refused to tie them to the attacker's address. Missed `secret.zip` and the timestomp (it checked one file). Fixed next: failures without an address grouped by workstation name, NLA note in the entry playbook |
 | 20261020-075258 | **91.3%** | 12/13 | 9/10 | 9.4 | With those fixes and 20 tool steps. *entry* 2/2 in 5 steps (the failures without an address grouped by workstation name, tied to the RDP logon that follows); timestomp found ($SI before $FN, zero fractions, USN BASIC_INFO_CHANGE). Missed `secret.zip` again: the archive is only in the USN journal, which no triage collects, and the agent wrote "no archive" after searching only what was collected. One garbled evidence ID |
+| 20261020-091413 | 87.0% (78.3% as run) | 11/13 | 9/10 | 6.1 | **First run with the investigation first** (`5df8b0e`): dossier of 9,016 characters in 7 of its 40 steps (408k tokens, 1.6 min); 1.66M tokens in for the whole run. The key's brute-force fact accepted only "4625 / failed logon / password guess", and the answer said "failed authentication attempts": wording added, re-scored (*entry* 2/2). Faster than 075258 (6.1 vs 9.4 min) but the dossier was shallow: it skipped file access, lateral movement and timestomping, and wrote that recipe-file access was "not established" although the collected Lnk records show it. The questions found all three themselves (so they did not get cheaper: 52k to 299k tokens each). Missed `secret.zip` again (USN only), and *memory* named `coreupdater.exe` as the C2 connection's owner instead of `spoolsv.exe`. Fixed next: the investigation must search every phase, qualify every negative with what was searched, and the dossier may be 12,000 characters |
 
 ### injector
 

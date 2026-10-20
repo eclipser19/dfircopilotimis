@@ -30,7 +30,7 @@ questions:
         what: RDP password guessing (a burst of failed logons) from 194.61.24.102
         all: ["194.61.24.102"]
         # Evidence words only: "brute" or "failed attempt" also match sentences saying it was NOT seen.
-        any: [["4625", "failed logon", "password guess", "hydra"]]
+        any: [["4625", "failed logon", "failed authentication", "password guess", "hydra"]]
         time: "02:19:00-02:21:59"
         tolerance_seconds: 180
       - id: rdp_logon
