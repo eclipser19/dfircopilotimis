@@ -45,7 +45,7 @@ Minutes are wall-clock for the whole run (triage + all questions) on the develop
 | 20261015-095938 | 69.6% | 13/18 | 3/5 | 4.7 | 75.0% (14/19) once the key's matching was corrected |
 | 20261015-112120 | **83.3%** | 15/19 | 5/5 | 16.2 | Commands found in memory (several words in one strings pass, `8f67eca`) |
 | 20261016-130324 | 62.5% | 12/19 | 3/5 | 18.4 | Same changes. Regression on two questions. *system*: called the web server IIS (a checklist line added for OU pointed at W3SVC and `C:\inetpub`; this server has IIS installed too, but XAMPP serves the site). *entry* 0/5: spent its 15 steps on IIS logs and memory, found the Apache logs on its last step and never read them. Fixed next: no IIS pull in the system checklist, all candidate web logs in one FileFinder call (`SearchFilesGlobTable`), 20 tool steps |
-| *next* | | | | | With those fixes |
+| 20261020-072754 | 70.8% | 13/19 | 4/5 | 7.9 | With those fixes. Both targets fixed: *system* 5/5 (XAMPP named), *entry* 5/5 (Apache logs found and read; was 0/5), and the run took half the time. Three questions the fixes did not touch dropped: *uploads* 1/4 (it described the web shell's commands without naming the `cmd` parameter and skipped the sqlmap uploader), *accounts* and *commands* (the `net localgroup` and `netsh` commands not searched for in memory this time; 2/2 in the run before) |
 
 ### ou-server2022
 
@@ -59,9 +59,10 @@ Scores on the **current key (49 facts)**; the score each run got on the key of i
 
 ## What the numbers say so far
 
-- On the two images with published solutions the agent reaches 75-95% when the setup is right.
-  Variance between identical runs is large (DC: 95.7% then 73.9%), so judge a change on at least
-  two runs, never one.
+- On the two images with published solutions the agent reaches 70-95% when the setup is right.
+  Variance between runs is large and sits in single questions: the same Injector *commands*
+  question scored 2/2 and then 0/2 with no change to anything it uses; DC scored 95.7% then 73.9%.
+  Judge a change on the questions it targets and on at least two runs, never one total.
 - Most big drops were setup problems, not reasoning: the wrong image, triage still running,
   logs never read. The runner now catches the first two (image check, triage wait, and a warning
   under **Setup** in the scorecard).
