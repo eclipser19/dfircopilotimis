@@ -1,10 +1,12 @@
+# Supported Python: 3.10 to 3.12 (tested in CI). Minimum versions known to work; the exact tested set,
+# for every platform, is requirements-lock.txt (pip install -r requirements-lock.txt).
 pyvelociraptor
 grpcio
-langchain-core
-langchain-openai
-pyyaml
-jinja2
-streamlit
-markdown-it-py
+langchain-core>=1.0
+langchain-openai>=1.0
+pyyaml>=6.0
+jinja2>=3.1
+streamlit>=1.40
+markdown-it-py>=3.0
 volatility3          # memory analysis (optional: only needed for memory images)
 yara-x               # optional: memory searches per process and YARA rule scans

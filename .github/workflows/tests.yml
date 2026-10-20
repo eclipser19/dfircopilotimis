@@ -1,0 +1,32 @@
+# Runs the test suite on every push and pull request. It needs no Velociraptor, model or
+# Volatility image: those parts are faked in tests/conftest.py. The suite also fails when a
+# tracked file holds a key, an account file or evidence (tests/test_repo_hygiene.py).
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+      - name: Install the tested versions
+        run: pip install -r requirements-lock.txt
+      - name: Check the shipped settings files
+        run: python -m copilot.config_check server.example.yaml case.yaml cases/*/case.yaml
+      - name: Run the tests
+        run: python -m pytest tests -q

@@ -140,6 +140,9 @@ def run_agent_loop():
     def open_chat():
         """Loads the active case's saved conversation (the agent gets its memory back)."""
         state["case"] = cases.current_id()
+        from copilot import config_check
+        for problem in config_check.case_problems(case_config):
+            print(f"[!] case settings: {problem}")
         state["ui"], history = conversation.load(state["case"], build_system_prompt(case_config))
         chat_history[:] = history
         if len(history) > 1:
@@ -199,6 +202,9 @@ def run_agent_loop():
     hint = cases.legacy_data_hint()
     if hint:
         print(f"\n[!] {hint}")
+    from copilot import config_check
+    for problem in config_check.server_problems():
+        print(f"[!] server settings: {problem}")
     open_chat()
 
     summaries = None

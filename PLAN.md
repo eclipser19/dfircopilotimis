@@ -77,13 +77,13 @@ measurement ahead of new agent behaviour. Fixed right after it:
 - **Exports:** CSVs are written from the same database snapshot as the export's `case.db`, and
   cells that would run as spreadsheet formulas are neutralised.
 
-Still open from the review: steps 1, 2, 6 and 8 below.
+Still open from the review: steps 2, 6 and 8 below.
 
 ## Next steps, most valuable first
 
-1. **Reproducible baseline.** CI running `pytest`, secret scanning, pinned dependency versions
-   and a declared Python version, validated `case.yaml` / `server.yaml` schemas. Small, and it
-   protects everything after it.
+1. ~~**Reproducible baseline.**~~ Done: CI on Python 3.10-3.12, a test that fails on tracked keys,
+   account files or evidence, `requirements-lock.txt` with the exact tested versions for every
+   platform, and `case.yaml` / `server.yaml` checked against a schema (`copilot/config_check.py`).
 2. **Evidence provenance and access.**
    - Each evidence source (Velociraptor client, memory image) gets an identity with its image
      hash.

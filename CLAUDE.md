@@ -13,13 +13,14 @@ benchmark run that matters (add a row after each); `CONTRIBUTING.md` says where 
 ## Commands
 
 ```bash
-pip install -r requirements-dev.txt            # requirements.txt + pytest
+pip install -r requirements-lock.txt           # exact tested versions (requirements-dev.txt: minimums + pytest)
 python -m pytest tests                         # whole suite; needs no Velociraptor, LLM or Volatility
 python -m pytest tests/test_memory.py          # one file
 python -m pytest tests/test_app.py -k approve  # tests matching a name
 streamlit run app.py                           # web app
 python main.py                                 # CLI
 python -m copilot.selftest [--flow F.XXXX]     # check the Velociraptor setup without the LLM
+python -m copilot.config_check [file]          # unknown keys / wrong types in server.yaml and case files
 python -m copilot.memory check [image]         # check Volatility, symbols, YARA, memory images
 python -m copilot.auth add <user> [--admin]    # accounts (also: admin on|off, remove, list)
 python -m copilot.lessons list|accept|remove   # lessons learned
@@ -27,7 +28,8 @@ python -m copilot.benchmark run cases/szechuan-dc/benchmark.yaml --client C.<id>
 python -m copilot.benchmark score benchmark_results/<run>.json                     # re-score saved answers
 ```
 
-No linter or formatter is configured. Tests pass in any order (they must keep doing so).
+No linter or formatter is configured. Tests pass in any order (they must keep doing so). CI runs them on
+Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `copilot/config_check.py`'s schemas.
 
 ## How a question flows through the code
 

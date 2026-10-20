@@ -11,9 +11,17 @@ For whoever takes this project further. Read in this order:
 ## Development setup
 
 ```bash
-pip install -r requirements-dev.txt
-python -m pytest tests          # ~1 minute; needs no Velociraptor, LLM or Volatility
+pip install -r requirements-lock.txt   # exact tested versions (requirements-dev.txt: minimums + pytest)
+python -m pytest tests                 # ~1 minute; needs no Velociraptor, LLM or Volatility
+python -m copilot.config_check         # server.yaml and every case.yaml: unknown keys, wrong types
 ```
+
+CI (`.github/workflows/tests.yml`) runs the tests on Python 3.10, 3.11 and 3.12 on every push and pull
+request. `tests/test_repo_hygiene.py` fails when a tracked file holds a private key or an API key, or
+is an account file or evidence, so a mistake is caught before it is merged. After changing
+dependencies, regenerate the lock: `uv pip compile --universal --python-version 3.10
+requirements-dev.txt -o requirements-lock.txt`. A new setting goes into the schema in
+`copilot/config_check.py`, or every case file using it is reported as having an unknown key.
 
 The tests fake Velociraptor (`FakeVQL` in `tests/conftest.py`). The fixture `case` gives a
 fresh case database and `approve_all` approves every agent action. Every test gets its own

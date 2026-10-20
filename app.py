@@ -7,8 +7,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
-from copilot import (approvals, auth, cases, citations, collection, commands, conversation, knowledge, lessons,
-                     memory, outputs, session)
+from copilot import (approvals, auth, cases, citations, collection, commands, config_check, conversation, knowledge,
+                     lessons, memory, outputs, session)
 from copilot import llm as llm_config
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
@@ -749,6 +749,11 @@ with st.sidebar:
         after_possible_switch()
     with st.expander("➕ New case", expanded=False):
         new_case_form()
+    problems = config_check.case_problems(case_config)
+    if USER is None or auth.is_admin(USER):
+        problems += [f"server.yaml: {p}" for p in config_check.server_problems()]
+    if problems:
+        st.warning("**Settings problems** (ignored until fixed):\n" + "\n".join(f"- {citations.md_literal(p)}" for p in problems))
 
     if cases.current_id() != cases.LEGACY_ID:
         with st.expander("⚙️ Case settings", expanded=False):

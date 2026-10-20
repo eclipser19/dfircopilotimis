@@ -11,7 +11,8 @@ Working on the code: [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.m
 
 From a fresh clone to a first answer. Each step is explained under [Setup](#setup).
 
-1. `pip install -r requirements.txt` (Python 3.10+).
+1. `pip install -r requirements-lock.txt` (Python 3.10 to 3.12; the lock file holds the exact tested
+   versions, `requirements.txt` the minimums).
 2. Run a Velociraptor server (0.77.2 is the version tested) and save an API client config with the
    `investigator` role as `api_client.yaml` ([Setup](#setup) step 1).
 3. Present the image as a client with `velociraptor deaddisk` and start that client; note its
@@ -29,8 +30,12 @@ to expect, with answer keys.
 ## Setup
 
 ```bash
-pip install -r requirements.txt
+pip install -r requirements-lock.txt     # the exact versions the tests run with (Python 3.10-3.12)
 ```
+
+`requirements.txt` lists the same packages with minimum versions only. Check your settings files
+at any time: `python -m copilot.config_check` names unknown or misspelt settings and values of the
+wrong type in `server.yaml` and every case file (the app and the CLI show them too).
 
 1. **Velociraptor API access.** Create an API client config and save it as
    `api_client.yaml` (git-ignored), or point `DFIR_API_CONFIG` at it:

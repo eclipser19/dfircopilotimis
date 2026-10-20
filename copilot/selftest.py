@@ -72,6 +72,11 @@ def inspect_flow(flow_id: str):
 
 
 def main():
+    from copilot import config_check
+    for problem in config_check.server_problems():
+        print(f"[!] server settings: {problem}")
+    for problem in config_check.case_problems(case_config):
+        print(f"[!] case settings ({case_config.path}): {problem}")
     if case_config.client_id_error:
         print(f"[!] {case_config.client_id_error}")
         sys.exit(1)
