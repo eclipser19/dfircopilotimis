@@ -2,16 +2,15 @@
 Investigators teach the copilot as they use it.
 
 - **Notes** (per case): facts and corrections an investigator gives, in the app's Findings & dossier
-  tab, under an answer (👎 + what is right) or with `/note <text>`. Every conversation and
+  tab, under an answer (👎 + what is right; `/wrong <what is right>` in the CLI) or with `/note <text>`. Every conversation and
   investigation of the case gets them in its system prompt, above the dossier: the agent builds on
   them and says so when evidence contradicts one. They can be withdrawn.
-- **Ratings** of answers and dossiers (👍 right / 👎 wrong, with the correction), kept with the
-  question and the answer they rate.
+- **Corrections** of answers and dossiers are notes kept with the question and the answer they correct.
 - **Confirmed findings**: an investigator checked a finding's records; the agent treats it as
   established and the report names who confirmed it.
 - **Lessons**: a correction that holds for every case (how to read an artifact, not a case fact)
   can be proposed as a lesson (copilot/lessons.py), which an admin accepts.
-- **Export** for whoever improves the copilot: every note, rating and confirmed finding of every
+- **Export** for whoever improves the copilot: every note, correction and confirmed finding of every
   case, with the question and answer, as JSON lines (new benchmark questions, prompt fixes, tuning):
 
     python -m copilot.feedback list
@@ -89,16 +88,14 @@ def add_note(text: str) -> dict:
     return entry
 
 
-def rate(kind: str, rating: int, comment: str = "", question: str = "", answer: str = "") -> dict:
-    """A rating of an answer or dossier: 1 right, -1 wrong (a correction is then required)."""
+def correct(kind: str, comment: str, question: str = "", answer: str = "") -> dict:
+    """A correction of an answer or dossier: becomes a note, kept with the question and the answer."""
     comment = (comment or "").strip()
-    if rating < 0 and not comment:
+    if not comment:
         raise FeedbackError("Say what is wrong or what is right: that is what the copilot learns from.")
-    entry = case_db.add_feedback(kind, 1 if rating > 0 else -1, comment, question, answer)
-    case_db.log_query("feedback", f"{kind} rated {'right' if rating > 0 else 'wrong'} ({entry['feedback_id']})"
-                                  + (f": {comment[:300]}" if comment else ""), 0)
-    if comment:
-        _changed()
+    entry = case_db.add_feedback(kind, -1, comment, question, answer)
+    case_db.log_query("feedback", f"{kind} corrected ({entry['feedback_id']}): {comment[:300]}", 0)
+    _changed()
     return entry
 
 
@@ -142,7 +139,7 @@ def _rows(conn, query: str) -> list:
 
 
 def collect_all() -> list:
-    """Every note, rating and confirmed finding of every case (for list and export)."""
+    """Every note, correction and confirmed finding of every case (for list and export)."""
     out = []
     for case_id, conn in _case_databases():
         for r in _rows(conn, "SELECT * FROM feedback ORDER BY feedback_id"):
@@ -168,7 +165,7 @@ def export(out_path: str = None, log=print) -> str:
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="python -m copilot.feedback", description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("list", help="counts per case: notes, right/wrong ratings, confirmed findings")
+    sub.add_parser("list", help="counts per case: notes, corrections, confirmed findings")
     e = sub.add_parser("export", help="everything investigators said, as JSON lines")
     e.add_argument("--out", help=f"output file (default: {EXPORT_DIR}/feedback-<time>.jsonl)")
     args = parser.parse_args(argv)
@@ -177,14 +174,12 @@ def main(argv=None) -> int:
         return 0
     per_case = {}
     for item in collect_all():
-        c = per_case.setdefault(item["case"], {"notes": 0, "right": 0, "wrong": 0, "confirmed findings": 0})
+        c = per_case.setdefault(item["case"], {"notes": 0, "corrections": 0, "confirmed findings": 0})
         if item["type"] == "confirmed_finding":
             c["confirmed findings"] += 1
-        elif item.get("rating", 0) > 0:
-            c["right"] += 1
         elif item.get("rating", 0) < 0:
-            c["wrong"] += 1
-        elif item.get("active"):
+            c["corrections"] += 1
+        elif item.get("rating", 0) == 0 and item.get("active"):
             c["notes"] += 1
     for case_id, c in sorted(per_case.items()):
         print(f"{case_id}: " + ", ".join(f"{v} {k}" for k, v in c.items()))

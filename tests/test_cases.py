@@ -199,12 +199,12 @@ def test_cli_rates_the_last_answer_of_the_case_it_was_given_in(two_cases, monkey
     monkeypatch.setenv("OPENAI_API_KEY", "x")
     cases.switch("beta")
     cases.consume_switch()
-    inputs = iter(["/good", "who got in?", "/wrong", "/wrong it was the VPN user, not the attacker",
-                   "/case alpha", "/good", "exit"])
+    inputs = iter(["/wrong too early", "who got in?", "/wrong", "/wrong it was the VPN user, not the attacker",
+                   "/case alpha", "/wrong not this case's answer", "exit"])
     monkeypatch.setattr(builtins, "input", lambda prompt="": next(inputs))
     agent.run_agent_loop()
     out = capsys.readouterr().out
-    assert out.count("No answer to rate yet.") == 2                   # before any answer, and after switching
+    assert out.count("No answer to correct yet.") == 2                # before any answer, and after switching
     assert "Usage: /wrong <what is right>" in out and "the copilot takes this as given" in out
     cases.switch("beta")
     [entry] = case_db.get_feedback()

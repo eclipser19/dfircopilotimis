@@ -1,4 +1,4 @@
-"""Investigators teach the copilot: notes, ratings, confirmed findings, lessons, export."""
+"""Investigators teach the copilot: notes, corrections, confirmed findings, lessons, export."""
 import json
 
 import pytest
@@ -28,16 +28,15 @@ def test_notes_go_into_every_prompt_until_withdrawn(case):
 def test_a_wrong_answer_needs_the_correction_and_it_outranks_the_dossier(case):
     case.save_dossier("## Intrusion timeline\n- the C2 belongs to the dropper")
     with pytest.raises(feedback.FeedbackError, match="what is right"):
-        feedback.rate("answer", -1, "", "What does memory show?", "The dropper owns the C2.")
-    feedback.rate("answer", -1, "The C2 connection belongs to the injected spoolsv.exe.",
-                  "What does memory show?", "The dropper owns the C2.")
-    feedback.rate("answer", 1, "", "How did they get in?", "RDP after guessing.")   # right: kept, not a note
+        feedback.correct("answer", "  ", "What does memory show?", "The dropper owns the C2.")
+    feedback.correct("answer", "The C2 connection belongs to the injected spoolsv.exe.",
+                     "What does memory show?", "The dropper owns the C2.")
     prompt = build_system_prompt(case_config)
     notes_at, dossier_at = prompt.index("INVESTIGATOR NOTES"), prompt.index("CASE DOSSIER")
     assert notes_at < dossier_at and "injected spoolsv.exe" in prompt
     assert 'correcting the answer to: "What does memory show?"' in prompt
-    assert "RDP after guessing" not in prompt
-    assert [r["rating"] for r in case.get_feedback()] == [-1, 1]
+    assert "The dropper owns the C2." not in prompt                 # the wrong answer itself stays out
+    assert [r["rating"] for r in case.get_feedback()] == [-1]
 
 
 def test_confirmed_findings_are_established_for_the_agent_and_the_report(case):
@@ -76,11 +75,11 @@ def test_export_collects_every_case_and_skips_databases_from_before(tmp_path, mo
         cases.create(case_id, case_id.upper())
     cases.switch("a")
     feedback.add_note("note in a")
-    feedback.rate("answer", -1, "fix in a", "q?", "answer text")
+    feedback.correct("answer", "fix in a", "q?", "answer text")
     cases.switch("b")
     fid = case_db.record_finding("Finding in b", "d", [], "low")
     feedback.confirm_finding(fid)
-    feedback.rate("dossier", 1, "", "Investigate", "dossier text")
+    feedback.correct("dossier", "fix in b", "Investigate", "dossier text")
     import sqlite3
     (tmp_path / "data" / "old").mkdir(parents=True, exist_ok=True)
     sqlite3.connect(tmp_path / "data" / "old" / "case.db").execute("CREATE TABLE records (x)").connection.commit()

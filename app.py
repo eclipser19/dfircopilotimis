@@ -630,20 +630,20 @@ def render_message(msg: dict, index: int):
             feedback_row(msg, index)
 
 
-def feedback_cb(index: int, rating: int):
-    """A rating of an answer or dossier; a correction becomes a note the agent takes as given."""
+def feedback_cb(index: int):
+    """A correction of an answer or dossier: becomes a note the agent takes as given."""
     msg = st.session_state.messages[index]
-    comment = st.session_state.get(f"fb_text_{index}", "") if rating < 0 else ""
     st.session_state.fb_message_index = index
     try:
-        entry = feedback.rate(msg.get("kind", "answer"), rating, comment, msg.get("question", ""), msg.get("content", ""))
+        entry = feedback.correct(msg.get("kind", "answer"), st.session_state.get(f"fb_text_{index}", ""),
+                                 msg.get("question", ""), msg.get("content", ""))
     except feedback.FeedbackError as e:
         st.session_state.fb_message = f"❌ {e}"
         return
-    msg["rated"] = {"rating": entry["rating"], "by": USER or "", "comment": entry["comment"], "id": entry["feedback_id"]}
+    msg["rated"] = {"by": USER or "", "comment": entry["comment"], "id": entry["feedback_id"]}
     st.session_state.fb_open = None
     extra = ""
-    if rating < 0 and st.session_state.get(f"fb_lesson_{index}"):
+    if st.session_state.get(f"fb_lesson_{index}"):
         try:
             lesson = lessons.add(st.session_state.get(f"fb_topic_{index}", ""), entry["comment"], source="investigator",
                                  approver=USER, case=cases.current_id())
@@ -651,25 +651,18 @@ def feedback_cb(index: int, rating: int):
                      " Proposed as a lesson for every case: an admin accepts it.")
         except lessons.LessonError as e:
             extra = f" Not saved as a lesson: {e}"
-    st.session_state.fb_message = ("✅ Saved as right, with its question, for whoever improves the copilot. Later "
-                                   "answers don't change: to build on something in it, confirm its finding or add a "
-                                   "note." if rating > 0 else
-                                   "✅ The copilot takes this as given in this case from now on." + extra)
+    st.session_state.fb_message = "✅ The copilot takes this as given in this case from now on." + extra
 
 
 def feedback_row(msg: dict, index: int):
-    """👍 / 👎 under an answer: how investigators teach the copilot (copilot/feedback.py)."""
+    """👎 under an answer: investigators correct the copilot (copilot/feedback.py)."""
     rated = msg.get("rated")
-    if rated:
-        st.caption(("👍 Marked right" if rated["rating"] > 0 else "👎 Corrected") +
+    if rated and rated.get("rating", -1) < 0:          # chats saved before 👍 was removed may hold a positive one
+        st.caption("👎 Corrected" +
                    (f" by {citations.md_literal(rated['by'])}" if rated.get("by") else "") +
                    (f": {citations.md_literal(rated['comment'])}" if rated.get("comment") else ""))
     else:
-        c1, c2, _ = st.columns([1, 1, 8])
-        c1.button("👍", key=f"fb_up_{index}", on_click=feedback_cb, args=(index, 1),
-                  help="Right: saved with the question for whoever improves the copilot (feedback export). "
-                       "It doesn't change later answers: notes and confirmed findings do.")
-        if c2.button("👎", key=f"fb_down_{index}", help="Wrong or incomplete: say what is right. The copilot takes "
+        if st.button("👎", key=f"fb_down_{index}", help="Wrong or incomplete: say what is right. The copilot takes "
                                                        "it as given in this case from now on."):
             st.session_state.fb_open = index
         if st.session_state.get("fb_open") == index:
@@ -679,7 +672,7 @@ def feedback_row(msg: dict, index: int):
             if st.checkbox("Also propose it as a lesson for every case (how to read an artifact or a kind of "
                            "record, never a fact of this case)", key=f"fb_lesson_{index}"):
                 st.text_input("Lesson topic (an artifact or a kind of question)", key=f"fb_topic_{index}")
-            st.button("Save correction", key=f"fb_save_{index}", on_click=feedback_cb, args=(index, -1))
+            st.button("Save correction", key=f"fb_save_{index}", on_click=feedback_cb, args=(index,))
     if st.session_state.get("fb_message_index") == index and st.session_state.get("fb_message"):
         st.caption(st.session_state.fb_message)
 

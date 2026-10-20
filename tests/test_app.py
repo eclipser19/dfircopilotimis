@@ -166,9 +166,7 @@ def test_investigators_correct_answers_and_the_copilot_takes_it_as_given(app_env
     assert "Not saved as a lesson" in _texts(at)                                       # no topic given
     assert "injected spoolsv.exe" in at.session_state["chat_history"][0].content     # in the next answers' prompt
     assert app_env.get_feedback()[0]["question"] == "What does memory show?"
-    at.chat_input[0].set_value("How did they get in?").run()
-    next(b for b in at.button if b.key == "fb_up_3").click().run()
-    assert "👍 Marked right" in _texts(at) and [r["rating"] for r in app_env.get_feedback()] == [-1, 1]
+    assert "👎 Corrected" in _texts(at) and not any(b.key == "fb_down_1" for b in at.button)
 
 
 def test_notes_and_confirmed_findings_in_the_findings_tab(app_env):

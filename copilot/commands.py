@@ -5,8 +5,8 @@ Chat commands handled locally, without the LLM (they cost no tokens):
   /note <text>    a fact or correction the copilot takes as given in this case (copilot/feedback.py)
   /notes          this case's notes; /notes remove <number> withdraws one
   /help           this list
-/investigate (uses the LLM) is run by the CLI loop and the app themselves; so are /good and /wrong
-<correction> in the CLI (rating the last answer; the app has buttons under each answer).
+/investigate (uses the LLM) is run by the CLI loop and the app themselves; so is /wrong <correction>
+in the CLI (correcting the last answer; the app has a button under each answer).
 """
 from copilot import cases
 

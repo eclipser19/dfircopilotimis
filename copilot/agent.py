@@ -140,7 +140,7 @@ def run_agent_loop():
     def open_chat():
         """Loads the active case's saved conversation (the agent gets its memory back)."""
         state["case"] = cases.current_id()
-        state["last"] = None            # /good and /wrong rate answers of the case they were given in
+        state["last"] = None            # /wrong corrects answers of the case they were given in
         from copilot import config_check
         for problem in config_check.case_problems(case_config):
             print(f"[!] case settings: {problem}")
@@ -200,21 +200,20 @@ def run_agent_loop():
         print(f"\n[*] Dossier saved ({entry['steps']} steps, {entry['tokens']:,} tokens). "
               f"Every question now starts from it; /investigate writes it again.")
 
-    def rate_last(text: str):
-        """/good or /wrong <what is right>: rates the last answer (copilot/feedback.py)."""
+    def correct_last(text: str):
+        """/wrong <what is right>: corrects the last answer (copilot/feedback.py)."""
         from copilot import feedback
-        word, _, comment = text.strip().partition(" ")
+        comment = text.strip().partition(" ")[2]
         if not state.get("last"):
-            print("[!] No answer to rate yet.")
+            print("[!] No answer to correct yet.")
             return
         question, answer, kind = state["last"]
         try:
-            entry = feedback.rate(kind, 1 if word.lower() == "/good" else -1, comment, question, answer)
+            entry = feedback.correct(kind, comment, question, answer)
         except feedback.FeedbackError as e:
             print(f"[!] {e} Usage: /wrong <what is right>")
             return
-        print("[*] Kept with the question." if entry["rating"] > 0 else
-              f"[*] Note {entry['feedback_id']}: the copilot takes this as given in this case from now on.")
+        print(f"[*] Note {entry['feedback_id']}: the copilot takes this as given in this case from now on.")
         follow_case()                   # the system prompt gets the correction
 
     from copilot import approvals
@@ -283,8 +282,8 @@ def run_agent_loop():
             investigate()
             continue
 
-        if user_input.strip().lower().split(" ")[0] in ("/good", "/wrong"):
-            rate_last(user_input)
+        if user_input.strip().lower().split(" ")[0] == "/wrong":
+            correct_last(user_input)
             continue
 
         reply = commands.handle(user_input)

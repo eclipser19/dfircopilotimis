@@ -83,7 +83,6 @@ Analysts correct answers, add notes and confirm findings as they work (README, "
   the artifact tip or the prompt rule (generic wording only), or accept the matching lesson.
 - A corrected answer with checked records is a ready benchmark question: put the question and the
   corrected facts into a case's `benchmark.yaml`, with the records as evidence in its `answer_key.md`.
-- Answers marked right are regression checks: a change that breaks them needs a reason.
 - Confirmed findings show what analysts trust; retracted ones (with their reasons) show what misleads.
 Never copy a case's facts (names, addresses, hashes) into knowledge, prompts or lessons.
 
