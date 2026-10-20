@@ -44,6 +44,17 @@ def test_search_is_case_insensitive_substring_with_totals(db):
     assert db.search_events("#3")["total"] == 1  # under 3 chars falls back to LIKE
 
 
+def test_search_of_one_source_is_filtered_before_the_limit(db):
+    # What the app's search showed empty: the other source's matches filled the first page.
+    db.ingest_artifact_results([{"Message": f"alpha event {i}"} for i in range(20)], "Windows.EventLogs.X",
+                               client_id="C.1")
+    db.ingest_artifact_results([{"Message": "alpha in memory"}], "Memory.strings", client_id="memory:m")
+    for keyword in ("alpha", "a"):                        # the index, and the LIKE fallback (under 3 chars)
+        res = db.search_events(keyword, limit=5, source="Memory.strings")
+        assert res["total"] == 1 and res["records"][0]["source"] == "Memory.strings"
+    assert db.search_events("alpha", limit=5)["total"] == 21
+
+
 def test_search_treats_wildcards_literally(db):
     db.ingest_artifact_results([{"Message": "100% done"}, {"Message": "1000 done"}], "S", client_id="C.1")
     assert db.search_events("0%")["total"] == 1

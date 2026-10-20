@@ -985,14 +985,14 @@ def data_view(stats: dict):
                           format_func=lambda s: s if s == sources_by_name[0] else
                           f"{s} ({next(x['records'] for x in stats['by_source'] if x['source'] == s):,})")
     if term.strip():
-        found = case_db.search_events(term.strip(), limit=500)
-        rows = [r for r in found["records"] if source == sources_by_name[0] or r.get("source") == source]
+        found = case_db.search_events(term.strip(), limit=500,
+                                      source=None if source == sources_by_name[0] else source)
         clock = report.Clock(case_config.clock_offset_minutes)
         st.caption(f"{found['total']:,} records match" + (f"; showing the first {len(found['records'])}"
                                                           if found["total"] > len(found["records"]) else ""))
         st.dataframe([{"UTC": clock.corrected(r.get("first_seen")), "Recorded": clock.recorded(r.get("first_seen")),
                        "Source": r.get("source"), "Event": r.get("description"), "Evidence ID": r.get("evidence_id")}
-                      for r in rows], hide_index=True, width="stretch")
+                      for r in found["records"]], hide_index=True, width="stretch")
     return action
 
 

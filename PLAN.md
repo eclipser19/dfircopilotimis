@@ -105,12 +105,13 @@ Still open from the review: steps 6 and 8 below (step 2 is done).
    findings, key entities, hypotheses, contradictions, gaps) before any question; every later
    conversation's system prompt carries it. It runs after the triage in the app and the CLI,
    from the sidebar's **Investigate** button or `/investigate`, and before the questions in a
-   benchmark run (`--no-investigate` for the old behaviour). First DC run (091413): 87.0%, faster
-   (6.1 vs 9.4 min), but the investigation stopped after 7 of 40 steps and its dossier skipped
-   phases, so the questions still investigated (52k-299k tokens each). The prompt now demands a
-   search per phase and qualified negatives. Next: Injector and DC again. If dossiers stay
-   shallow, split the investigation into one turn per phase group (each with its playbooks) and
-   a final turn that writes the dossier.
+   benchmark run (`--no-investigate` for the old behaviour). Measured: DC 87.0% at 4.5 min and
+   1.18M tokens (9.4 min without it); Injector 58.3%, because *entry* repeated the dossier's
+   "web logs not collected" instead of reading them. Fixed after those runs: the dossier's gaps
+   are a to-do list for the questions, the investigation is pointed at the web-attack checklist,
+   times are copied from the tools. Next: Injector again (it should be back near 70-80% on *entry*
+   and *uploads*), then OU, where the savings should be largest. If dossiers stay shallow, split the
+   investigation into one turn per phase group and a final turn that writes the dossier.
 4. **Measure properly.**
    - Two runs per benchmark after each change, recorded in BENCHMARKS.md.
    - Each run saves what it ran with: commit and uncommitted changes, case and server settings,

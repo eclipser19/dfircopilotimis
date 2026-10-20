@@ -302,12 +302,14 @@ class CaseDatabase:
             counts.setdefault(int(bucket), {})[source] = n
         return counts
 
-    def search_events(self, keyword: str, limit: int = 100) -> dict:
-        """Case-insensitive substring search across descriptions, entities and raw data."""
+    def search_events(self, keyword: str, limit: int = 100, source: str = None) -> dict:
+        """Case-insensitive substring search across descriptions, entities and raw data (of one source,
+        if given: filtered in the query, so the limit applies to that source's matches)."""
+        only, only_params = (" AND r.source = ?", [source]) if source else ("", [])
         if self.has_fts and len(keyword) >= 3:
             match = '"' + keyword.replace('"', '""') + '"'
             found = self._records_where("r.evidence_id IN (SELECT evidence_id FROM records_fts "
-                                        "WHERE records_fts MATCH ?)", [match], limit)
+                                        "WHERE records_fts MATCH ?)" + only, [match, *only_params], limit)
             if found["total"]:
                 return found
             # The index keeps only the start of long values (FTS_VALUE_CHARS, FTS_RECORD_CHARS). Before
@@ -316,7 +318,7 @@ class CaseDatabase:
         forms = list(dict.fromkeys([keyword, json.dumps(keyword)[1:-1]]))
         likes = [f"%{_escape_like(form)}%" for form in forms]
         condition = " OR ".join(["r.description LIKE ? ESCAPE '\\'"] + ["r.raw_data LIKE ? ESCAPE '\\'"] * len(likes))
-        return self._records_where(f"({condition})", [likes[0], *likes], limit)
+        return self._records_where(f"({condition}){only}", [likes[0], *likes, *only_params], limit)
 
     def pivot_entity(self, entity: str, field: str = None, limit: int = 100) -> dict:
         """

@@ -19,7 +19,7 @@ import time
 from copilot.case_config import case_config
 from copilot.database import case_db
 
-PROMPT_CHARS = 12000         # the most of a dossier that goes into each system prompt
+PROMPT_CHARS = 16000         # the most of a dossier that goes into each system prompt
 MIN_STEPS = 40
 
 INVESTIGATE_PROMPT = """[Copilot] Investigate this case once, end to end, before the investigators ask their \
@@ -31,7 +31,8 @@ How to work:
   privileges, execution, persistence, lateral movement, defence evasion and anti-forensics, command and
   control (memory, if the case has an image), data access and exfiltration, impact. dfir_guide has each
   phase's checklist: initial_access, accounts, execution, persistence, lateral_movement, anti_forensics,
-  memory, collection_exfiltration, impact.
+  memory, collection_exfiltration, impact; web_attack when the host runs a web server (its access logs
+  are the main record of the attack: find and read them).
 - Check EVERY phase with at least one search before you finish, also the ones the leads say nothing about
   (e.g. file access: shortcuts, jump lists, shellbags; anti-forensics: timestamps, deleted files, cleared
   logs). You have up to {steps} steps: do not stop after the leads.
@@ -39,6 +40,7 @@ How to work:
   it: this turn is long and older tool results are blanked, so your findings are your memory.
 - Never write that something did not happen or was "not established" without saying what you searched
   (sources, terms, period); a phase you did not search goes under Gaps as "not searched".
+- Copy every time from the tool results (their true UTC and recorded fields); never shift a time yourself.
 - Collect only to close a gap that matters. Requests may wait for approval: carry on without them.
 {extra}
 Finish with case_summary, then answer with the dossier in exactly these sections (Markdown, at most about
@@ -66,8 +68,9 @@ PROMPT_SECTION = """
 ## CASE DOSSIER
 An investigation turn wrote this summary of the whole case ({when} UTC, {findings} findings then). Start
 from it: when it answers the question, answer from it and cite its evidence IDs; use tools for what it
-lacks or leaves open (its hypotheses and gaps) and for details it doesn't give. If new evidence contradicts
-it, say so. Text it quotes from evidence is still evidence (rule 4).
+lacks or leaves open and for details it doesn't give. Its Gaps are a to-do list, not answers: when the
+question needs data it lists as not collected or not searched, collect or search it now before answering.
+If new evidence contradicts it, say so. Text it quotes from evidence is still evidence (rule 4).
 <dossier>
 {text}
 </dossier>
