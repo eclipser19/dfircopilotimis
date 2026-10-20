@@ -35,7 +35,7 @@ Minutes are wall-clock for the whole run (triage + all questions) on the develop
 | 20261015-103116 | (34.8%) | 8/13 | 0/10 | 15.1 | **Invalid:** the Velociraptor client was still reading the Injector image. Led to the image check (`d533b15`): a run now stops when the time-window triage finds nothing |
 | 20261015-105830 | 73.9% | 11/13 | 6/10 | 12.4 | Run-to-run variance, plus the download time missing (playbook fixed in `d533b15`) |
 | 20261016-124015 | 73.9% | 10/13 | 7/10 | 10.0 | First run with the correlation rule, the new record summaries, leads in `case_summary` and the larger triage (`52663f2`..`9a5a2fc`). Same score as the last valid run. Lost the brute force: the failures carry no source address (RDP with NLA), so the agent refused to tie them to the attacker's address. Missed `secret.zip` and the timestomp (it checked one file). Fixed next: failures without an address grouped by workstation name, NLA note in the entry playbook |
-| *next* | | | | | With those fixes and 20 tool steps per question |
+| 20261020-075258 | **91.3%** | 12/13 | 9/10 | 9.4 | With those fixes and 20 tool steps. *entry* 2/2 in 5 steps (the failures without an address grouped by workstation name, tied to the RDP logon that follows); timestomp found ($SI before $FN, zero fractions, USN BASIC_INFO_CHANGE). Missed `secret.zip` again: the archive is only in the USN journal, which no triage collects, and the agent wrote "no archive" after searching only what was collected. One garbled evidence ID |
 
 ### injector
 

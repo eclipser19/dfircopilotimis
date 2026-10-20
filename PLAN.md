@@ -81,9 +81,13 @@ held-out `corporatesecrets`).
    - Executions from Prefetch, 4688 and BAM in those windows.
    - Timestomping candidates ($SI vs $FN, zero fractions).
    - Persistence that differs from the operating system's own.
-4. **Speed.** Per-step timings in the run log (to tell slow model calls from slow Velociraptor);
+4. **File activity in triage.** Archives, scripts and executables created in the incident window
+   are only in the USN journal and the MFT, which triage doesn't collect (too large unfiltered).
+   A filtered collection (incident window, those extensions) would let the data question see them;
+   the DC run keeps missing `secret.zip` for this reason.
+5. **Speed.** Per-step timings in the run log (to tell slow model calls from slow Velociraptor);
    collect triage artifacts in parallel; a shorter system prompt and fewer tools once the leads
    carry more of the work.
-5. **Prompt rewrite** once the tools are stable: fewer, shorter rules.
-6. **Report:** PDF export; report sharing.
-7. **Environment:** image hashing and the read-only mount procedure recorded in the case file.
+6. **Prompt rewrite** once the tools are stable: fewer, shorter rules.
+7. **Report:** PDF export; report sharing.
+8. **Environment:** image hashing and the read-only mount procedure recorded in the case file.
