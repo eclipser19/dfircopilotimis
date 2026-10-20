@@ -651,7 +651,9 @@ def feedback_cb(index: int, rating: int):
                      " Proposed as a lesson for every case: an admin accepts it.")
         except lessons.LessonError as e:
             extra = f" Not saved as a lesson: {e}"
-    st.session_state.fb_message = ("✅ Kept with the question." if rating > 0 else
+    st.session_state.fb_message = ("✅ Saved as right, with its question, for whoever improves the copilot. Later "
+                                   "answers don't change: to build on something in it, confirm its finding or add a "
+                                   "note." if rating > 0 else
                                    "✅ The copilot takes this as given in this case from now on." + extra)
 
 
@@ -665,7 +667,8 @@ def feedback_row(msg: dict, index: int):
     else:
         c1, c2, _ = st.columns([1, 1, 8])
         c1.button("👍", key=f"fb_up_{index}", on_click=feedback_cb, args=(index, 1),
-                  help="Right: kept with the question for whoever improves the copilot.")
+                  help="Right: saved with the question for whoever improves the copilot (feedback export). "
+                       "It doesn't change later answers: notes and confirmed findings do.")
         if c2.button("👎", key=f"fb_down_{index}", help="Wrong or incomplete: say what is right. The copilot takes "
                                                        "it as given in this case from now on."):
             st.session_state.fb_open = index
