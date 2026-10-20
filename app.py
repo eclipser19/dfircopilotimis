@@ -167,9 +167,10 @@ def extract_iocs_cb(prefix: str, use_llm: bool):
 NO_IMAGE = "(none)"
 
 
-def memory_fields(prefix: str, image: str = "", os_name: str = "windows"):
-    """Memory image picker: the images in the server's memory folder (no local files needed)."""
-    images = {i["name"]: i["size"] for i in memory.available_images()}
+def memory_fields(prefix: str, image: str = "", os_name: str = "windows", locked: bool = False):
+    """Memory image picker: the images in the server's memory folder this investigator may use
+    (no local files needed). Locked once the case holds data from its image."""
+    images = {i["name"]: i["size"] for i in cases.usable_memory_images()}
     if not memory.images_dir():
         st.caption("🧠 Memory analysis: set `memory.images_dir` in server.yaml to pick an image here.")
     options = [NO_IMAGE] + sorted(images) + ([image] if image and image not in images else [])
@@ -177,7 +178,9 @@ def memory_fields(prefix: str, image: str = "", os_name: str = "windows"):
     c1.selectbox("Memory image", options, index=options.index(image) if image else 0, key=prefix + "mem",
                  format_func=lambda n: n if n == NO_IMAGE else
                  f"{n} ({memory.human_size(images[n])})" if n in images else f"{n} (missing)",
-                 help="Analyzed with Volatility 3. Images are files in the server's memory folder.")
+                 disabled=locked,
+                 help="Analyzed with Volatility 3. Images are files in the server's memory folder." +
+                      (" Locked: this case holds data from it." if locked else ""))
     c2.selectbox("OS", ["windows", "linux"], index=1 if os_name == "linux" else 0, key=prefix + "mem_os")
 
 
@@ -225,7 +228,9 @@ def save_settings_cb(case_id: str):
                      start_time=st.session_state[p + "start"], end_time=st.session_state[p + "end"],
                      clock_offset_minutes=int(st.session_state[p + "offset"]),
                      description=st.session_state[p + "desc"], iocs=_ioc_values(p),
-                     memory_image=_picked_image(p), memory_os=st.session_state.get(p + "mem_os", "windows"))
+                     memory_image=_picked_image(p), memory_os=st.session_state.get(p + "mem_os", "windows"),
+                     evidence={"image_name": st.session_state.get(p + "img", ""),
+                               "image_sha256": st.session_state.get(p + "sha", "")})
     except cases.CaseError as e:
         st.session_state.cs_message = f"❌ {e}"
         return
@@ -759,15 +764,23 @@ with st.sidebar:
         with st.expander("⚙️ Case settings", expanded=False):
             cid = cases.current_id()
             p = f"cs_{cid}_"
+            held = cases.collected_sources(cid)
             st.text_input("Name *", value=case_config.case_name, key=p + "name")
-            st.text_input("Velociraptor client ID", value=case_config.client_id, key=p + "client")
+            st.text_input("Velociraptor client ID", value=case_config.client_id, key=p + "client",
+                          disabled=bool(held["client"] and case_config.client_id),
+                          help="Locked once the case holds data from it." if held["client"] else None)
+            c1, c2 = st.columns(2)
+            c1.text_input("Disk image file", value=case_config.evidence.get("image_name", ""), key=p + "img",
+                          help="For the report's evidence section.")
+            c2.text_input("Disk image SHA-256", value=case_config.evidence.get("image_sha256", ""), key=p + "sha")
             c1, c2 = st.columns(2)
             c1.text_input("Window start (UTC)", value=case_config.start_time, key=p + "start")
             c2.text_input("Window end (UTC)", value=case_config.end_time, key=p + "end")
             st.number_input("Host clock ahead of UTC (minutes)", value=case_config.clock_offset_minutes,
                             step=15, key=p + "offset")
             st.text_area("Description", value=case_config.description, key=p + "desc")
-            memory_fields(p, case_config.memory_image, case_config.memory_os)
+            memory_fields(p, case_config.memory_image, case_config.memory_os,
+                          locked=bool(held["memory"] and case_config.memory_image))
             ioc_fields(p, case_config.iocs)
             st.button("Save settings", on_click=save_settings_cb, args=(cid,))
             if st.session_state.get("cs_message"):

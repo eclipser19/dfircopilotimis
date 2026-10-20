@@ -364,6 +364,30 @@ def image_path(name: str = None) -> str:
     return path
 
 
+def image_identity(path: str = None) -> dict:
+    """
+    Size, modification time and SHA-256 of the case's memory image, stored in the case database
+    for the report (provenance). Hashed once per version of the file, so the first run on a large
+    image takes a little longer; a file that changes later gets a second entry.
+    """
+    import hashlib
+    path = path or image_path()
+    source = f"memory:{case_config.memory_image}"
+    stat = os.stat(path)
+    modified = datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()
+    known = case_db.evidence_file(source, stat.st_size, modified)
+    if known:
+        return known
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(4 * 1024 * 1024), b""):
+            digest.update(block)
+    case_db.record_evidence_file(source, stat.st_size, modified, digest.hexdigest())
+    case_db.log_query("evidence_hash", f"{case_config.memory_image}: SHA-256 {digest.hexdigest()} "
+                                       f"({stat.st_size} bytes, modified {modified})", 0)
+    return case_db.evidence_file(source, stat.st_size, modified)
+
+
 def human_size(size: int) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if size < 1024 or unit == "TB":
@@ -633,6 +657,10 @@ def execute(short: str, options: dict, image: str = None) -> dict:
         cmd = build_command(image, plugin_name, options, spec)   # settings problems surface before anything runs
     else:
         plugin_name, cmd = short, None                        # done here, not by Volatility
+    try:
+        image_identity(image)
+    except OSError:
+        pass                    # an unreadable file fails below, with Volatility's explanation
     started = datetime.now(timezone.utc)
     flow_id = f"MEM.{short}.{started.strftime('%Y%m%d%H%M%S%f')}"
     source = f"Memory.{plugin_name}"

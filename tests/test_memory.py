@@ -272,6 +272,28 @@ def test_report_names_the_memory_image_and_capture_time(case, mem):
         "memory image SystemTime: 2020-09-19 05:10:39+00:00"
 
 
+def test_memory_image_is_hashed_once_for_the_report(case, mem, tmp_path):
+    import hashlib
+    import time
+    from copilot.report import build_report
+    memory.run("windows.pslist")
+    memory.run("windows.netscan")
+    files = case.get_evidence_files()
+    assert len(files) == 1 and files[0]["sha256"] == hashlib.sha256(b"\0" * 2048).hexdigest()
+    assert files[0]["source"] == "memory:desktop.mem" and files[0]["size"] == 2048
+    case_config.data["evidence"] = {"image_name": "ws01.E01", "image_sha256": "ab" * 32}
+    report = build_report(case, case_config, "ES", "- R")
+    assert f"| Memory image | desktop.mem | 2.0 KB, SHA-256 {files[0]['sha256']} (hashed " in report
+    assert f"| Disk (Velociraptor client) | {CLIENT} | image ws01.E01; SHA-256 {'ab' * 32} | 0 | 0 |" in report
+    assert "changed between analyses" not in report
+    image = tmp_path / "memory" / "desktop.mem"
+    image.write_bytes(b"\1" * 2048)                                   # the file is replaced
+    os.utime(image, (time.time() + 10, time.time() + 10))
+    memory.run("windows.pslist")
+    assert len(case.get_evidence_files()) == 2
+    assert "The memory image desktop.mem changed between analyses" in build_report(case, case_config, "ES", "- R")
+
+
 def test_symbols_dir_pointing_at_a_table_says_which_folder_to_use(case, mem, tmp_path, monkeypatch, capsys):
     symbols = tmp_path / "volatility3" / "symbols"
     table = symbols / "windows" / "ntkrnlmp.pdb" / "81BC5C377C525081645F9958F209C527-1.json.xz"

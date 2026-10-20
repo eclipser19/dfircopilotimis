@@ -20,6 +20,10 @@ llm:
 login:
   # Refuse to run without accounts (python -m copilot.auth add <username> --admin).
   required: true
+  # Who may open the first case on a Velociraptor client or memory image no case uses yet:
+  # anyone (default) or admins. Evidence already in a case is always limited to the people
+  # who can open one of its cases.
+  # new_evidence: admins
 
 memory:
   # Memory analysis with Volatility 3. Install it once, with the Python that runs the copilot:

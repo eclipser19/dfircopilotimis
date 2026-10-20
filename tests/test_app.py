@@ -584,6 +584,30 @@ def test_memory_image_is_picked_from_the_server_folder(mem_app, app_env, tmp_pat
     assert "Memory image: desktop.mem" in _texts(at)
 
 
+def test_evidence_is_locked_once_collected_and_its_hash_can_be_recorded(mem_app, app_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("DFIR_CASES_DIR", str(tmp_path / "cases"))
+    monkeypatch.setenv("DFIR_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("DFIR_CASE_DIR", raising=False)
+    monkeypatch.setattr(case_config, "path", case_config.path)
+    cases.create("m", "Memory case", client_id=CLIENT, memory_image="desktop.mem")
+    cases.switch("m")
+    cases.consume_switch()
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert not at.text_input(key="cs_m_client").disabled and not at.selectbox(key="cs_m_mem").disabled
+    from copilot.database import case_db
+    case_db.upsert_collection("F.1", client_id=CLIENT, artifact="X", state="FINISHED", rows_ingested=1)
+    case_db.upsert_collection("MEM.x", client_id="memory:desktop.mem", artifact="Y", state="FINISHED",
+                              rows_ingested=1)
+    at.run()
+    assert at.text_input(key="cs_m_client").disabled and at.selectbox(key="cs_m_mem").disabled
+    at.text_input(key="cs_m_sha").set_value("AB" * 32)
+    at.text_input(key="cs_m_img").set_value("ws01.E01")
+    next(b for b in at.button if b.label == "Save settings").click().run()
+    assert not at.exception and "Saved" in _texts(at)
+    assert case_config.evidence == {"image_name": "ws01.E01", "image_sha256": "ab" * 32}
+    assert case_config.client_id == CLIENT and case_config.memory_image == "desktop.mem"
+
+
 def test_agent_memory_request_waits_in_the_sidebar(mem_app, app_env):
     at = AppTest.from_file(APP, default_timeout=30)
     llm = ScriptedLLM(

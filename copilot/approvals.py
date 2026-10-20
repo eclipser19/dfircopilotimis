@@ -13,6 +13,10 @@ Per action, the case file decides: confirm (default) | auto | off
                   memory: confirm}
 Collections keep their own setting, collection.agent_collections.
 
+A collection or memory run decided later is bound to the evidence it was asked for: if another
+member changed the case's client or memory image meanwhile, approving it does not run it (it
+would read other evidence than the investigator was shown).
+
 Every request and decision is written to the case's audit log.
 """
 import json
@@ -30,6 +34,10 @@ ACTIONS = {
     "lesson": "add a lesson to the agent's knowledge",
 }
 MODES = ("confirm", "auto", "off")
+# The evidence a collection or memory run reads; a queued one runs only if it is still the case's.
+# (The time window needs no binding: it is already in a collection's parameters when it is asked.)
+BOUND = {"client_id": "Velociraptor client", "memory_image": "memory image"}
+BOUND_KINDS = ("collect", "memory")
 
 # Set by the UI: ask(request) -> True (approved now), False (declined) or "queued" (decided later).
 ASK = None
@@ -56,13 +64,18 @@ def _log(request: dict, decision: str):
                                 f"-- {json.dumps(request['details'], default=str)}", 0)
 
 
+def _bound() -> dict:
+    return {key: str(getattr(case_config, key) or "") for key in BOUND}
+
+
 def gate(kind: str, summary: str, details: dict) -> dict:
     """
     Asks for approval as configured. Returns the approved request, or raises ApprovalError
     when the action must not run now (declined, waiting for the investigator, or not allowed).
     """
     from copilot import cases
-    request = {"kind": kind, "summary": summary, "details": details, "case_id": cases.current_id()}
+    request = {"kind": kind, "summary": summary, "details": details, "case_id": cases.current_id(),
+               "bound": _bound()}
     m = mode(kind)
     if m == "off":
         _log(request, "refused (agent not allowed)")
@@ -106,6 +119,13 @@ def resolve(request: dict, approved: bool, actor: str = None):
     if not approved:
         _log(request, "declined")
         return None
+    if request["kind"] in BOUND_KINDS:
+        asked, now = request.get("bound") or {}, _bound()
+        changed = [label for key, label in BOUND.items() if key in asked and asked[key] != now[key]]
+        if changed:
+            _log(request, f"not run ({', '.join(changed)} changed since it was asked)")
+            raise ApprovalError(f"Not run: the case's {' and '.join(changed)} changed since this was asked for. "
+                                f"Ask the agent again if it is still needed.")
     request["approved_by"] = "investigator"
     _log(request, "approved")
     return execute(request)

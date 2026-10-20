@@ -47,7 +47,7 @@ CASE_SCHEMA = {
 
 SERVER_SCHEMA = {
     "llm": {"base_url": TEXT, "model": TEXT, "api_key": TEXT, "local": BOOL, "timeout": NUMBER},
-    "login": {"required": BOOL},
+    "login": {"required": BOOL, "new_evidence": one_of("anyone", "admins")},
     "memory": {"images_dir": TEXT, "symbols_dir": TEXT, "offline": BOOL, "timeout": NUMBER,
                "yara_dir": TEXT, "command": TEXT},
     "knowledge": {"learned_file": TEXT},

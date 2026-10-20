@@ -265,6 +265,15 @@ class CaseConfig:
         return [str(p) for p in plan] if isinstance(plan, list) else []
 
     @property
+    def evidence(self) -> dict:
+        """What the disk image is, for the report: case.yaml `evidence:` (image_name, image_sha256,
+        image_md5, acquired, notes)."""
+        section = self.data.get("evidence") or {}
+        if not isinstance(section, dict):
+            return {}
+        return {str(k): str(v) for k, v in section.items() if v not in (None, "")}
+
+    @property
     def allow_raw_vql(self) -> bool:
         return bool((self.data.get("agent", {}) or {}).get("allow_raw_vql", False))
 

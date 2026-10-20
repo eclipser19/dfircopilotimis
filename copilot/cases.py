@@ -14,6 +14,12 @@ Access (when sign-in is used), in case.yaml:
 Admins see every case. A case without an owner (e.g. made before sign-in) is visible to
 admins only, until an admin assigns it. Without sign-in (CLI, or the app without
 accounts) every case is accessible.
+
+Evidence sources (a Velociraptor client, a memory image) are protected too, not only case
+folders: a case may name a source only if no case uses it yet, or if the user can open one of
+the cases that use it (an admin may name any). `login.new_evidence: admins` in server.yaml
+keeps unused sources for admins. Once a case holds data from a source, its settings can't be
+pointed at another one: that would mix two machines' evidence in one database.
 """
 import os
 import re
@@ -205,6 +211,116 @@ def _check_memory_image(name: str) -> str:
     return name
 
 
+# ---------------------------------------------------------------- evidence sources
+SOURCE_LABELS = {"client": "Velociraptor client", "memory": "memory image"}
+MEMORY_SOURCE = "memory:"          # how memory runs name their source in the database (memory.execute)
+
+
+def _sources(data: dict) -> dict:
+    """The evidence a case file points at: {"client": "C.<id>", "memory": "<image>"}, empty ones left out."""
+    vr, mem = data.get("velociraptor") or {}, data.get("memory") or {}
+    found = {"client": str(vr.get("client_id") or "").strip() if isinstance(vr, dict) else "",
+             "memory": str(mem.get("image") or "").strip() if isinstance(mem, dict) else ""}
+    return {kind: value for kind, value in found.items() if value}
+
+
+def _same_source(kind: str, a, b) -> bool:
+    a, b = str(a or "").strip(), str(b or "").strip()
+    if not (a and b):
+        return False
+    if kind == "client":
+        return a.lower() == b.lower()
+    return os.path.normcase(a.replace("\\", "/")) == os.path.normcase(b.replace("\\", "/"))
+
+
+def _case_sources() -> list:
+    """(case_id, sources) of every case, whoever owns it: read once per check."""
+    found = []
+    for case_id in _all_ids():
+        try:
+            found.append((case_id, _sources(_read(case_id))))
+        except (CaseError, OSError, yaml.YAMLError):
+            continue
+    return found
+
+
+def new_evidence_policy() -> str:
+    """Who may open the first case on a source: anyone (default) or admins (login.new_evidence)."""
+    from copilot import settings
+    policy = str(settings.get("login", "new_evidence", "DFIR_NEW_EVIDENCE", "anyone") or "anyone").lower()
+    return "admins" if policy == "admins" else "anyone"
+
+
+def source_problem(kind: str, value: str, user=CURRENT, index: list = None) -> str:
+    """Why this user may not point a case at this evidence source ("" = they may)."""
+    user = _user(user)
+    if not str(value or "").strip() or user is None:
+        return ""
+    from copilot import auth
+    if auth.is_admin(user):
+        return ""
+    using = [case_id for case_id, sources in (index if index is not None else _case_sources())
+             if _same_source(kind, sources.get(kind), value)]
+    if any(can_access(case_id, user) for case_id in using):
+        return ""
+    label = SOURCE_LABELS[kind]
+    if using:
+        return (f"The {label} {value} is evidence in an investigation you are not part of. Ask the owner "
+                f"of a case on it, or an admin, to add you to that case.")
+    if new_evidence_policy() == "admins":
+        return f"Only an admin can open the first case on new evidence ({label} {value})."
+    return ""
+
+
+def usable_memory_images(user=CURRENT) -> list:
+    """The server's memory images this user may put in a case ([{name, size}])."""
+    from copilot import memory
+    index = _case_sources()
+    return [i for i in memory.available_images() if not source_problem("memory", i["name"], user, index)]
+
+
+def collected_sources(case_id: str) -> dict:
+    """The evidence this case's database already holds data from: {"client": [...], "memory": [...]}."""
+    import sqlite3
+    db_file = os.path.join(data_dir_for(_case_file(case_id)), "case.db")
+    held = {"client": [], "memory": []}
+    if not os.path.isfile(db_file):
+        return held
+    conn = sqlite3.connect(db_file, timeout=60)
+    try:
+        rows = conn.execute("SELECT DISTINCT client_id FROM collections WHERE rows_ingested > 0").fetchall()
+    except sqlite3.Error:
+        rows = []
+    finally:
+        conn.close()
+    for (source,) in rows:
+        source = str(source or "")
+        if source.startswith(MEMORY_SOURCE):
+            held["memory"].append(source[len(MEMORY_SOURCE):])
+        elif source:
+            held["client"].append(source)
+    return held
+
+
+def _check_sources(case_id: str, before: dict, after: dict):
+    """A case's new evidence sources must be the user's to use, and must not replace the source
+    its data came from (CaseError)."""
+    index = None
+    for kind, value in after.items():
+        if _same_source(kind, before.get(kind), value):
+            continue
+        index = index if index is not None else _case_sources()
+        problem = source_problem(kind, value, index=index)
+        if problem:
+            raise CaseError(problem)
+        if case_id:
+            other = [s for s in collected_sources(case_id)[kind] if not _same_source(kind, s, value)]
+            if other:
+                label = SOURCE_LABELS[kind]
+                raise CaseError(f"This case already holds data from {label} {', '.join(other)}: pointing it at "
+                                f"{value} would mix two sources' evidence in one case. Create a new case for {value}.")
+
+
 def create(case_id: str, name: str, client_id: str = "", start_time: str = "", end_time: str = "",
            description: str = "", clock_offset_minutes: int = 0, iocs: dict = None,
            copy_from: str = None, dry_run: bool = False, memory_image: str = "", memory_os: str = "windows") -> str:
@@ -260,6 +376,7 @@ def create(case_id: str, name: str, client_id: str = "", start_time: str = "", e
     }
     if user:
         data["access"] = {"owner": user, "members": []}
+    _check_sources(None, {}, _sources(data))
     if dry_run:
         return path
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -282,7 +399,7 @@ def _read(case_id: str) -> dict:
 
 # Settings the UI and the agent may change on an existing case.
 EDITABLE = {"name", "client_id", "start_time", "end_time", "description", "clock_offset_minutes", "iocs",
-            "memory_image", "memory_os", "collect", "memory_collect"}
+            "memory_image", "memory_os", "collect", "memory_collect", "evidence"}
 ARTIFACT_NAME_RE = re.compile(r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)+$")
 
 
@@ -322,6 +439,8 @@ def update(case_id: str, dry_run: bool = False, **changes) -> dict:
     """
     Changes a case's settings (name, client_id, window, description, clock offset, IOCs).
     Rewrites its case.yaml (comments in the file are not kept). Reloads it if active.
+    A new client or memory image must be one the user may use, and can't replace the source
+    the case already holds data from.
     """
     from copilot.iocs import clean
     from copilot.normalize import normalize_bound
@@ -330,6 +449,7 @@ def update(case_id: str, dry_run: bool = False, **changes) -> dict:
         raise CaseError(f"Cannot change: {', '.join(sorted(unknown))}.")
     _check(case_id)
     data = _read(case_id)
+    before = _sources(data)
     if "name" in changes:
         if not str(changes["name"]).strip():
             raise CaseError("A case name is required.")
@@ -363,10 +483,43 @@ def update(case_id: str, dry_run: bool = False, **changes) -> dict:
         data["collect"] = _check_triage(changes["collect"])
     if "memory_collect" in changes:
         data.setdefault("memory", {})["collect"] = _check_memory_triage(changes["memory_collect"])
+    if "evidence" in changes:
+        data["evidence"] = _check_evidence(changes["evidence"], data.get("evidence"))
+        if not data["evidence"]:
+            del data["evidence"]
+    after = _sources(data)
+    _check_sources(case_id, before, after)
     if dry_run:
         return data
     _write(case_id, data)
+    moved = [f"{SOURCE_LABELS[k]} {before.get(k) or '-'} -> {after.get(k) or '-'}"
+             for k in SOURCE_LABELS if not _same_source(k, before.get(k), after.get(k))
+             and (before.get(k) or after.get(k))]
+    if moved and os.path.isfile(os.path.join(data_dir_for(_case_file(case_id)), "case.db")):
+        _audit(case_id, "case_evidence", "; ".join(moved))
     return data
+
+
+EVIDENCE_FIELDS = {"image_name": None, "image_sha256": re.compile(r"^[0-9a-fA-F]{64}$"),
+                   "image_md5": re.compile(r"^[0-9a-fA-F]{32}$"), "acquired": None, "notes": None}
+
+
+def _check_evidence(values: dict, old) -> dict:
+    """The case file's `evidence` section (what the disk image is, for the report): known fields,
+    hashes as hex; empty values are dropped."""
+    merged = dict(old) if isinstance(old, dict) else {}
+    for key, value in (values or {}).items():
+        if key not in EVIDENCE_FIELDS:
+            raise CaseError(f"Unknown evidence field '{key}' (known: {', '.join(EVIDENCE_FIELDS)}).")
+        value = str(value or "").strip()
+        pattern = EVIDENCE_FIELDS[key]
+        if value and pattern and not pattern.match(value):
+            raise CaseError(f"{key} must be {'64' if key.endswith('sha256') else '32'} hexadecimal characters.")
+        if value:
+            merged[key] = value.lower() if pattern else value
+        else:
+            merged.pop(key, None)
+    return merged
 
 
 def _write(case_id: str, data: dict):
@@ -440,11 +593,14 @@ def copy_data(source_id: str, target_id: str) -> dict:
     from copilot.database import CaseDatabase
     _check(source_id)
     _check(target_id)
-    source_data, target_data = _read(source_id), _read(target_id)
-    src_client = (source_data.get("velociraptor", {}) or {}).get("client_id", "")
-    dst_client = (target_data.get("velociraptor", {}) or {}).get("client_id", "")
-    if src_client and dst_client and src_client != dst_client:
-        raise CaseError(f"Cases are on different evidence clients ({src_client} vs {dst_client}).")
+    source_sources, target_sources = _sources(_read(source_id)), _sources(_read(target_id))
+    held = collected_sources(source_id)
+    for kind, label in (("client", "evidence clients"), ("memory", "memory images")):
+        target = target_sources.get(kind)
+        other = [s for s in dict.fromkeys([source_sources.get(kind), *held[kind]])
+                 if s and target and not _same_source(kind, s, target)]
+        if other:
+            raise CaseError(f"Cases are on different {label} ({', '.join(other)} vs {target}).")
     src_db = os.path.join(data_dir_for(_case_file(source_id)), "case.db")
     if not os.path.isfile(src_db):
         raise CaseError(f"Case '{source_id}' has no data yet.")
@@ -456,6 +612,10 @@ def copy_data(source_id: str, target_id: str) -> dict:
             before = target.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             target.conn.execute(f"INSERT OR IGNORE INTO {table} SELECT * FROM src.{table}")
             counts[table] = target.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] - before
+        try:                                   # memory image hashes (databases from before them have none)
+            target.conn.execute("INSERT OR IGNORE INTO evidence_files SELECT * FROM src.evidence_files")
+        except sqlite3.OperationalError:
+            pass
         if target.has_fts:
             try:
                 target.conn.execute("INSERT INTO records_fts (evidence_id, text) SELECT s.evidence_id, s.text "

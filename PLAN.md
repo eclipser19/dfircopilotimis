@@ -77,21 +77,25 @@ measurement ahead of new agent behaviour. Fixed right after it:
 - **Exports:** CSVs are written from the same database snapshot as the export's `case.db`, and
   cells that would run as spreadsheet formulas are neutralised.
 
-Still open from the review: steps 2, 6 and 8 below.
+Still open from the review: steps 6 and 8 below (step 2 is done).
 
 ## Next steps, most valuable first
 
 1. ~~**Reproducible baseline.**~~ Done: CI on Python 3.10-3.12, a test that fails on tracked keys,
    account files or evidence, `requirements-lock.txt` with the exact tested versions for every
    platform, and `case.yaml` / `server.yaml` checked against a schema (`copilot/config_check.py`).
-2. **Evidence provenance and access.**
-   - Each evidence source (Velociraptor client, memory image) gets an identity with its image
-     hash.
-   - Investigators get permissions per source, not only per case: today a new case can name any
-     client ID or memory image and reach that evidence.
-   - Approvals are bound to the exact source and case settings they were asked for, and a case's
-     target can't be changed silently after data was collected from it.
-   - This matters as soon as several investigators share a server.
+2. ~~**Evidence provenance and access.**~~ Done:
+   - A case may name a Velociraptor client or memory image only if no case uses it yet or the
+     user can open a case that does (admins: any; `login.new_evidence: admins` keeps unused
+     evidence for admins). The memory picker lists only usable images.
+   - A client or memory image the case holds data from is locked; copying data checks where
+     the data came from.
+   - Queued agent collections and memory runs are bound to the evidence they were asked for.
+   - The report lists each evidence source: host, disk image name and hash (`evidence:` in
+     `case.yaml` or the settings form), memory image size and SHA-256 (hashed on first use),
+     collections, rows and times; it warns about a changed image or mixed clients.
+   - Not covered: any signed-in investigator can still see which Velociraptor clients exist
+     (IDs and host names) through the agent's `search_clients` tool, though not use them.
 3. **Investigate once, then answer.** One longer agent turn that builds the intrusion timeline and
    records findings, hypotheses, contradictions and open gaps (a case dossier), before any
    question. Questions then start from it and the leads, and only check what they add. This should

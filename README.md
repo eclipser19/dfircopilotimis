@@ -366,6 +366,31 @@ only until an admin assigns them. The agent cannot change access.
   used, so keep one tab per case.
 - The CLI (`python main.py`) runs on the server without sign-in and can open every case.
 
+**Evidence belongs to cases too.** A case reaches evidence through its Velociraptor client ID
+and its memory image, so those are protected, not only the case folders:
+
+- A new or edited case may name a client or memory image only if no case uses it yet, or if
+  you can open one of the cases that use it. Otherwise it is refused ("evidence in an
+  investigation you are not part of"): ask that case's owner to add you. Admins may name any.
+  The memory image picker lists only the images you may use.
+- `login.new_evidence: admins` in `server.yaml` keeps evidence no case uses yet for admins:
+  an admin opens the first case on each image and adds the investigators.
+- Once a case holds data from a client or memory image, that setting is locked (greyed out
+  in **Case settings**). Pointing the case at other evidence would mix two machines in one
+  database: create a new case instead. Copying data between cases checks where the data
+  came from, not only the settings.
+- An agent collection or memory run waiting for approval runs only if the case still points
+  at the evidence it was asked for. If another member changed it meanwhile, approving it
+  does nothing and says so.
+
+**Provenance in the report.** Section 2 lists each evidence source the data came from: the
+client (with the host name Velociraptor reports, and the disk image's file name and SHA-256
+entered under **Case settings** or in `case.yaml`'s `evidence:` section), each memory image
+with its size and SHA-256, how many collections and rows came from each, and when. The
+copilot hashes a memory image itself on its first Volatility run (a large image adds some
+seconds to that run, once); if the file changes later, the report warns that it has two
+hashes. A report whose records come from more than one disk client says so.
+
 ## Offline / local model
 
 The copilot needs no internet access once its packages are installed: Velociraptor, the

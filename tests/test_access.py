@@ -193,6 +193,90 @@ def test_shared_output_folder_has_a_folder_per_case(team, monkeypatch):
     assert outputs.output_dir() == str(team / "uploads" / "a")
 
 
+ONE, TWO, THREE = "C.abcdef0123456789", "C.2222222222222222", "C.3333333333333333"
+
+
+def test_evidence_in_a_case_you_cannot_open_stays_out_of_reach(team, monkeypatch):
+    as_user(monkeypatch, "bob")
+    cases.create("bob-case", "Bob's case", client_id=ONE)
+    as_user(monkeypatch, "carol")
+    for client in (ONE, ONE.upper()):                                  # client IDs compare without case
+        with pytest.raises(cases.CaseError, match="investigation you are not part of"):
+            cases.create("mine", "Mine", client_id=client)
+    cases.create("mine", "Mine", client_id=TWO)                        # evidence no case uses: hers to claim
+    with pytest.raises(cases.CaseError, match="not part of"):
+        cases.update("mine", client_id=ONE)
+    as_user(monkeypatch, "bob")
+    cases.set_access("bob-case", members=["carol"])
+    as_user(monkeypatch, "carol")                                      # a member reaches the evidence
+    cases.create("second-look", "Carol's own case on it", client_id=ONE)
+    as_user(monkeypatch, "alice")
+    cases.create("admin-case", "Admin", client_id=TWO)                 # admins may use any evidence
+
+
+def test_server_can_keep_new_evidence_for_admins(team, monkeypatch):
+    monkeypatch.setenv("DFIR_NEW_EVIDENCE", "admins")
+    as_user(monkeypatch, "bob")
+    with pytest.raises(cases.CaseError, match="Only an admin can open the first case"):
+        cases.create("b", "B", client_id=ONE)
+    cases.create("b", "B")                                             # a case without evidence is fine
+    as_user(monkeypatch, "alice")
+    cases.create("a", "A", client_id=ONE)
+    cases.set_access("a", members=["bob"])
+    as_user(monkeypatch, "bob")
+    cases.update("b", client_id=ONE)                                   # reached through case a
+
+
+def test_memory_images_of_other_investigations_are_not_offered(team, monkeypatch):
+    images = team / "memory"
+    images.mkdir()
+    for name in ("a.mem", "b.mem"):
+        (images / name).write_bytes(b"\0")
+    monkeypatch.setenv("DFIR_MEMORY_DIR", str(images))
+    as_user(monkeypatch, "bob")
+    cases.create("bob-case", "Bob's case", memory_image="a.mem")
+    assert [i["name"] for i in cases.usable_memory_images()] == ["a.mem", "b.mem"]
+    as_user(monkeypatch, "carol")
+    assert [i["name"] for i in cases.usable_memory_images()] == ["b.mem"]
+    with pytest.raises(cases.CaseError, match="memory image a.mem is evidence"):
+        cases.create("c", "C", memory_image="a.mem")
+
+
+def test_a_case_keeps_the_evidence_its_data_came_from(team, monkeypatch):
+    as_user(monkeypatch, None)
+    cases.create("a", "A", client_id=ONE)
+    cases.switch("a")
+    cases.update("a", client_id=TWO)                                   # nothing collected yet: free to fix
+    case_db.upsert_collection("F.1", client_id=TWO, artifact="X", state="FINISHED", rows_ingested=3)
+    with pytest.raises(cases.CaseError, match=f"already holds data from Velociraptor client {TWO}"):
+        cases.update("a", client_id=THREE)
+    cases.update("a", name="Renamed", client_id=TWO)                   # the same source is fine
+    cases.update("a", client_id="")                                    # clearing it is too...
+    with pytest.raises(cases.CaseError, match="already holds data"):  # ...but not pointing it elsewhere
+        cases.update("a", client_id=THREE)
+    audit = [r[0] for r in case_db.conn.execute("SELECT query FROM audit_log WHERE tool_name = 'case_evidence'")]
+    assert audit == [f"Velociraptor client {ONE} -> {TWO}", f"Velociraptor client {TWO} -> -"]
+    cases.create("b", "B", client_id=THREE)
+    with pytest.raises(cases.CaseError, match="different evidence clients"):
+        cases.copy_data("a", "b")
+
+
+def test_evidence_section_for_the_report(team, monkeypatch):
+    as_user(monkeypatch, None)
+    cases.create("a", "A")
+    cases.update("a", evidence={"image_name": "ws01.E01", "image_sha256": "AB" * 32})
+    assert yaml.safe_load(open(team / "cases" / "a" / "case.yaml"))["evidence"] == \
+        {"image_name": "ws01.E01", "image_sha256": "ab" * 32}
+    with pytest.raises(cases.CaseError, match="64 hexadecimal"):
+        cases.update("a", evidence={"image_sha256": "not a hash"})
+    with pytest.raises(cases.CaseError, match="Unknown evidence field"):
+        cases.update("a", evidence={"owner": "x"})
+    cases.update("a", evidence={"image_sha256": ""})                   # emptied fields are dropped
+    assert yaml.safe_load(open(team / "cases" / "a" / "case.yaml"))["evidence"] == {"image_name": "ws01.E01"}
+    cases.update("a", evidence={"image_name": ""})
+    assert "evidence" not in yaml.safe_load(open(team / "cases" / "a" / "case.yaml"))
+
+
 def test_without_sign_in_everything_stays_open(team, monkeypatch):
     as_user(monkeypatch, None)
     cases.create("a", "A")

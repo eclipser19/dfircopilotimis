@@ -35,6 +35,20 @@ REPORT_TEMPLATE = """# Digital Forensics & Incident Response Report
 {% if clock_skewed %}
 - **Clock correction:** the host clock ran {{ clock_offset | abs }} minutes {{ "ahead of" if clock_offset > 0 else "behind" }} true UTC. Times below are shown corrected (**UTC**) and as recorded on the host (**Recorded**).
 {% endif %}
+{% if evidence_sources %}
+
+**Evidence sources** (collection times are analysis times, UTC)
+
+| Source | Name | Identity | Collections | Rows stored | First collected | Last collected |
+|---|---|---|---|---|---|---|
+{% for s in evidence_sources %}
+| {{ s.kind }} | {{ s.name | md }} | {{ s.identity | md }} | {{ s.collections }} | {{ s.rows }} | {{ s.first }} | {{ s.last }} |
+{% endfor %}
+{% for w in evidence_warnings %}
+
+**⚠ {{ w | md }}**
+{% endfor %}
+{% endif %}
 
 | Source | Type | Records | With timestamps | Earliest (recorded) | Latest (recorded) |
 |---|---|---|---|---|---|

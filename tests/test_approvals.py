@@ -122,6 +122,23 @@ def test_cli_prompt_shows_what_the_agent_wants(monkeypatch, capsys):
     assert "The agent wants to retract a finding" in out and "'coreupdater service' because: x" in out
 
 
+def test_queued_collection_does_not_run_on_changed_evidence(case, monkeypatch):
+    queue = []
+    monkeypatch.setattr(approvals, "ASK", lambda r: queue.append(r) or "queued")
+    monkeypatch.setattr(collection, "get_vql", lambda: FakeVQL())
+    with pytest.raises(collection.CollectionError, match="Waiting for the investigator's approval"):
+        collection.collect("Windows.EventLogs.RDPAuth", {}, requested_by="agent")
+    assert queue[0]["bound"]["client_id"] == CLIENT
+    case_config.data["velociraptor"]["client_id"] = "C.9999999999999999"     # another member changed it
+    with pytest.raises(approvals.ApprovalError, match="Velociraptor client changed since this was asked for"):
+        approvals.resolve(queue[0], True, actor="bob")
+    assert case.get_collections() == []                                       # nothing ran
+    case_config.data["velociraptor"]["client_id"] = CLIENT
+    assert approvals.resolve(queue[0], True, actor="bob")["state"] == "FINISHED"
+    rows = [r[0] for r in case.conn.execute("SELECT query FROM audit_log WHERE tool_name = 'approval'")]
+    assert any("not run (Velociraptor client changed" in r for r in rows)
+
+
 def test_audit_log_names_who_decided(case, finding, monkeypatch):
     monkeypatch.setattr(approvals, "ACTOR", "alice")         # the CLI's OS user
     monkeypatch.setattr(approvals, "ASK", lambda r: False)

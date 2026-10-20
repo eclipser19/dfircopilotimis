@@ -149,6 +149,69 @@ def _memory_capture_time(db) -> str:
     return ""
 
 
+def _size(n: int) -> str:
+    for unit in ("bytes", "KB", "MB", "GB"):
+        if n < 1024 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "bytes" else f"{n:.1f} {unit}"
+        n /= 1024
+
+
+def _evidence_sources(db, config) -> tuple:
+    """
+    Provenance: each source the case's data came from (Velociraptor client, memory image) with
+    what identifies it, how much came from it and when. Returns (sources, warnings).
+    """
+    sources = {}
+    for c in db.get_collections():
+        key = str(c.get("client_id") or "")
+        if not key:
+            continue
+        entry = sources.setdefault(key, {"collections": 0, "rows": 0, "times": []})
+        entry["collections"] += 1
+        entry["rows"] += c.get("rows_ingested") or 0
+        entry["times"] += [t for t in (c.get("requested_at"), c.get("finished_at")) if t]
+    for key in (config.client_id, f"memory:{config.memory_image}" if config.memory_image else ""):
+        if key and key not in sources:
+            sources[key] = {"collections": 0, "rows": 0, "times": []}       # named by the case, nothing yet
+    hosts = db.hosts_by_source()
+    hashes = {}
+    for f in db.get_evidence_files():
+        hashes.setdefault(f["source"], []).append(f)
+    out, warnings = [], []
+    for key, entry in sources.items():
+        times = sorted(entry["times"])
+        row = {"collections": entry["collections"], "rows": entry["rows"],
+               "first": times[0][:16].replace("T", " ") if times else "—",
+               "last": times[-1][:16].replace("T", " ") if times else "—"}
+        if key.startswith("memory:"):
+            name = key[len("memory:"):]
+            versions = hashes.get(key, [])
+            identity = "; ".join(f"{_size(v['size'])}, SHA-256 {v['sha256']} (hashed {v['hashed_at'][:16].replace('T', ' ')} UTC)"
+                                 for v in versions) or "not hashed yet (hashed on the first Volatility run)"
+            if len({v["sha256"] for v in versions}) > 1:
+                warnings.append(f"The memory image {name} changed between analyses: it has "
+                                f"{len({v['sha256'] for v in versions})} different SHA-256 values.")
+            out.append({"kind": "Memory image", "name": name, "identity": identity, **row})
+            continue
+        facts = []
+        if hosts.get(key):
+            facts.append("host " + ", ".join(hosts[key]))
+        if key.lower() == config.client_id.lower():
+            ev = config.evidence
+            facts += [f"{label} {ev[field]}" for field, label in
+                      (("image_name", "image"), ("image_sha256", "SHA-256"), ("image_md5", "MD5"),
+                       ("acquired", "acquired"), ("notes", "notes")) if ev.get(field)]
+            if not ev.get("image_sha256") and not ev.get("image_md5"):
+                facts.append("image hash not recorded (case.yaml `evidence:`)")
+        else:
+            facts.append("not the case's current client")
+        out.append({"kind": "Disk (Velociraptor client)", "name": key, "identity": "; ".join(facts), **row})
+    disk = [s["name"] for s in out if not s["kind"].startswith("Memory") and s["rows"]]
+    if len(disk) > 1:
+        warnings.append(f"Records come from more than one disk client: {', '.join(disk)}.")
+    return out, warnings
+
+
 def build_report(db, config, executive_summary: str, recommendations: str, correlations: str = None,
                  now: datetime = None, with_charts: bool = False):
     """
@@ -267,6 +330,7 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
         in_window = res["total"]
 
     charts = _charts(db, config, findings, indicators, window) if with_charts else {}
+    evidence_sources, evidence_warnings = _evidence_sources(db, config)
 
     env = Environment(trim_blocks=True, lstrip_blocks=True, autoescape=False)
     env.filters["md"] = md
@@ -290,6 +354,7 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
         indicators=indicators, iocs_searched=iocs_searched, artifacts=artifacts,
         collections=collections, audit_log=audit_log, retracted=retracted, cited=cited,
         events_referenced=events_referenced, charts=charts,
+        evidence_sources=evidence_sources, evidence_warnings=evidence_warnings,
     )
     return (text, charts) if with_charts else text
 

@@ -13,6 +13,17 @@ velociraptor:
   client_id: "C.9df7df3cb9ef3ac1"   # the dead-disk client now reading the Desktop E01
   collection_wait_seconds: 300      # image collections take longer than live ones
 
+# What the disk image is, for the report's evidence section (all optional; also editable in
+# the app under Case settings). Hashes as published by the image's provider or your own.
+# evidence:
+#   image_name: <the E01 file name>
+#   image_sha256: <64 hex characters>
+#   image_md5: <32 hex characters>
+#   acquired: <when the image was taken, ISO 8601>
+#   notes: <who acquired it, how it reached you>
+# A case that holds data from its client or memory image keeps them: they can't be changed to
+# point at other evidence (create a new case for that).
+
 scope:
   # The client noticed on 19 Sep 2020; a day either side covers the run-up and aftermath.
   start_time: "2020-09-18T00:00:00Z"

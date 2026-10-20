@@ -133,6 +133,16 @@ class CaseDatabase:
 
             CREATE TABLE IF NOT EXISTS conversation (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
 
+            -- Evidence files the copilot reads itself (memory images), hashed once per version.
+            CREATE TABLE IF NOT EXISTS evidence_files (
+                source     TEXT,          -- memory:<image name>, as in collections.client_id
+                size       INTEGER,
+                modified   TEXT,          -- the file's modification time (UTC)
+                sha256     TEXT,
+                hashed_at  TEXT,
+                PRIMARY KEY (source, size, modified)
+            );
+
             CREATE TABLE IF NOT EXISTS audit_log (
                 log_id        TEXT PRIMARY KEY,
                 timestamp_utc TEXT,
@@ -442,6 +452,28 @@ class CaseDatabase:
         cur = self.conn.cursor()
         cur.execute("SELECT * FROM collections ORDER BY requested_at ASC")
         return [dict(r) for r in cur.fetchall()]
+
+    # --- Evidence files (provenance) ---
+    def evidence_file(self, source: str, size: int, modified: str) -> dict:
+        row = self.conn.execute("SELECT * FROM evidence_files WHERE source = ? AND size = ? AND modified = ?",
+                                (source, size, modified)).fetchone()
+        return dict(row) if row else {}
+
+    def record_evidence_file(self, source: str, size: int, modified: str, sha256: str):
+        self.conn.execute("INSERT OR REPLACE INTO evidence_files VALUES (?,?,?,?,?)",
+                          (source, size, modified, sha256, datetime.now(timezone.utc).isoformat()))
+        self.conn.commit()
+
+    def get_evidence_files(self) -> list:
+        return [dict(r) for r in self.conn.execute("SELECT * FROM evidence_files ORDER BY hashed_at")]
+
+    def hosts_by_source(self) -> dict:
+        """{client_id: [hostnames]} of the stored records."""
+        hosts = {}
+        for row in self.conn.execute("SELECT DISTINCT client_id, hostname FROM records"):
+            if row[0] and row[1] and row[1] != "Unknown":
+                hosts.setdefault(row[0], []).append(row[1])
+        return {k: sorted(v) for k, v in hosts.items()}
 
     # --- Audit Log ---
     def log_query(self, tool_name: str, query: str, row_count: int, artifact: str = None):
