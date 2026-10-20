@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 from copilot import (approvals, auth, cases, citations, collection, commands, config_check, conversation, dossier,
-                     knowledge, lessons, memory, outputs, session)
+                     knowledge, lessons, memory, outputs, report, session)
 from copilot import llm as llm_config
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
@@ -132,7 +132,7 @@ IOC_LABELS = {"ips": "IP addresses", "domains": "Domains", "hashes": "Hashes", "
               "users": "Accounts"}
 
 
-def ioc_fields(prefix: str, initial: dict = None):
+def ioc_fields(prefix: str, initial: dict = None, columns: int = 1):
     """IOC text areas (one value per line) with free and AI extraction from the description."""
     st.markdown("**IOCs** (one per line)")
     c1, c2 = st.columns(2)
@@ -141,8 +141,10 @@ def ioc_fields(prefix: str, initial: dict = None):
     c2.button("✨ AI extract", key=prefix + "ai_extract", on_click=extract_iocs_cb, args=(prefix, True),
               disabled="llm" not in st.session_state,
               help="One small LLM call; catches what patterns miss. Values are checked against the text.")
-    for kind, label in IOC_LABELS.items():
-        st.text_area(label, value="\n".join((initial or {}).get(kind, [])), key=f"{prefix}ioc_{kind}", height=68)
+    slots = st.columns(columns)
+    for i, (kind, label) in enumerate(IOC_LABELS.items()):
+        slots[i % columns].text_area(label, value="\n".join((initial or {}).get(kind, [])), key=f"{prefix}ioc_{kind}",
+                                     height=68)
 
 
 def _ioc_values(prefix: str) -> dict:
@@ -500,8 +502,8 @@ def triage_panel():
     except ValueError as e:
         chosen, problem = [], str(e)
     st.caption(f"**Disk** · {len(chosen)} artifact{'s' if len(chosen) != 1 else ''}")
-    for step in chosen:
-        st.caption(citations.md_literal(f"• {step['artifact']}" + (" (with parameters)" if step["parameters"] else "")))
+    st.caption("  \n".join(citations.md_literal(f"• {step['artifact']}" + (" (with parameters)" if step["parameters"]
+                                                                           else "")) for step in chosen))
     if problem:
         st.error(problem)
     plugins = picked_memory(p) if case_config.memory_image else []
@@ -509,14 +511,15 @@ def triage_panel():
         st.caption(f"**Memory** · {case_config.memory_image}")
         st.caption(citations.md_literal(", ".join(plugins) or "no plugins"))
     st.button("✏️ Choose what to collect", key="tri_edit", on_click=set_triage_editing, args=(True,),
-              help="Opens the triage list above the chat: suggestions for disk images and every artifact "
+              help="Opens the triage list below: suggestions for disk images and every artifact "
                    "on your Velociraptor server.")
     analyze = investigate_choice("triage_analyze")
     c1, c2 = st.columns(2)
-    if c1.button("Run triage", key=p + "run",
+    if c1.button("Run triage", key=p + "run", on_click=to_chat,
                  disabled=bool(case_config.client_id_error) or not chosen or bool(problem)):
         action = ("triage", (analyze, chosen))
-    if case_config.memory_image and c2.button("Run memory triage", key=p + "run_mem", disabled=not plugins):
+    if case_config.memory_image and c2.button("Run memory triage", key=p + "run_mem", disabled=not plugins,
+                                              on_click=to_chat):
         action = ("memory_triage", (analyze, plugins))
     return action
 
@@ -571,7 +574,7 @@ def triage_editor():
                   disabled=bool(problem), help="Stored in the case file: used next time and by the CLI.")
         c2.button("↩️ Back to the case's list", key=p + "reset", on_click=reset_triage_cb, args=(cid,))
         c3.button("Done", key="tri_done", on_click=set_triage_editing, args=(False,), type="primary")
-        st.caption("Without saving, the choice is used for this session only. Run it from the sidebar.")
+        st.caption("Without saving, the choice is used for this session only. Run it with the buttons above.")
         if st.session_state.get("tri_message"):
             st.caption(st.session_state.tri_message)
 
@@ -839,7 +842,269 @@ if cases.consume_settings_change():
 refresh_dossier()
 
 # ==========================================
-# Sidebar
+# Main-area views (one per tab)
+# ==========================================
+# Stable labels: a tab whose label changed would lose its selection.
+TABS = ["💬 Chat", "🚩 Findings & dossier", "📥 Evidence & data", "📄 Report & files", "⚙️ Case"]
+
+
+def to_chat():
+    """Callback of buttons that start work: show the Chat tab, where its progress and results appear."""
+    st.session_state.main_tab = TABS[0]
+
+
+def _hosts() -> dict:
+    """Host names per client from the records, cached per database state (a full scan on large cases)."""
+    stamp = (cases.current_id(), case_db.get_stats()["total_records"])
+    if st.session_state.get("hosts_stamp") != stamp:
+        st.session_state.hosts_stamp, st.session_state.hosts = stamp, case_db.hosts_by_source()
+    return st.session_state.hosts
+
+
+def _when(value) -> str:
+    """A case setting's time as "2020-09-18 00:00" (whatever form the case file holds it in)."""
+    text = str(value or "").replace("T", " ").rstrip("Z")
+    return text[:16] if len(text) >= 16 else text
+
+
+def case_header(stats: dict, findings: list, notes: dict):
+    """What this case is about and where it stands: evidence, window, data, findings, dossier."""
+    st.title(f"🗂️ {case_config.case_name}")
+    st.caption(f"Case `{cases.current_id()}` · analyst {citations.md_literal(case_config.analyst)} · "
+               f"type `/help` in the chat for free commands")
+    with st.container(border=True):
+        c1, c2, c3, c4 = st.columns([3, 2, 2, 2])
+        c1.caption("EVIDENCE")
+        if case_config.client_id_error:
+            c1.markdown("💽 *no Velociraptor client set* (⚙️ Case)")
+        else:
+            client = case_config.client_id
+            facts = [f"💽 `{client}`"] + [citations.md_literal(h) for h in _hosts().get(client, [])[:2]]
+            if case_config.evidence.get("image_name"):
+                facts.append(citations.md_literal(case_config.evidence["image_name"]))
+            c1.markdown(" · ".join(facts))
+        if case_config.memory_image:
+            c1.markdown(f"🧠 {citations.md_literal(case_config.memory_image)}")
+        c2.caption("INCIDENT WINDOW")
+        c2.markdown(f"{_when(case_config.start_time)} →  \n{_when(case_config.end_time)} UTC" if case_config.has_scope
+                    else "*not set*")
+        if case_config.clock_offset_minutes:
+            c2.caption(f"host clock {case_config.clock_offset_minutes:+d} min (times shown as true UTC + recorded)")
+        collections = case_db.get_collections()
+        running = sum(c.get("state") not in collection.TERMINAL_STATES for c in collections)
+        c3.caption("DATA")
+        c3.markdown(f"**{stats['total_records']:,}** records  \n"
+                    f"{len(collections)} collection{'' if len(collections) == 1 else 's'}"
+                    + (f" · ⏳ {running} running" if running else ""))
+        c4.caption("FINDINGS · DOSSIER")
+        c4.markdown(f"**{len(findings)}** finding{'' if len(findings) == 1 else 's'}  \n" +
+                    (f"🗂️ dossier {notes['created_at'][11:16]} UTC" if notes else "no dossier yet"))
+
+
+def findings_view(stats: dict, findings: list, notes: dict):
+    """The case dossier and every finding with its records; retracting is the investigator's call."""
+    action = None
+    st.subheader("🗂️ Case dossier")
+    if notes:
+        st.caption(f"Written {notes['created_at'][:16].replace('T', ' ')} UTC by "
+                   f"{citations.md_literal(notes['actor'] or 'the copilot')} · {notes['steps']} steps · "
+                   f"{notes['tokens']:,} tokens · {notes['findings']} findings then")
+        with st.container(border=True, height=420):
+            st.markdown(re.sub(r"(?m)^#{1,3} ", "#### ", citations.answer_markdown(notes["text"])))
+    else:
+        st.caption("None yet. One longer agent turn reads everything collected and writes the case's timeline, "
+                   "findings, hypotheses and gaps. Every question then starts from it: answers agree and cost less.")
+    if st.button("🔎 Investigate again" if notes else "🔎 Investigate the case", key="investigate", on_click=to_chat,
+                 disabled="llm_with_tools" not in st.session_state or not stats["total_records"],
+                 help="Also `/investigate` in the chat. Runs as its own conversation; requests it makes "
+                      "wait for approval as usual. Progress and the dossier appear in 💬 Chat."):
+        action = ("investigate", None)
+
+    st.subheader(f"🚩 Findings · {len(findings)}")
+    if not findings:
+        st.caption("No findings recorded yet. The agent records them as it confirms what happened.")
+        return action
+    clock = report.Clock(case_config.clock_offset_minutes)
+    st.dataframe([{"#": n, "UTC": clock.corrected(f["timestamp_utc"]), "Recorded": clock.recorded(f["timestamp_utc"]),
+                   "Finding": f["title"], "Confidence": f["confidence"] or "", "MITRE": f["mitre_technique"] or "",
+                   "Records": len(json.loads(f["evidence_ids"] or "[]")), "Imported from": f.get("origin") or "",
+                   "ID": f["finding_id"]} for n, f in enumerate(findings, 1)],
+                 hide_index=True, width="stretch")
+    for n, f in enumerate(findings, 1):
+        with st.expander(f"{n}. {citations.md_literal(f['title'])}", expanded=False):
+            st.markdown(citations.md_literal(f["description"] or ""))
+            found = citations.cited(" ".join(json.loads(f["evidence_ids"] or "[]")), case_db, case_config)
+            if found["evidence"]:
+                st.table([{k: citations.md_literal(v) for k, v in row.items()} for row in found["evidence"]])
+    if st.toggle("Retract a finding", key="retract_open"):
+        labels = {f"{f['title']} ({f['finding_id']})": f["finding_id"] for f in findings}
+        choice = st.selectbox("Finding", list(labels), key="retract_choice")
+        reason = st.text_input("Reason (e.g. the contradicting evidence)", key="retract_reason")
+        if st.button("Retract", disabled=not reason.strip()):
+            case_db.retract_finding(labels[choice], reason.strip() + (f" (retracted by {USER})" if USER else ""))
+            st.session_state.chat_history.append(HumanMessage(
+                content=f"[Investigator] Retracted finding '{choice}': {reason.strip()}"))
+            st.rerun()
+    return action
+
+
+def data_view(stats: dict):
+    """Where the data came from, the triage, the collections, and a search that costs no tokens."""
+    action = None
+    st.subheader("💽 Evidence sources")
+    sources, warnings = report.evidence_sources(case_db, case_config)
+    if sources:
+        st.dataframe([{"Source": s["kind"], "Name": s["name"], "Identity": s["identity"],
+                       "Collections": s["collections"], "Rows": s["rows"], "First collected (UTC)": s["first"],
+                       "Last": s["last"]} for s in sources], hide_index=True, width="stretch")
+    for warning in warnings:
+        st.warning(citations.md_literal(warning))
+    if not sources:
+        st.caption("No evidence set: add the Velociraptor client or a memory image under ⚙️ Case.")
+
+    st.subheader("🧰 Triage")
+    action = triage_panel()
+    if st.session_state.get("triage_editing"):
+        triage_editor()
+
+    collections = case_db.get_collections()
+    st.subheader(f"📥 Collections · {len(collections)}")
+    if collections:
+        st.dataframe([{"Artifact": c["artifact"], "State": c["state"], "Rows": c["rows_ingested"],
+                       "Started (UTC)": (c["requested_at"] or "")[:19].replace("T", " "), "Flow": c["flow_id"],
+                       "Error": (c["error"] or "")[:200]} for c in reversed(collections)],
+                     hide_index=True, width="stretch")
+
+    st.subheader(f"🔎 Search the data · {stats['total_records']:,} records")
+    st.caption(f"{stats['timeline_events']:,} timeline events · {stats['undated_records']:,} without timestamps · "
+               "no LLM, no tokens")
+    sources_by_name = ["(all sources)"] + [s["source"] for s in stats["by_source"]]
+    c1, c2 = st.columns([3, 2])
+    term = c1.text_input("Text, IP, account, file name, hash...", key="data_search")
+    source = c2.selectbox("Source", sources_by_name, key="data_source",
+                          format_func=lambda s: s if s == sources_by_name[0] else
+                          f"{s} ({next(x['records'] for x in stats['by_source'] if x['source'] == s):,})")
+    if term.strip():
+        found = case_db.search_events(term.strip(), limit=500)
+        rows = [r for r in found["records"] if source == sources_by_name[0] or r.get("source") == source]
+        clock = report.Clock(case_config.clock_offset_minutes)
+        st.caption(f"{found['total']:,} records match" + (f"; showing the first {len(found['records'])}"
+                                                          if found["total"] > len(found["records"]) else ""))
+        st.dataframe([{"UTC": clock.corrected(r.get("first_seen")), "Recorded": clock.recorded(r.get("first_seen")),
+                       "Source": r.get("source"), "Event": r.get("description"), "Evidence ID": r.get("evidence_id")}
+                      for r in rows], hide_index=True, width="stretch")
+    return action
+
+
+def report_view():
+    """Report formats, writing the report, and every file produced for this case."""
+    action = None
+    st.subheader("📄 Report")
+    st.caption("Built from the case database: findings, timeline, evidence sources, cited records and charts. "
+               "Only the executive summary, correlations and recommendations come from the model.")
+    chosen = st.multiselect("Formats", ["html", "md"], default=case_config.report_formats, key="report_formats",
+                            help="Formats cost no extra LLM tokens.")
+    st.session_state.dfir.report_formats = chosen or None
+    if st.button("📝 Write the report", key="write_report", disabled="llm_with_tools" not in st.session_state,
+                 on_click=to_chat,
+                 help="Asks the agent for the narrative and builds the report. It appears in 💬 Chat as a download."):
+        action = ("ask", "Write the report for this case.")
+    files = outputs.produced_since(0)
+    st.subheader(f"📁 Files · {len(files)}")
+    if files:
+        st.caption(f"Saved in `{outputs.output_dir()}`")
+        for entry in reversed(files[-30:]):
+            download_button(entry, key=f"dl-side-{entry['output_id']}")
+    else:
+        st.caption("Reports and exports the agent produces appear here.")
+    return action
+
+
+def case_view(case_rows: list, current: str):
+    """The case's settings, importing from other cases, and who may work on it or start from it."""
+    if current == cases.LEGACY_ID:
+        st.caption("This is the legacy root case.yaml: edit the file itself.")
+    else:
+        st.subheader("⚙️ Settings")
+        cid = current
+        p = f"cs_{cid}_"
+        held = cases.collected_sources(cid)
+        c1, c2 = st.columns(2)
+        c1.text_input("Name *", value=case_config.case_name, key=p + "name")
+        c2.text_input("Velociraptor client ID", value=case_config.client_id, key=p + "client",
+                      disabled=bool(held["client"] and case_config.client_id),
+                      help="The dead-disk client reading this case's image. Locked once the case holds data from it."
+                      if held["client"] else "The dead-disk client reading this case's image (C.<hex>).")
+        c1, c2 = st.columns(2)
+        c1.text_input("Disk image file", value=case_config.evidence.get("image_name", ""), key=p + "img",
+                      help="For the header and the report's evidence section.")
+        c2.text_input("Disk image SHA-256", value=case_config.evidence.get("image_sha256", ""), key=p + "sha")
+        c1, c2, c3 = st.columns([2, 2, 1])
+        c1.text_input("Window start (UTC)", value=case_config.start_time, key=p + "start")
+        c2.text_input("Window end (UTC)", value=case_config.end_time, key=p + "end")
+        c3.number_input("Host clock ahead of UTC (min)", value=case_config.clock_offset_minutes,
+                        step=15, key=p + "offset")
+        st.text_area("Description", value=case_config.description, key=p + "desc")
+        memory_fields(p, case_config.memory_image, case_config.memory_os,
+                      locked=bool(held["memory"] and case_config.memory_image))
+        ioc_fields(p, case_config.iocs, columns=3)
+        st.button("Save settings", on_click=save_settings_cb, args=(cid,), type="primary")
+        if st.session_state.get("cs_message"):
+            st.caption(st.session_state.cs_message)
+
+        st.subheader("📥 Import from another case")
+        others = {c["id"]: c for c in cases.reusable_cases() if c["id"] != cid and (
+            not c["client_id"] or not case_config.client_id or c["client_id"].lower() == case_config.client_id.lower())}
+        if others:
+            st.selectbox("Case on the same evidence", list(others), key=p + "imp",
+                         format_func=lambda i: _case_label(others[i]))
+            chosen = others.get(st.session_state.get(p + "imp"))
+            st.checkbox("With its findings and dossier", key=p + "imp_findings",
+                        disabled=not (chosen and chosen["findings"]))
+            st.button("Import", key=p + "imp_go", on_click=import_cb, args=(cid,),
+                      help="Adds its collected data to this case (records already here are not duplicated).")
+        else:
+            st.caption("No other case on this evidence has data you may use (yours, or shared with you).")
+    if not USER:
+        return
+    here = next((c for c in case_rows if c["id"] == current), {"owner": "", "members": []})
+    st.subheader("👥 Access")
+    st.caption(f"Owner: {here['owner'] or 'nobody (admins only)'}")
+    p = f"ac_{current}_"
+    if cases.can_manage(current):
+        accounts = auth.usernames()
+        if auth.is_admin(USER):
+            owners = [""] + accounts
+            st.selectbox("Owner", owners, index=owners.index(here["owner"]) if here["owner"] in owners else 0,
+                         format_func=lambda u: u or "(nobody: admins only)", key=p + "owner")
+        st.multiselect("Members", [u for u in accounts if u != here["owner"]],
+                       default=[m for m in here["members"] if m in accounts], key=p + "members",
+                       help="They can open this case, its data, findings and files. Each keeps their own chat.")
+        st.button("Save access", on_click=save_access_cb, args=(current,))
+        shared, with_findings = cases.sharing_of(case_config.data)
+        st.markdown("**Share its evidence**")
+        mode = st.radio("Who may start their own case from this one's collected data", SHARE_MODES,
+                        index=2 if shared == [cases.EVERYONE] else 1 if shared else 0, key=p + "share_mode",
+                        help="They get a copy in a case of their own. They can't open this case, its chats, "
+                             "files or audit log. Copies already made stay theirs if you stop sharing.")
+        if mode == SHARE_MODES[1]:
+            st.multiselect("Accounts", [u for u in accounts if u != here["owner"] and u not in here["members"]],
+                           default=[u for u in shared if u in accounts], key=p + "share_with")
+        st.checkbox("Include its findings and dossier", value=with_findings, key=p + "share_findings",
+                    disabled=mode == SHARE_MODES[0])
+        st.button("Save sharing", on_click=save_sharing_cb, args=(current,))
+    else:
+        st.caption(f"Members: {', '.join(here['members']) or 'none'}. The owner or an admin can change this.")
+        shared, with_findings = cases.sharing_of(case_config.data)
+        if shared:
+            st.caption(f"Evidence shared with {'everyone' if shared == [cases.EVERYONE] else ', '.join(shared)}"
+                       f"{' (with findings)' if with_findings else ''}.")
+    if st.session_state.get("ac_message"):
+        st.caption(st.session_state.ac_message)
+
+
+# ==========================================
+# Sidebar: which case, and what waits for you
 # ==========================================
 action = None
 with st.sidebar:
@@ -848,7 +1113,6 @@ with st.sidebar:
     llm_box()
 
     st.divider()
-    st.subheader("📁 Case")
     case_rows = cases.list_cases()
     current = cases.current_id()
     names = {c["id"]: c["name"] for c in case_rows}
@@ -860,108 +1124,18 @@ with st.sidebar:
         after_possible_switch()
     with st.expander("➕ New case", expanded=False):
         new_case_form()
-    problems = config_check.case_problems(case_config)
-    if USER is None or auth.is_admin(USER):
-        problems += [f"server.yaml: {p}" for p in config_check.server_problems()]
-    if problems:
-        st.warning("**Settings problems** (ignored until fixed):\n" + "\n".join(f"- {citations.md_literal(p)}" for p in problems))
-
-    if cases.current_id() != cases.LEGACY_ID:
-        with st.expander("⚙️ Case settings", expanded=False):
-            cid = cases.current_id()
-            p = f"cs_{cid}_"
-            held = cases.collected_sources(cid)
-            st.text_input("Name *", value=case_config.case_name, key=p + "name")
-            st.text_input("Velociraptor client ID", value=case_config.client_id, key=p + "client",
-                          disabled=bool(held["client"] and case_config.client_id),
-                          help="Locked once the case holds data from it." if held["client"] else None)
-            c1, c2 = st.columns(2)
-            c1.text_input("Disk image file", value=case_config.evidence.get("image_name", ""), key=p + "img",
-                          help="For the report's evidence section.")
-            c2.text_input("Disk image SHA-256", value=case_config.evidence.get("image_sha256", ""), key=p + "sha")
-            c1, c2 = st.columns(2)
-            c1.text_input("Window start (UTC)", value=case_config.start_time, key=p + "start")
-            c2.text_input("Window end (UTC)", value=case_config.end_time, key=p + "end")
-            st.number_input("Host clock ahead of UTC (minutes)", value=case_config.clock_offset_minutes,
-                            step=15, key=p + "offset")
-            st.text_area("Description", value=case_config.description, key=p + "desc")
-            memory_fields(p, case_config.memory_image, case_config.memory_os,
-                          locked=bool(held["memory"] and case_config.memory_image))
-            ioc_fields(p, case_config.iocs)
-            st.button("Save settings", on_click=save_settings_cb, args=(cid,))
-            others = {c["id"]: c for c in cases.reusable_cases() if c["id"] != cid and (
-                not c["client_id"] or not case_config.client_id or c["client_id"].lower() == case_config.client_id.lower())}
-            st.markdown("**📥 Import from another case**")
-            if others:
-                st.selectbox("Case on the same evidence", list(others), key=p + "imp",
-                             format_func=lambda i: _case_label(others[i]))
-                chosen = others.get(st.session_state.get(p + "imp"))
-                st.checkbox("With its findings and dossier", key=p + "imp_findings",
-                            disabled=not (chosen and chosen["findings"]))
-                st.button("Import", key=p + "imp_go", on_click=import_cb, args=(cid,),
-                          help="Adds its collected data to this case (records already here are not duplicated).")
-            else:
-                st.caption("No other case on this evidence has data you may use (yours, or shared with you).")
-            if st.session_state.get("cs_message"):
-                st.caption(st.session_state.cs_message)
-    if USER:
-        here = next((c for c in case_rows if c["id"] == current), {"owner": "", "members": []})
-        with st.expander("👥 Access", expanded=False):
-            st.caption(f"Owner: {here['owner'] or 'nobody (admins only)'}")
-            p = f"ac_{current}_"
-            if cases.can_manage(current):
-                accounts = auth.usernames()
-                if auth.is_admin(USER):
-                    owners = [""] + accounts
-                    st.selectbox("Owner", owners, index=owners.index(here["owner"]) if here["owner"] in owners else 0,
-                                 format_func=lambda u: u or "(nobody: admins only)", key=p + "owner")
-                st.multiselect("Members", [u for u in accounts if u != here["owner"]],
-                               default=[m for m in here["members"] if m in accounts], key=p + "members",
-                               help="They can open this case, its data, findings and files. "
-                                    "Each keeps their own chat.")
-                st.button("Save access", on_click=save_access_cb, args=(current,))
-                shared, with_findings = cases.sharing_of(case_config.data)
-                st.markdown("**Share its evidence**")
-                mode = st.radio("Who may start their own case from this one's collected data", SHARE_MODES,
-                                index=2 if shared == [cases.EVERYONE] else 1 if shared else 0, key=p + "share_mode",
-                                help="They get a copy in a case of their own. They can't open this case, its chats, "
-                                     "files or audit log. Copies already made stay theirs if you stop sharing.")
-                if mode == SHARE_MODES[1]:
-                    st.multiselect("Accounts", [u for u in accounts if u != here["owner"] and u not in here["members"]],
-                                   default=[u for u in shared if u in accounts], key=p + "share_with")
-                st.checkbox("Include its findings and dossier", value=with_findings, key=p + "share_findings",
-                            disabled=mode == SHARE_MODES[0])
-                st.button("Save sharing", on_click=save_sharing_cb, args=(current,))
-            else:
-                st.caption(f"Members: {', '.join(here['members']) or 'none'}. The owner or an admin can change this.")
-                shared, with_findings = cases.sharing_of(case_config.data)
-                if shared:
-                    st.caption(f"Evidence shared with {'everyone' if shared == [cases.EVERYONE] else ', '.join(shared)}"
-                               f"{' (with findings)' if with_findings else ''}.")
-            if st.session_state.get("ac_message"):
-                st.caption(st.session_state.ac_message)
     if st.button("🧹 New conversation", help="Clears this case's chat and the agent's memory of it. "
                                           "Collected data and findings stay."):
         conversation.clear(cases.current_id(), user=USER)
         open_case_chat()
         st.rerun()
-    st.text(f"{case_config.case_name}\nAnalyst: {case_config.analyst}")
-    if case_config.client_id_error:
-        st.warning(case_config.client_id_error)
-    else:
-        st.text(f"Evidence client: {case_config.client_id}")
-    if case_config.memory_image:
-        st.text(f"Memory image: {case_config.memory_image}")
-    if case_config.has_scope:
-        st.text(f"Window: {case_config.start_time}\n     to {case_config.end_time}")
-    if case_config.clock_offset_minutes:
-        st.caption(f"Host clock offset: {case_config.clock_offset_minutes:+d} min")
     st.caption(f"LLM tokens this session: "
                f"{st.session_state.usage.session_input + st.session_state.usage.session_output:,}")
-
-    st.divider()
-    with st.expander("🧰 Triage collection", expanded=False):
-        action = triage_panel() or action
+    problems = config_check.case_problems(case_config)
+    if USER is None or auth.is_admin(USER):
+        problems += [f"server.yaml: {p}" for p in config_check.server_problems()]
+    if problems:
+        st.warning("**Settings problems** (ignored until fixed):\n" + "\n".join(f"- {citations.md_literal(p)}" for p in problems))
 
     if pending_here():
         st.divider()
@@ -976,168 +1150,136 @@ with st.sidebar:
             if req["kind"] == "lesson":
                 st.caption("⚠️ Lessons apply to every case on this server. Approve only if it is general and true.")
             c1, c2 = st.columns(2)
-            if c1.button("Approve", key=f"approve-{req['id']}"):
+            if c1.button("Approve", key=f"approve-{req['id']}", on_click=to_chat):
                 action = ("approve", req)
-            if c2.button("Deny", key=f"deny-{req['id']}"):
+            if c2.button("Deny", key=f"deny-{req['id']}", on_click=to_chat):
                 action = ("deny", req)
-        if len(pending_here()) > 1 and st.button("✅ Approve all", key="approve-all", type="primary"):
+        if len(pending_here()) > 1 and st.button("✅ Approve all", key="approve-all", type="primary", on_click=to_chat):
             action = ("approve_all", None)
         st.checkbox("Continue the agent once all are decided", value=True, key="auto_continue",
                     help="Otherwise ask the copilot to continue yourself.")
 
     st.divider()
-    stats = case_db.get_stats()
-    n = stats["total_records"]
-    with st.expander(f"📊 Database · {n:,} record{'' if n == 1 else 's'}", expanded=False):
-        st.caption(f"{stats['timeline_events']:,} timeline events · {stats['undated_records']:,} without timestamps")
-        for src in stats["by_source"]:
-            st.caption(f"- {src['source']} ({src['records']:,})")
-
-    active = case_db.get_findings()
-    with st.expander(f"🚩 Findings · {len(active)}", expanded=False):
-        if not active:
-            st.caption("No findings recorded yet.")
-        for f in active:
-            st.caption(f"[{(f['confidence'] or 'unknown').upper()}] {citations.md_literal(f['title'])}")
-        if active and st.toggle("Retract a finding", key="retract_open"):
-            labels = {f"{f['title']} ({f['finding_id']})": f["finding_id"] for f in active}
-            choice = st.selectbox("Finding", list(labels), key="retract_choice")
-            reason = st.text_input("Reason (e.g. the contradicting evidence)", key="retract_reason")
-            if st.button("Retract", disabled=not reason.strip()):
-                case_db.retract_finding(labels[choice], reason.strip() + (f" (retracted by {USER})" if USER else ""))
-                st.session_state.chat_history.append(HumanMessage(
-                    content=f"[Investigator] Retracted finding '{choice}': {reason.strip()}"))
-                st.rerun()
-
-    notes = dossier.latest()
-    with st.expander("🗂️ Case dossier · " + (notes["created_at"][:16].replace("T", " ") + " UTC" if notes
-                                             else "none yet"), expanded=False):
-        if notes:
-            st.caption(f"Written by {citations.md_literal(notes['actor'] or 'the copilot')} · {notes['steps']} steps · "
-                       f"{notes['tokens']:,} tokens · {notes['findings']} findings then")
-            st.markdown(citations.answer_markdown(notes["text"]))
-        else:
-            st.caption("One longer agent turn reads everything collected and writes the case's timeline, findings, "
-                       "hypotheses and gaps. Every question then starts from it: answers agree and cost less.")
-        if st.button("🔎 Investigate again" if notes else "🔎 Investigate the case", key="investigate",
-                     disabled="llm_with_tools" not in st.session_state or not n,
-                     help="Also `/investigate` in the chat. Runs as its own conversation; requests it makes "
-                          "wait for approval as usual."):
-            action = ("investigate", None)
-
     knowledge_panel()
 
-    st.divider()
-    st.subheader("📄 Report")
-    chosen = st.multiselect("Report formats", ["html", "md"], default=case_config.report_formats,
-                            key="report_formats", help="Formats cost no extra LLM tokens.")
-    st.session_state.dfir.report_formats = chosen or None
-
-    files = outputs.produced_since(0)
-    if files:
-        st.divider()
-        with st.expander(f"📁 Files · {len(files)}", expanded=False):
-            st.caption(f"Saved in `{outputs.output_dir()}`")
-            for entry in reversed(files[-15:]):
-                download_button(entry, key=f"dl-side-{entry['output_id']}")
-
 # ==========================================
-# Main area
+# Main area: the case at a glance, then one tab per job
 # ==========================================
-st.title("Interactive Investigation")
-st.caption(f"Case `{cases.current_id()}` — {case_config.case_name} · type `/help` for free commands")
+stats = case_db.get_stats()
+active = case_db.get_findings()
+notes = dossier.latest()
+case_header(stats, active, notes)
 hint = cases.legacy_data_hint()
 if hint:
     st.warning(hint)
-if st.session_state.get("triage_editing"):
-    triage_editor()
+chat_tab, findings_tab, data_tab, report_tab, case_tab = st.tabs(TABS, key="main_tab")
+with findings_tab:
+    action = findings_view(stats, active, notes) or action
+with data_tab:
+    action = data_view(stats) or action
+with report_tab:
+    action = report_view() or action
+with case_tab:
+    case_view(case_rows, current)
 
-for i, msg in enumerate(st.session_state.messages):
-    render_message(msg, i)
+# Typed anywhere (the box stays at the bottom of every tab); answered in the Chat tab.
+prompt = st.chat_input("Ask the copilot to investigate... (/help for commands)", on_submit=to_chat)
 
-# First visit to an empty case: offer the triage collection (the CLI asks the same question).
-if (not case_db.get_collections() and not st.session_state.triage_dismissed and action is None
-        and (not case_config.client_id_error or case_config.memory_image)):
-    with st.container(border=True):
-        disk = not case_config.client_id_error
-        sources = (["the disk image (Velociraptor)"] if disk else []) + \
-                  ([f"the memory image `{case_config.memory_image}` (Volatility)"] if case_config.memory_image else [])
-        st.markdown(f"**No data collected for this case yet.** Run the initial triage of {' and '.join(sources)}? "
-                    f"It needs no LLM.")
-        investigate = investigate_choice("first_investigate")
-        c1, c2 = st.columns([2, 3])
-        p = f"tri_{cases.current_id()}_"          # the same choice as the sidebar's triage panel
-        label = ("Run triage (disk + memory)" if disk and case_config.memory_image else
-                 "Run triage" if disk else "Run memory triage")
-        if c1.button(label, type="primary", key="first_triage"):
-            try:
-                plan = picked_triage(p) if disk else None
-            except ValueError:
-                plan = None                        # unusable edits: the case's saved list
-            action = ("triage", (investigate, plan, picked_memory(p) if case_config.memory_image else None, disk))
-        if c2.button("Skip"):
+with chat_tab:
+    for i, msg in enumerate(st.session_state.messages):
+        render_message(msg, i)
+    if not st.session_state.messages and stats["total_records"] and not prompt and action is None:
+        st.caption("Ask about this case in your own words: how they got in, what ran, what was taken, what a "
+                   "record means. " + ("Answers start from the case dossier and" if notes else "Answers start from")
+                   + " the leads computed from the data, and cite the records they rest on.")
+
+    # First visit to an empty case: offer the triage collection (the CLI asks the same question).
+    if (not case_db.get_collections() and not st.session_state.triage_dismissed and action is None and not prompt
+            and (not case_config.client_id_error or case_config.memory_image)):
+        with st.container(border=True):
+            disk = not case_config.client_id_error
+            sources = (["the disk image (Velociraptor)"] if disk else []) + \
+                      ([f"the memory image `{case_config.memory_image}` (Volatility)"] if case_config.memory_image else [])
+            st.markdown(f"**No data collected for this case yet.** Run the initial triage of {' and '.join(sources)}? "
+                        f"It needs no LLM.")
+            investigate = investigate_choice("first_investigate")
+            c1, c2 = st.columns([2, 3])
+            p = f"tri_{cases.current_id()}_"          # the same choice as the triage panel
+            label = ("Run triage (disk + memory)" if disk and case_config.memory_image else
+                     "Run triage" if disk else "Run memory triage")
+            if c1.button(label, type="primary", key="first_triage"):
+                try:
+                    plan = picked_triage(p) if disk else None
+                except ValueError:
+                    plan = None                        # unusable edits: the case's saved list
+                action = ("triage", (investigate, plan, picked_memory(p) if case_config.memory_image else None, disk))
+            if c2.button("Skip"):
+                st.session_state.triage_dismissed = True
+                st.rerun()
+            st.caption("📥 Evidence & data → Triage runs the disk or memory part on its own, any time.")
+
+    # Data but no dossier: offer the investigation, as an option (questions work without it).
+    elif (case_db.get_collections() and not notes and action is None and not prompt
+            and "llm_with_tools" in st.session_state and st.session_state.get("dossier_dismissed") != cases.current_id()):
+        with st.container(border=True):
+            steps, tokens = dossier.budget()
+            st.markdown("**No case dossier yet.** Investigate the whole case now? The agent reads everything collected "
+                        "and writes the case's timeline, findings, hypotheses and gaps; every question then starts "
+                        "from it, so answers agree and cost less.")
+            st.caption(f"Optional: one longer agent turn, up to {steps} steps / {tokens:,} tokens. You can also just ask "
+                       f"questions, or run it later from 🚩 Findings & dossier or with /investigate.")
+            c1, c2 = st.columns([2, 3])
+            if c1.button("🔎 Investigate now", type="primary", key="investigate_card"):
+                action = ("investigate", None)
+            if c2.button("Not now", key="dossier_not_now"):
+                st.session_state.dossier_dismissed = cases.current_id()
+                st.rerun()
+
+    if action:
+        kind, arg = action
+        if kind == "triage":
             st.session_state.triage_dismissed = True
+            if run_triage(*arg):
+                after_possible_switch()
+                st.rerun()      # the header and tabs show the new data, approvals, findings and token use
+        elif kind == "memory_triage":
+            st.session_state.triage_dismissed = True
+            if run_triage(arg[0], None, arg[1], disk=False):
+                after_possible_switch()
+                st.rerun()
+        elif kind == "investigate":
+            if run_investigation():
+                after_possible_switch()
+                st.rerun()
+        elif kind == "ask":
+            if agent_turn(arg):
+                after_possible_switch()
+                st.rerun()
+        elif kind in ("approve", "deny", "approve_all"):
+            for request in (pending_here() if kind == "approve_all" else [arg]):
+                resolve_request(request, approved=(kind != "deny"))
+            # Once nothing waits any more, the agent goes on with the results (no "continue" needed).
+            if (st.session_state.get("auto_continue", True) and not pending_here()
+                    and st.session_state.case_id == cases.current_id() and "llm_with_tools" in st.session_state):
+                agent_turn("[Investigator] Every pending request has been decided (see the results above). Continue "
+                           "the investigation with them and answer the open question.", show_user=False)
             st.rerun()
-        st.caption("The sidebar's 🧰 Triage collection runs the disk or memory part on its own, any time.")
 
-# Data but no dossier: offer the investigation, as an option (questions work without it).
-elif (case_db.get_collections() and not dossier.latest() and action is None and "llm_with_tools" in st.session_state
-        and st.session_state.get("dossier_dismissed") != cases.current_id()):
-    with st.container(border=True):
-        steps, tokens = dossier.budget()
-        st.markdown("**No case dossier yet.** Investigate the whole case now? The agent reads everything collected "
-                    "and writes the case's timeline, findings, hypotheses and gaps; every question then starts "
-                    "from it, so answers agree and cost less.")
-        st.caption(f"Optional: one longer agent turn, up to {steps} steps / {tokens:,} tokens. You can also just ask "
-                   f"questions, or run it later from 🗂️ Case dossier or with /investigate.")
-        c1, c2 = st.columns([2, 3])
-        if c1.button("🔎 Investigate now", type="primary", key="investigate_card"):
-            action = ("investigate", None)
-        if c2.button("Not now", key="dossier_not_now"):
-            st.session_state.dossier_dismissed = cases.current_id()
-            st.rerun()
-
-if action:
-    kind, arg = action
-    if kind == "triage":
-        st.session_state.triage_dismissed = True
-        if run_triage(*arg):
-            after_possible_switch()
-            st.rerun()      # the sidebar shows the agent's approval requests, findings and token use
-    elif kind == "memory_triage":
-        st.session_state.triage_dismissed = True
-        if run_triage(arg[0], None, arg[1], disk=False):
+    if prompt:
+        investigate = prompt.strip().lower() == commands.INVESTIGATE      # uses the LLM: not a free command
+        reply = None if investigate else commands.handle(prompt)
+        if investigate:
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            if run_investigation():
+                after_possible_switch()
+                st.rerun()
+        elif reply is not None:
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.session_state.messages.append({"role": "assistant", "content": reply})
             after_possible_switch()
             st.rerun()
-    elif kind == "investigate":
-        if run_investigation():
+        elif agent_turn(prompt):
             after_possible_switch()
-            st.rerun()
-    elif kind in ("approve", "deny", "approve_all"):
-        for request in (pending_here() if kind == "approve_all" else [arg]):
-            resolve_request(request, approved=(kind != "deny"))
-        # Once nothing waits any more, the agent goes on with the results (no "continue" needed).
-        if (st.session_state.get("auto_continue", True) and not pending_here()
-                and st.session_state.case_id == cases.current_id() and "llm_with_tools" in st.session_state):
-            agent_turn("[Investigator] Every pending request has been decided (see the results above). Continue "
-                       "the investigation with them and answer the open question.", show_user=False)
-        st.rerun()
-
-if prompt := st.chat_input("Ask the copilot to investigate... (/help for commands)"):
-    investigate = prompt.strip().lower() == commands.INVESTIGATE      # uses the LLM: not a free command
-    reply = None if investigate else commands.handle(prompt)
-    if investigate:
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        if run_investigation():
-            after_possible_switch()
-            st.rerun()
-    elif reply is not None:
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        st.session_state.messages.append({"role": "assistant", "content": reply})
-        after_possible_switch()
-        st.rerun()
-    elif agent_turn(prompt):
-        after_possible_switch()
-        st.rerun()      # the sidebar shows the agent's approval requests, findings and token use
+            st.rerun()      # the header and tabs show the agent's approval requests, findings and token use
 
 persist()  # runs that end normally save here; runs ending in st.rerun() are saved at the top of the next run

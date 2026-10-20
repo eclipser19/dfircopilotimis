@@ -156,7 +156,7 @@ def _size(n: int) -> str:
         n /= 1024
 
 
-def _evidence_sources(db, config) -> tuple:
+def evidence_sources(db, config) -> tuple:
     """
     Provenance: each source the case's data came from (Velociraptor client, memory image) with
     what identifies it, how much came from it and when. Returns (sources, warnings).
@@ -330,7 +330,7 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
         in_window = res["total"]
 
     charts = _charts(db, config, findings, indicators, window) if with_charts else {}
-    evidence_sources, evidence_warnings = _evidence_sources(db, config)
+    sources, source_warnings = evidence_sources(db, config)
 
     env = Environment(trim_blocks=True, lstrip_blocks=True, autoescape=False)
     env.filters["md"] = md
@@ -354,7 +354,7 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
         indicators=indicators, iocs_searched=iocs_searched, artifacts=artifacts,
         collections=collections, audit_log=audit_log, retracted=retracted, cited=cited,
         events_referenced=events_referenced, charts=charts,
-        evidence_sources=evidence_sources, evidence_warnings=evidence_warnings,
+        evidence_sources=sources, evidence_warnings=source_warnings,
     )
     return (text, charts) if with_charts else text
 

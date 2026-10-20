@@ -54,7 +54,13 @@ def _plain(at):
 
 
 def _texts(at):
-    return " ".join([m.value for m in at.markdown] + [c.value for c in at.caption] + [t.value for t in at.text])
+    return " ".join([t.value for t in at.title] + [m.value for m in at.markdown] + [c.value for c in at.caption] +
+                    [t.value for t in at.text])
+
+
+def _case_title(at) -> str:
+    """The open case's name as the main area shows it ("" when no case is shown)."""
+    return next((t.value for t in at.title if t.value.startswith("🗂️")), "")
 
 
 def test_empty_case_offers_triage_and_runs_it(app_env):
@@ -110,9 +116,10 @@ def test_investigation_writes_the_dossier_every_question_starts_from(app_env):
     at.session_state["llm_with_tools"] = llm
     at.session_state["finalizer"] = llm
     at.run()
-    assert "none yet" in " ".join(e.label for e in at.expander)
+    assert next(b for b in at.button if b.key == "investigate").label == "🔎 Investigate the case"
+    assert "no dossier yet" in _texts(at)                                       # the header says so
     next(b for b in at.button if b.key == "investigate").click().run()
-    assert not at.exception
+    assert not at.exception and at.session_state["main_tab"] == "💬 Chat"     # where its progress shows
     assert "Case dossier" in _texts(at) and "203.0.113.5" in _plain(at)
     assert "- 02:20 UTC logon from 203.0.113.5" in at.session_state["chat_history"][0].content
     assert next(b for b in at.button if b.key == "investigate").label == "🔎 Investigate again"
@@ -409,16 +416,16 @@ def test_sign_in_gates_the_whole_app(app_env):
     auth.add_user("alice", "correct horse battery", admin=True)
     at = AppTest.from_file(APP, default_timeout=30).run()
     assert not at.exception
-    assert "Interactive Investigation" not in [t.value for t in at.title]   # nothing of the case is shown
+    assert not _case_title(at)   # nothing of the case is shown
     assert not at.chat_input and "No data collected" not in _texts(at)
     _sign_in(at, "alice", "wrong password!")
     assert "Wrong username or password." in [e.value for e in at.error]
     _sign_in(at, "alice", "correct horse battery")
     assert not at.exception
-    assert "Interactive Investigation" in [t.value for t in at.title]
+    assert _case_title(at)
     assert "Signed in as **alice**" in _texts(at)
     next(b for b in at.button if b.label == "Sign out").click().run()
-    assert "Interactive Investigation" not in [t.value for t in at.title]
+    assert not _case_title(at)
 
 
 def test_locked_account_is_told_so(app_env):
@@ -429,7 +436,7 @@ def test_locked_account_is_told_so(app_env):
         _sign_in(at, "alice", "wrong password!")
     assert any("Too many failed attempts" in e.value for e in at.error)
     _sign_in(at, "alice", "correct horse battery")
-    assert "Interactive Investigation" not in [t.value for t in at.title]
+    assert not _case_title(at)
 
 
 def test_removed_account_is_signed_out(app_env):
@@ -437,17 +444,17 @@ def test_removed_account_is_signed_out(app_env):
     auth.add_user("alice", "correct horse battery", admin=True)
     auth.add_user("bob", "another long password")
     at = _sign_in(AppTest.from_file(APP, default_timeout=30).run(), "alice", "correct horse battery")
-    assert "Interactive Investigation" in [t.value for t in at.title]
+    assert _case_title(at)
     auth.remove_user("alice")
     at.run()
-    assert "Interactive Investigation" not in [t.value for t in at.title]
+    assert not _case_title(at)
 
 
 def test_required_login_without_accounts_refuses_to_run_open(app_env, monkeypatch):
     monkeypatch.setenv("DFIR_REQUIRE_LOGIN", "1")
     at = AppTest.from_file(APP, default_timeout=30).run()
     assert any("no accounts exist" in e.value for e in at.error)
-    assert "Interactive Investigation" not in [t.value for t in at.title]
+    assert not _case_title(at)
 
 
 def test_open_app_warns_that_anyone_can_use_it(app_env):
@@ -544,9 +551,9 @@ def test_switching_in_one_browser_leaves_the_others_alone(team_app):
     alice.chat_input[0].set_value("/case carol-case").run()
     alice.chat_input[0].set_value("/case bob-case").run()
     alice.chat_input[0].set_value("/case carol-case").run()
-    assert "Carol's case" in [c.value for c in alice.caption if "Case `" in c.value][0]
+    assert _case_title(alice) == "🗂️ Carol's case"
     bob.run()
-    assert "Bob's case" in [c.value for c in bob.caption if "Case `" in c.value][0]
+    assert _case_title(bob) == "🗂️ Bob's case"
 
 
 def test_investigator_without_cases_can_create_one(team_app):
@@ -604,7 +611,7 @@ def test_owner_shares_evidence_and_others_start_their_own_case_from_it(team_app,
     next(b for b in dave.button if b.label == "Create and open").click().run()
     assert not dave.exception and "copied from `bob-case`" in _plain(dave)
     assert [o.split(" — ")[0] for o in _case_choices(dave)] == ["dave-case"]         # bob's case stays closed
-    assert "Evidence client: " + CLIENT in _texts(dave)
+    assert f"💽 `{CLIENT}`" in _texts(dave)                                     # its evidence, in the header
 
 
 def test_model_change_in_server_yaml_applies_without_reloading(app_env, tmp_path, monkeypatch):
@@ -679,7 +686,7 @@ def test_memory_image_is_picked_from_the_server_folder(mem_app, app_env, tmp_pat
     next(b for b in at.button if b.label == "Save settings").click().run()
     assert not at.exception and "Saved" in _texts(at)
     assert case_config.memory_image == "desktop.mem"
-    assert "Memory image: desktop.mem" in _texts(at)
+    assert "🧠 desktop\\.mem" in _texts(at)
 
 
 def test_evidence_is_locked_once_collected_and_its_hash_can_be_recorded(mem_app, app_env, tmp_path, monkeypatch):
@@ -758,8 +765,8 @@ def test_attacker_text_is_shown_literally_in_the_app(app_env):
     assert "\\$b=\\$env:windir" in answer and "![p]" not in answer and "[image removed: p]" in answer
     cell = at.table[0].value["What it shows"].iloc[0]
     assert "![p]" not in cell and "\\!\\[p\\]" in cell and "\\$b" in cell
-    sidebar_title = next(c.value for c in at.caption if c.value.startswith("[HIGH]"))
-    assert "![p]" not in sidebar_title and "\\$b" in sidebar_title
+    finding_label = next(e.label for e in at.expander if "Loader" in e.label)     # 🚩 Findings & dossier tab
+    assert "![p]" not in finding_label and "\\$b" in finding_label
 
 
 # ---- Approvals: approve all, and the agent continues by itself ----
@@ -803,14 +810,18 @@ def test_no_automatic_continue_while_requests_wait_or_when_turned_off(app_env):
     assert "[Investigator] Declined" in at.session_state["chat_history"][-1].content
 
 
-# ---- Sidebar ----
+# ---- Layout ----
 
-def test_database_and_findings_are_collapsible(app_env):
+def test_the_case_at_a_glance_then_one_tab_per_job(app_env):
     app_env.ingest_artifact_results([{"Message": "x"}], "S", "D", "C.1")
     at = AppTest.from_file(APP, default_timeout=30).run()
-    labels = [e.label for e in at.expander]
-    assert "📊 Database · 1 record" in labels and "🚩 Findings · 0" in labels
-    assert any(d for d in at.get("divider"))
+    assert [t.label for t in at.tabs] == ["💬 Chat", "🚩 Findings & dossier", "📥 Evidence & data",
+                                          "📄 Report & files", "⚙️ Case"]
+    header = _texts(at)
+    assert f"💽 `{CLIENT}`" in header and "**1** records" in header and "**0** findings" in header
+    at.text_input(key="data_search").input("x").run()                            # search without the LLM
+    assert not at.exception and at.dataframe[-1].value["Event"].tolist()
+    assert not [e for e in at.sidebar.expander if e.label.startswith(("📊", "🚩", "⚙️", "👥"))]   # a short sidebar
 
 
 def test_triage_picker_runs_and_saves_the_chosen_artifacts(app_env, tmp_path, monkeypatch):

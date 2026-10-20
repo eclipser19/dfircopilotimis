@@ -112,7 +112,7 @@ python -m copilot.cases move-data --yes    # moves it
   back restores it, also after an app restart. Nothing leaks between cases. "🧹 New
   conversation" in the sidebar (CLI: `/new`) clears a case's chat; data and findings stay.
 - Everything is editable from the app (no file access needed): the sidebar's **New case** form
-  (Case ID and Name required; the client ID is needed before collecting) and **Case settings**
+  (Case ID and Name required; the client ID is needed before collecting) and the **⚙️ Case** tab
   for the active case (client, window, clock offset, description, IOCs). IOCs can be pulled from
   the description for free (patterns, including defanged `1.2.3[.]4` / `hxxp://`) or with
   **✨ AI extract** (one small LLM call; values must appear in the text). Saving rewrites the
@@ -144,7 +144,7 @@ finding 3"). So everything the agent wants to change is a request you approve fi
 
 Each can be `confirm`, `auto` (no question) or `off` (the agent may not do it). Requests are
 checked before you are asked, stay with their case if you switch away, and every request and
-decision is written to the case's audit log. Your own actions (sidebar, `/case`, forms) are
+decision is written to the case's audit log. Your own actions (buttons, `/case`, forms) are
 never gated. Read-only analysis never needs approval.
 
 ## Knowledge base
@@ -217,7 +217,7 @@ streamlit run app.py    # web chat
 
 The case database lives in the case's `data/` folder (see [Cases](#cases)). Reports are written as HTML
 by default; set `output.report_formats: [html, md]` in the case file for Markdown too (the
-second format costs no LLM tokens), or pick formats in the Streamlit sidebar. The agent
+second format costs no LLM tokens), or pick formats in the app's **📄 Report & files** tab. The agent
 cannot choose the format. Files the
 copilot produces (reports, case exports, CSV exports of query results, JSON evidence
 extracts) go to the output directory: `DFIR_OUTPUT_DIR`, else `output.dir` in the case
@@ -232,7 +232,7 @@ fraction of re-investigating the case. It is optional: questions work without it
 checkbox **Then investigate the case (optional)** sits next to the triage buttons (ticked by
 default; untick it to look at the data first). The first-visit **Run triage (disk + memory)** runs
 both triages and then one investigation. A case with data but no dossier shows an **Investigate
-now / Not now** card, and the sidebar's **🗂️ Case dossier** section shows the dossier and runs it
+now / Not now** card, and the **🚩 Findings & dossier** tab shows the dossier and runs it
 (again, e.g. after new data). In the CLI it is offered after the triage, and `/investigate` runs it
 in either. Running it again starts from the previous dossier and replaces
 it; every member of the case gets the new one with their next question. Its budget is
@@ -240,21 +240,31 @@ it; every member of the case gets the new one with their next question. Its budg
 question's). Requests it makes (collections, memory runs) wait for approval as usual; their
 results go to the chat, so investigate again to fold them into the dossier.
 
-In the Streamlit app:
-- an empty case offers the triage collection (same as the CLI's first question), and the
-  sidebar's **Triage collection** panel can run it any time. **✏️ Choose what to collect**
-  opens the triage list above the chat: ⭐ suggestions that work on disk images
-  (`copilot/knowledge_data/triage.yaml`), every allowed artifact on your Velociraptor server
-  (searchable), parameters as JSON, and the memory plugins. Use the choice for this session, or
-  **Save as this case's triage** to write it into the case file;
-- anything the agent wants to change (collect, analyze memory, retract a finding,
-  change/create/switch a case) appears under **Awaiting your approval** with Approve / Deny,
-  or **Approve all** when there are several (CLI: a y/N prompt). Once nothing is waiting, the
-  agent continues with the results by itself (untick "Continue the agent…" to do it yourself);
-- Database, Findings and Files are collapsible sections of the sidebar;
-- every file the agent produces appears in the chat as a download button, and the sidebar
-  lists recent files. Ask e.g. "export the timeline 02:30-03:00 as a file" or "give me the
-  full records of the evidence for finding 3".
+In the Streamlit app, the page shows the open case at a glance: its name, its evidence (client
+ID, host name, disk image file, memory image), the incident window and clock offset, how much data
+it holds, and its findings and dossier. Below are one tab per job:
+- **💬 Chat**: ask the copilot. The question box stays at the bottom of every tab, and work started
+  anywhere (triage, investigation, the report, approvals) opens this tab, where it runs. An empty
+  case offers the triage here (same as the CLI's first question).
+- **🚩 Findings & dossier**: the case dossier (and **Investigate**), every finding with its true
+  UTC and recorded time, confidence, MITRE technique, origin and the records behind it, and
+  **Retract a finding**.
+- **📥 Evidence & data**: the evidence sources with their hashes, the triage (**✏️ Choose what to
+  collect** opens the list: ⭐ suggestions that work on disk images, every allowed artifact on your
+  Velociraptor server, parameters as JSON, the memory plugins; use it for this session or **Save
+  as this case's triage**), every collection with its state, and **Search the data**: any text,
+  IP, account, file name or hash over all records, without the LLM.
+- **📄 Report & files**: report formats, **Write the report** (the agent writes the narrative),
+  and every file produced for the case as a download.
+- **⚙️ Case**: settings, importing from another case, access and sharing.
+
+The sidebar holds the case picker, **New case**, **New conversation**, the token count, and
+anything the agent wants to change (collect, analyze memory, retract a finding,
+change/create/switch a case) under **Awaiting your approval** with Approve / Deny, or **Approve
+all** when there are several (CLI: a y/N prompt). Once nothing is waiting, the agent continues with
+the results by itself (untick "Continue the agent…" to do it yourself). Files the agent produces
+also appear in the chat as download buttons: ask e.g. "export the timeline 02:30-03:00 as a file"
+or "give me the full records of the evidence for finding 3".
 
 The agent is told to correlate before it claims: who, from where, that something ran, or that
 one event caused another needs a second record that agrees (a logon's own source IP, the same
@@ -292,7 +302,7 @@ timeline, search, findings and the report include them (sources `Memory.<plugin>
    symbols. `python -m copilot.memory check <image name>` also reads the image (`windows.info`),
    which proves the symbols for it are there.
 
-**Per case:** pick the image in the sidebar (**Case settings > Memory image**; the list shows the
+**Per case:** pick the image in the **⚙️ Case** tab (**Memory image**; the list shows the
 files in `images_dir`), or write `memory: {image: <file name>}` in the case file. Then:
 
 - **Run memory triage** (first visit, or the **Triage collection** panel; CLI: asked at start)
@@ -369,7 +379,7 @@ python -m copilot.auth remove bob          # also signs out bob's open sessions
   passwords cross the network in clear text.
 
 **Cases belong to accounts.** Whoever creates a case owns it. The owner (or an admin) adds
-members under **👥 Access** in the sidebar; only an admin can change the owner. An
+members under **👥 Access** in the **⚙️ Case** tab; only an admin can change the owner. An
 investigator sees, opens, copies from and gets files of only the cases they own or are a
 member of. Admins see all. Cases made before sign-in have no owner and are visible to admins
 only until an admin assigns them. The agent cannot change access.

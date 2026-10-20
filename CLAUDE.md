@@ -51,7 +51,7 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 
 | File | What it does |
 |---|---|
-| `app.py` | Streamlit UI: sign-in, sidebar (case settings, triage picker, approvals, knowledge/lessons, database, findings, files), chat. Every agent turn ends with `st.rerun()` so the sidebar shows new approvals. |
+| `app.py` | Streamlit UI: sign-in; sidebar (case picker, new case, approvals, knowledge/lessons); main area = case header + keyed tabs `TABS` (Chat, Findings & dossier, Evidence & data with search, Report & files, Case settings/access/sharing). Buttons that start work call `to_chat`; actions run inside the Chat tab. Every agent turn ends with `st.rerun()` so the header and sidebar show new data and approvals. |
 | `main.py` | CLI entry; the loop itself is `agent.run_agent_loop`. |
 | `copilot/agent.py` | Turn loop, token accounting (`TokenUsage`), history trimming/repair, CLI loop. |
 | `copilot/dossier.py` | Investigate once, then answer: one longer turn in its own conversation writes the case dossier (timeline, findings, entities, hypotheses, contradictions, gaps), stored in the `dossiers` table; `prompt_section()` puts the latest into every system prompt. Run after triage (app, CLI), by `/investigate` / the sidebar button, and before benchmark questions. |
