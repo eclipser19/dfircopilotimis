@@ -680,13 +680,17 @@ def consume_settings_change() -> bool:
     return changed
 
 
-def copy_data(source_id: str, target_id: str, findings: bool = False) -> dict:
+def copy_data(source_id: str, target_id: str, findings: bool = False, triage: list = None) -> dict:
     """
     Copies collected data (records, timeline, search index, collections) from one case to
     another on the same evidence; the source may be one shared with the user. findings=True also
     copies its active findings (marked with their origin) and, if the target has none, its latest
     dossier. Outputs, chats and the audit trail stay behind. The copy is written to both cases'
     audit logs, so a case's owner sees who started from it.
+
+    triage (artifact / collection names): copy only the source's triage, i.e. what was collected
+    before its first other collection (a benchmark run reusing an earlier run's data must not get
+    what that run's agent collected). counts["triage"] lists the triage collections copied.
     """
     import sqlite3
     from copilot.database import CaseDatabase
@@ -709,9 +713,21 @@ def copy_data(source_id: str, target_id: str, findings: bool = False) -> dict:
     counts = {}
     try:
         target.conn.execute("ATTACH DATABASE ? AS src", (src_db,))
+        # Every row (all of them, or the triage's: what was ingested before the first other collection).
+        records, params, flows = "SELECT evidence_id FROM src.records", [], None
+        if triage is not None:
+            cutoff, flows = _triage_part(target.conn, triage)
+            if cutoff:
+                records, params = records + " WHERE ingested_at < ?", [cutoff]
+            counts["triage"] = flows
+        wheres = {"records": (f"WHERE evidence_id IN ({records})", params),
+                  "timeline": (f"WHERE evidence_id IN ({records})", params),
+                  "collections": ("", []) if flows is None else ("WHERE 0", []) if not flows else
+                                 ("WHERE flow_id IN (%s)" % ",".join("?" * len(flows)), flows)}
         for table in ("records", "timeline", "collections"):
+            where, args = wheres[table]
             before = target.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            target.conn.execute(f"INSERT OR IGNORE INTO {table} SELECT * FROM src.{table}")
+            target.conn.execute(f"INSERT OR IGNORE INTO {table} SELECT * FROM src.{table} {where}", args)
             counts[table] = target.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] - before
         try:                                   # memory image hashes (databases from before them have none)
             target.conn.execute("INSERT OR IGNORE INTO evidence_files SELECT * FROM src.evidence_files")
@@ -721,7 +737,7 @@ def copy_data(source_id: str, target_id: str, findings: bool = False) -> dict:
             try:
                 target.conn.execute("INSERT INTO records_fts (evidence_id, text) SELECT s.evidence_id, s.text "
                                     "FROM src.records_fts s WHERE s.evidence_id NOT IN "
-                                    "(SELECT evidence_id FROM records_fts)")
+                                    f"(SELECT evidence_id FROM records_fts) AND s.evidence_id IN ({records})", params)
             except sqlite3.OperationalError:
                 pass
         if findings:
@@ -733,6 +749,23 @@ def copy_data(source_id: str, target_id: str, findings: bool = False) -> dict:
         target.conn.close()
     _audit(source_id, "case_reused", f"copied into case {target_id}: {counts}")
     return counts
+
+
+def _triage_part(conn, triage: list) -> tuple:
+    """
+    (cutoff, flow IDs) of the attached source's triage: its collections in order, each triage artifact
+    once, up to the first other collection, whose start (cutoff) ends the triage (None: nothing else
+    was collected). Before an agent collects, only the triage puts records into a case.
+    """
+    remaining, flows = set(triage), []
+    for flow_id, artifact, requested in conn.execute(
+            "SELECT flow_id, artifact, requested_at FROM src.collections ORDER BY requested_at, rowid"):
+        if artifact in remaining:
+            remaining.discard(artifact)
+            flows.append(flow_id)
+            continue
+        return requested, flows
+    return None, flows
 
 
 FINDING_COLUMNS = ["finding_id", "timestamp_utc", "title", "description", "evidence_ids", "confidence",

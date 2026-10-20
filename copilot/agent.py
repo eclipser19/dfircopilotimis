@@ -84,15 +84,15 @@ def status_line(summary: dict) -> str:
     return line
 
 
-def auto_collect(case_config, collect=None) -> list:
+def auto_collect(case_config, collect=None, steps: list = None) -> list:
     """
-    Runs the case's triage collections directly (no LLM involved) and returns
-    one summary per artifact. Failures are reported, not raised.
+    Runs the case's triage collections (or the given steps of it) directly (no LLM involved) and
+    returns one summary per artifact. Failures are reported, not raised.
     """
     from copilot import collection
     collect = collect or collection.collect
     summaries = []
-    for step in case_config.collection_plan:
+    for step in case_config.collection_plan if steps is None else steps:
         artifact, params = step["artifact"], step["parameters"]
         print(f"[*] Collecting {artifact}" + (f" {json.dumps(params)}" if params else "") + " ...")
         try:

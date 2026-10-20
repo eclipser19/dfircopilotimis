@@ -132,3 +132,64 @@ def as_text(found: dict, width: int = 110) -> str:
         when = e["Time (UTC)"] + (f" (rec {e['Recorded']})" if "Recorded" in e else "")
         lines.append(f"  {e['Evidence']}  {when}  {e['Source']}\n      {e['What it shows'][:width]}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- time check
+_T = r"(\d{2}:\d{2}:\d{2})(?:\.\d+)?"
+_UTC_TIMES = re.compile(_T + r"(?:\s*(?:[–—-]|to)\s*" + _T + r")?\s*UTC")
+_RECORDED_TIMES = re.compile(r"recorded\s+" + _T + r"(?:\s*(?:[–—-]|to)\s*" + _T + r")?")
+
+
+def _seconds(hms: str) -> int:
+    h, m, s = (int(x) for x in hms.split(":"))
+    return h * 3600 + m * 60 + s
+
+
+def time_mismatches(text: str, db, offset_minutes: int = 0, tolerance: int = 2) -> list:
+    """
+    Times in a text that none of the records cited next to them holds (no LLM): a model that shifted
+    a time by hand, or copied the wrong one, shows up here. Per line, every time given as recorded
+    (or, without a clock offset, as UTC; with one, a UTC time without its recorded twin is shifted
+    back) must be within `tolerance` seconds of a timestamp of one of the line's cited records.
+    Lines citing nothing, or only records without timestamps, are not checked.
+    Returns [{"line", "time", "cited": {evidence_id: [recorded times]}}].
+    """
+    out = []
+    for line in (text or "").splitlines():
+        ids = list(dict.fromkeys(EVIDENCE_RE.findall(line)))
+        if not ids:
+            continue
+        recorded = [t for m in _RECORDED_TIMES.finditer(line) for t in m.groups() if t]
+        if not recorded:
+            utc = [t for m in _UTC_TIMES.finditer(line) for t in m.groups() if t]
+            recorded = [f"{(_seconds(t) + offset_minutes * 60) % 86400 // 3600:02d}:"
+                        f"{(_seconds(t) + offset_minutes * 60) % 3600 // 60:02d}:"
+                        f"{(_seconds(t) + offset_minutes * 60) % 60:02d}" for t in utc]
+        if not recorded:
+            continue
+        cited = {}
+        for evidence_id in ids:
+            rows = db.conn.execute("SELECT timestamp_utc FROM timeline WHERE evidence_id = ?", (evidence_id,)).fetchall()
+            times = [str(r[0])[11:19] for r in rows if r[0] and len(str(r[0])) >= 19]
+            if times:
+                cited[evidence_id] = times
+        if not cited:
+            continue
+        held = {_seconds(t) for times in cited.values() for t in times}
+        for t in dict.fromkeys(recorded):
+            s = _seconds(t)
+            if not any(min(abs(s - h), 86400 - abs(s - h)) <= tolerance for h in held):
+                out.append({"line": line.strip()[:160], "time": t,
+                            "cited": {k: sorted(set(v))[:4] for k, v in cited.items()}})
+    return out
+
+
+def time_check_note(mismatches: list) -> str:
+    """The mismatches as a section to append to the text they were found in ("" when there are none)."""
+    if not mismatches:
+        return ""
+    lines = [f"- recorded {m['time']} is not a time of the records cited with it ("
+             + "; ".join(f"`{k}`: {', '.join(v)}" for k, v in m["cited"].items())
+             + f"): \"{m['line'][:100]}\"" for m in mismatches[:20]]
+    return ("\n\n## Time check (automatic, no model)\nThese times do not match the records cited next to them. "
+            "Use the record's own time (and its true UTC) before quoting them:\n" + "\n".join(lines))

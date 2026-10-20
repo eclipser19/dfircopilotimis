@@ -109,9 +109,13 @@ Still open from the review: steps 6 and 8 below (step 2 is done).
    1.18M tokens (9.4 min without it); Injector 58.3%, because *entry* repeated the dossier's
    "web logs not collected" instead of reading them. Fixed after those runs: the dossier's gaps
    are a to-do list for the questions, the investigation is pointed at the web-attack checklist,
-   times are copied from the tools. Next: Injector again (it should be back near 70-80% on *entry*
-   and *uploads*), then OU, where the savings should be largest. If dossiers stay shallow, split the
-   investigation into one turn per phase group and a final turn that writes the dossier.
+   times are copied from the tools. Then reinforced in code: checklists attached by the data (web
+   attack, memory), a time check appended to the dossier, Gaps never cut, 3x token budget.
+   **Run plan** (each run from an earlier run's triage with `--from-case`, no Velociraptor wait):
+   Injector, then DC, then OU if there is time. Read the scorecard's header (commit, data source,
+   investigation steps, time-check flags) before the scores. If *entry* on Injector stays low, the
+   next fix is a deterministic web-log collection in the triage; if dossiers stay shallow, one
+   investigation turn per phase group.
 4. **Measure properly.**
    - Two runs per benchmark after each change, recorded in BENCHMARKS.md.
    - Each run saves what it ran with: commit and uncommitted changes, case and server settings,

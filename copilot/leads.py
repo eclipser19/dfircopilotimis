@@ -250,6 +250,29 @@ def user_folder_programs(db) -> list:
     return out
 
 
+# Names that only a host serving web pages has (server programs, services, web roots). Generic: no case facts.
+WEB_SERVER_SIGNS = ("httpd.exe", "w3wp.exe", "nginx.exe", "php-cgi", "tomcat", "W3SVC", "inetpub", "htdocs",
+                    "wwwroot", "apache2", "lighttpd")
+
+
+def web_server(db) -> list:
+    """
+    Signs that the host serves web pages (from the search index only, so it stays fast on large cases).
+    When there are any, its access logs are the main record of an attack on it: read them.
+    """
+    if not getattr(db, "has_fts", False):
+        return []
+    out = []
+    for sign in WEB_SERVER_SIGNS:
+        rows = db.conn.execute("SELECT r.evidence_id, r.source, r.description FROM records_fts f "
+                               "JOIN records r ON r.evidence_id = f.evidence_id WHERE records_fts MATCH ? LIMIT 50",
+                               ('"' + sign + '"',)).fetchall()
+        if rows:
+            out.append({"sign": sign, "records": len(rows) if len(rows) < 50 else "50+", "evidence_id": rows[0][0],
+                        "source": rows[0][1], "example": str(rows[0][2] or "")[:160]})
+    return out
+
+
 # Leads per database state: case_summary opens every question, and the data rarely changed since.
 _CACHE = {}
 
@@ -277,7 +300,8 @@ def _compute(db, sources_limit: int) -> dict:
            "scheduled_tasks_to_check": capped(tasks(db)),
            "log_clearing_and_defender": capped(log_clearing_and_defender(db)),
            "downloads_by_origin": capped(downloads(db)),
-           "programs_in_user_folders": capped(user_folder_programs(db))}
+           "programs_in_user_folders": capped(user_folder_programs(db)),
+           "web_server_signs": web_server(db)}
     out = {k: v for k, v in out.items() if v}
     out["about"] = ("Computed from the collected data without the model: starting points to confirm with the cited "
                     "records, not findings. An absent section means nothing of that kind was collected; "

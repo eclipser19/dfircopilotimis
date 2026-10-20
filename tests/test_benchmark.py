@@ -171,6 +171,43 @@ def test_the_investigation_runs_first_and_every_question_starts_from_its_dossier
     assert ui[0]["content"].startswith("**Case dossier**")
 
 
+def test_reusing_an_earlier_run_takes_its_triage_only_and_collects_what_it_lacks(bench_dirs, monkeypatch):
+    from datetime import datetime, timezone
+    from copilot.database import case_db
+    vql = FakeVQL(unique_flows=True)                                        # a flow ID per collection
+    monkeypatch.setattr(collection, "get_vql", lambda: vql)
+    quiet = {"out_dir": str(bench_dirs / "results"), "log": lambda *a: None, "investigate_first": False}
+    first = benchmark.run(_spec(bench_dirs), client_id=CLIENT, model=(ScriptedLLM(AIMessage(content="a"),
+                                                                                  AIMessage(content="b")), None, "s"),
+                          **quiet)
+    # What that run's agent collected after the triage must not reach the next run.
+    case_db.upsert_collection("F.AGENT", client_id=CLIENT, artifact="Windows.Search.FileFinder", state="FINISHED",
+                              requested_at=datetime.now(timezone.utc).isoformat(), rows_ingested=1)
+    case_db.ingest_artifact_results([{"Message": "collected later by the agent"}], "Windows.Search.FileFinder",
+                                    "H", CLIENT)
+    spec = _spec(bench_dirs, case={"case": {"name": "Mini"}, "velociraptor": {"client_id": ""},
+                                   "collect": ["Generic.Client.Info", "Windows.Sys.StartupItems"]})
+    second = benchmark.run(spec, from_case=first["run_id"],
+                           model=(ScriptedLLM(AIMessage(content="c"), AIMessage(content="d")), None, "s"), **quiet)
+    assert second["from_case"] == first["run_id"] and "(its triage only)" in second["triage"][0]
+    assert case_config.client_id == CLIENT                                  # the evidence comes with it
+    assert case_db.search_events("collected later")["total"] == 0 and case_db.get_stats()["total_records"] >= 1
+    assert {c["artifact"] for c in case_db.get_collections()} == {"Generic.Client.Info", "Windows.Sys.StartupItems"}
+    assert any(line.startswith("Windows.Sys.StartupItems -> ") for line in second["triage"])   # collected now
+    assert second["code"].get("commit")                                     # which code produced the run
+
+
+def test_a_broken_model_stops_the_run_before_anything_is_collected(bench_dirs, monkeypatch):
+    class Broken:
+        def invoke(self, messages):
+            raise ConnectionError("no route to the endpoint")
+    monkeypatch.setattr("copilot.llm.make_llm", lambda key=None: Broken())
+    monkeypatch.setattr("copilot.llm.needs_user_key", lambda: False)
+    with pytest.raises(benchmark.BenchmarkError, match="did not answer .*nothing was collected yet"):
+        benchmark.run(_spec(bench_dirs), client_id=CLIENT, log=lambda *a: None)
+    assert not os.path.isdir(bench_dirs / "cases")                          # no run case was even created
+
+
 def test_a_triage_only_run_does_not_investigate(bench_dirs):
     results = benchmark.run(_spec(bench_dirs), client_id=CLIENT, model=(ScriptedLLM(), None, "scripted"),
                             only=["none"], out_dir=str(bench_dirs / "results"), log=lambda *a: None)

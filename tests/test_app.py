@@ -813,14 +813,16 @@ def test_no_automatic_continue_while_requests_wait_or_when_turned_off(app_env):
 # ---- Layout ----
 
 def test_the_case_at_a_glance_then_one_tab_per_job(app_env):
-    app_env.ingest_artifact_results([{"Message": "x"}], "S", "D", "C.1")
+    app_env.ingest_artifact_results([{"Message": "xyzzy happened"}], "S", "D", "C.1")
     at = AppTest.from_file(APP, default_timeout=30).run()
     assert [t.label for t in at.tabs] == ["💬 Chat", "🚩 Findings & dossier", "📥 Evidence & data",
                                           "📄 Report & files", "⚙️ Case"]
     header = _texts(at)
     assert f"💽 `{CLIENT}`" in header and "**1** records" in header and "**0** findings" in header
-    at.text_input(key="data_search").input("x").run()                            # search without the LLM
-    assert not at.exception and at.dataframe[-1].value["Event"].tolist()
+    at.text_input(key="data_search").input("xy").run()
+    assert "Type at least 3 characters" in _texts(at)                            # no full scan for 2 characters
+    at.text_input(key="data_search").input("xyzzy").run()                        # search without the LLM
+    assert not at.exception and at.dataframe[-1].value["Event"].tolist() == ["xyzzy happened"]
     assert not [e for e in at.sidebar.expander if e.label.startswith(("📊", "🚩", "⚙️", "👥"))]   # a short sidebar
 
 

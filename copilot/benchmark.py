@@ -250,7 +250,10 @@ def render_markdown(results: dict) -> str:
     lines = [
         f"# Benchmark {results['name']} — {results['run_id']}",
         "",
-        f"Model `{results.get('model', '?')}` · case `{results['case_id']}` · {results.get('started', '')[:19]} UTC",
+        f"Model `{results.get('model', '?')}` · case `{results['case_id']}` · {results.get('started', '')[:19]} UTC"
+        + (f" · code `{results['code']['commit']}`{' + local changes' if results['code'].get('local_changes') else ''}"
+           if (results.get("code") or {}).get("commit") else "")
+        + (f" · data from `{results['from_case']}`" if results.get("from_case") else ""),
         "",
         (f"**Score {t['score_percent']}%** — facts {t['facts_found']}/{t['facts_total']}, "
          f"times {t['times_ok']}/{t['times_total']} · " if t["facts_total"] else
@@ -269,7 +272,9 @@ def render_markdown(results: dict) -> str:
         lines += [f"**Investigation first:** " + (f"dossier of {len(inv['dossier']):,} characters" if inv.get("dossier")
                                                     else f"no dossier ({inv.get('error') or 'no answer'})") +
                   f" · {inv.get('steps', 0)} steps · {inv.get('tokens_in', 0):,} tokens in · "
-                  f"{round((inv.get('seconds') or 0) / 60, 1)} min", ""]
+                  f"{round((inv.get('seconds') or 0) / 60, 1)} min"
+                  + (f" · ⚠ {inv['time_mismatches']} times not in their cited records (flagged in it)"
+                     if inv.get("time_mismatches") else ""), ""]
     else:
         lines += ["Questions answered without an investigation first (no case dossier).", ""]
     for problem in results.get("setup") or []:
@@ -305,6 +310,8 @@ def render_markdown(results: dict) -> str:
             if not f["scored"]:
                 line += f" · *not scored{': ' + f['note'] if f.get('note') else ''}*"
             lines.append(line)
+        for m in q.get("time_mismatches") or []:
+            lines.append(f"- ⚠ time not in its cited records: recorded {m['time']} in \"{m['line'][:90]}\"")
         cites = q["score"]["citations"]
         lines.append(f"- Cited {cites.get('evidence_cited', 0)} evidence and {cites.get('findings_cited', 0)} "
                      f"finding IDs" + (f"; not in the case: {', '.join(cites['evidence_invalid'] + cites['findings_invalid'])}"
@@ -385,11 +392,53 @@ def make_run_case(spec: dict, run_id: str, client_id: str = None, memory_image: 
 
 
 def make_model():
+    """The model, asked for its key and tried once before anything is collected: a wrong key or endpoint
+    stops the run in seconds, not after the triage."""
+    from langchain_core.messages import HumanMessage
     from copilot import llm as llm_config
     from copilot.tools import tools
     key = getpass.getpass("API key for the LLM endpoint: ") if llm_config.needs_user_key() else None
     llm = llm_config.make_llm(key)
+    try:
+        llm.invoke([HumanMessage(content="Reply with the word OK.")])
+    except Exception as e:
+        raise BenchmarkError(f"The model endpoint did not answer ({type(e).__name__}: {str(e)[:300]}). Check llm in "
+                             f"server.yaml and the API key; nothing was collected yet.")
     return llm.bind_tools(tools), llm.bind_tools(tools, tool_choice="none"), llm_config.model_name()
+
+
+def code_version() -> dict:
+    """The commit this run used, and whether tracked files were changed since: results stay traceable."""
+    import subprocess
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=root, capture_output=True, text=True,
+                                timeout=10).stdout.strip()
+        changed = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"], cwd=root,
+                                 capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    return {"commit": commit, "local_changes": bool(changed)} if commit else {}
+
+
+def _plugin_names(plugin: str) -> list:
+    """A memory plugin's full names (its source is Memory.<name>); [] for one this version doesn't allow."""
+    from copilot import memory
+    try:
+        return list(memory.resolve(plugin)[1].names)
+    except memory.MemoryAnalysisError:
+        return []
+
+
+def triage_sources() -> list:
+    """The active case's triage as collection names: its disk artifacts and its memory plugins' sources."""
+    from copilot import memory
+    from copilot.case_config import case_config
+    names = [step["artifact"] for step in case_config.collection_plan]
+    if case_config.memory_image:
+        for plugin in memory.triage_plan():
+            names += [f"Memory.{n}" for n in _plugin_names(plugin)]
+    return names
 
 
 def _emitter(steps_log: list, log=print):
@@ -409,7 +458,8 @@ def investigate(llm_with_tools, finalizer, extra: str = "", log=print) -> dict:
     started = time.monotonic()
     try:
         entry = dossier.investigate(llm_with_tools, finalizer, usage, _emitter(steps_log, log), extra)
-        result = {"dossier": entry["text"], "steps": entry["steps"], "error": ""}
+        result = {"dossier": entry["text"], "steps": entry["steps"], "error": "",
+                  "time_mismatches": entry.get("time_mismatches", 0)}
     except Exception as e:                    # the questions still run, without a dossier
         result = {"dossier": "", "steps": 0, "error": f"{type(e).__name__}: {e}"}
     return {**result, "log": steps_log, "tokens_in": usage.turn_input, "tokens_out": usage.turn_output,
@@ -434,7 +484,11 @@ def ask(text: str, llm_with_tools, finalizer, log=print) -> dict:
         error = f"{type(e).__name__}: {e}"
     calls = [{"name": c["name"], "args": c.get("args")} for m in history if isinstance(m, AIMessage)
              for c in (m.tool_calls or [])]
-    return {"answer": answer, "error": error, "tools": calls, "log": steps_log,
+    from copilot.citations import time_mismatches
+    from copilot.database import case_db
+    wrong = [{"time": m["time"], "line": m["line"]} for m in
+             time_mismatches(answer, case_db, case_config.clock_offset_minutes)]
+    return {"answer": answer, "error": error, "tools": calls, "log": steps_log, "time_mismatches": wrong,
             "steps": sum(isinstance(m, AIMessage) for m in history),
             "tokens_in": usage.turn_input, "tokens_out": usage.turn_output, "tokens_estimated": usage.estimated,
             "seconds": round(time.monotonic() - started, 1)}
@@ -471,31 +525,57 @@ def finish_triage(summaries: list, wait_minutes: float = TRIAGE_WAIT_MINUTES, lo
 
 def run(spec_path: str, client_id: str = None, memory_image: str = None, from_case: str = None,
         skip_triage: bool = False, only: list = None, model=None, out_dir: str = RESULTS_DIR, log=print,
-        image_check: bool = True, triage_wait: float = TRIAGE_WAIT_MINUTES, investigate_first: bool = True) -> dict:
+        image_check: bool = True, triage_wait: float = TRIAGE_WAIT_MINUTES, investigate_first: bool = True,
+        all_data: bool = False) -> dict:
     """
     Runs a benchmark end to end and saves its results. model: (llm_with_tools, finalizer, name) for tests.
     investigate_first: the investigation turn writes the case dossier before the questions (as the app does
     after triage); off, each question starts from the data alone (the runs before the dossier existed).
+    from_case: start from that case's triage data instead of collecting it (any earlier run of the same
+    image will do; what its agent collected later is left out, unless all_data). Triage artifacts it lacks
+    are collected.
     """
     from copilot import cases, conversation, memory
     from copilot.agent import auto_collect, status_line
     from copilot.case_config import case_config
     from copilot.database import case_db
     spec = load_spec(spec_path)
+    llm_with_tools, finalizer, model_name = model or make_model()      # before anything slow is started
     started = datetime.now(timezone.utc)
     run_id = f"{RUN_PREFIX}{spec['name']}-{started.strftime('%Y%m%d-%H%M%S')}"
+    n = 1
+    while os.path.exists(os.path.join(cases.cases_dir(), run_id)):     # two runs in the same second
+        n += 1
+        run_id = f"{RUN_PREFIX}{spec['name']}-{started.strftime('%Y%m%d-%H%M%S')}-{n}"
     if from_case:
-        client_id = client_id or (cases._read(from_case).get("velociraptor", {}) or {}).get("client_id")
+        source = cases._read(from_case)
+        client_id = client_id or (source.get("velociraptor", {}) or {}).get("client_id")
+        if memory_image is None:
+            memory_image = (source.get("memory", {}) or {}).get("image") or None
     make_run_case(spec, run_id, client_id, memory_image, log)
-    triage = []
-    if from_case:
-        counts = cases.copy_data(from_case, run_id)
-        triage.append(f"Data copied from case {from_case}: {counts}")
     cases.switch(run_id)
     cases.consume_switch()
     log(f"[*] Benchmark {spec['name']}: case {run_id} (client {case_config.client_id}, "
         f"memory {case_config.memory_image or 'none'})")
-    setup = []
+    triage, setup = [], []
+    if from_case:
+        counts = cases.copy_data(from_case, run_id, triage=None if all_data else triage_sources())
+        copied = counts.pop("triage", None)
+        triage.append(f"Data copied from case {from_case}" + ("" if all_data else " (its triage only)") + f": {counts}")
+        log(f"[*] {triage[-1]}")
+        if copied is not None and not skip_triage:
+            have = {c["artifact"] for c in case_db.get_collections()}
+            missing = [step for step in case_config.collection_plan if step["artifact"] not in have]
+            if missing:
+                log(f"[*] Collecting the triage artifacts case {from_case} lacks: "
+                    f"{', '.join(step['artifact'] for step in missing)}")
+                triage += [status_line(s) for s in finish_triage(auto_collect(case_config, steps=missing),
+                                                                  triage_wait, log)]
+            plugins = [p for p in (memory.triage_plan() if case_config.memory_image else [])
+                       if not any(f"Memory.{n}" in have for n in _plugin_names(p))]
+            if plugins:
+                log(f"[*] Memory plugins case {from_case} lacks: {', '.join(plugins)}")
+                triage += [status_line(s) for s in memory.triage(progress=lambda p: log(f"    {p}"), plugins=plugins)]
     if not from_case and not skip_triage:
         disk = finish_triage(auto_collect(case_config), triage_wait, log)
         triage += [status_line(s) for s in disk]
@@ -515,11 +595,10 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
     memory_broken = memory.unreadable_reason(case_config.memory_image) if case_config.memory_image else ""
     if memory_broken:      # a setup problem (e.g. no symbol table), not the agent's: memory questions are skipped
         setup.append(f"Volatility cannot read the memory image: {memory_broken[:300]}")
-    llm_with_tools, finalizer, model_name = model or make_model()
     results = {"name": spec["name"], "spec": spec["_path"], "run_id": run_id, "case_id": run_id,
                "client_id": case_config.client_id, "memory_image": case_config.memory_image,
                "model": model_name, "started": started.isoformat(), "triage": triage, "setup": setup,
-               "questions": []}
+               "code": code_version(), "from_case": from_case or "", "questions": []}
     chat = []
     asked = [q for q in spec["questions"] if not only or q["id"] in only]
     if investigate_first and asked:              # not for a triage-only run (--questions none)
@@ -682,6 +761,8 @@ def main(argv=None) -> int:
                    help=f"minutes to wait for triage collections still running (default {TRIAGE_WAIT_MINUTES})")
     r.add_argument("--no-investigate", action="store_true",
                    help="ask the questions without the investigation turn and its case dossier first")
+    r.add_argument("--all-data", action="store_true",
+                   help="with --from-case: copy everything that case holds, not only its triage")
     s = sub.add_parser("score", help="score saved answers again")
     s.add_argument("results")
     s.add_argument("--spec")
@@ -695,7 +776,7 @@ def main(argv=None) -> int:
             only = [q.strip() for q in args.questions.split(",")] if args.questions else None
             run(args.spec, args.client, args.memory_image, args.from_case, args.skip_triage, only, out_dir=args.out,
                 image_check=not args.no_image_check, triage_wait=args.triage_wait,
-                investigate_first=not args.no_investigate)
+                investigate_first=not args.no_investigate, all_data=args.all_data)
         elif args.command == "score":
             t = rescore(args.results, args.spec)["totals"]
             print(f"Score {t['score_percent']}%: facts {t['facts_found']}/{t['facts_total']}, "

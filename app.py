@@ -952,7 +952,7 @@ def data_view(stats: dict):
     """Where the data came from, the triage, the collections, and a search that costs no tokens."""
     action = None
     st.subheader("💽 Evidence sources")
-    sources, warnings = report.evidence_sources(case_db, case_config)
+    sources, warnings = report.evidence_sources(case_db, case_config, hosts=_hosts())
     if sources:
         st.dataframe([{"Source": s["kind"], "Name": s["name"], "Identity": s["identity"],
                        "Collections": s["collections"], "Rows": s["rows"], "First collected (UTC)": s["first"],
@@ -984,7 +984,9 @@ def data_view(stats: dict):
     source = c2.selectbox("Source", sources_by_name, key="data_source",
                           format_func=lambda s: s if s == sources_by_name[0] else
                           f"{s} ({next(x['records'] for x in stats['by_source'] if x['source'] == s):,})")
-    if term.strip():
+    if 0 < len(term.strip()) < 3:
+        st.caption("Type at least 3 characters (shorter ones can't use the search index and read every record).")
+    elif term.strip():
         found = case_db.search_events(term.strip(), limit=500,
                                       source=None if source == sources_by_name[0] else source)
         clock = report.Clock(case_config.clock_offset_minutes)

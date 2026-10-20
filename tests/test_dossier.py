@@ -56,8 +56,40 @@ def test_a_long_dossier_is_shortened_in_the_prompt(case):
 
 def test_budget_is_larger_than_a_question_and_configurable(case):
     case_config.data["agent"] = {"max_steps": 10, "max_tokens_per_turn": 100000}
-    assert dossier.budget() == (dossier.MIN_STEPS, 200000)
+    assert dossier.budget() == (dossier.MIN_STEPS, 300000)
     case_config.data["agent"] = {"max_steps": 30, "investigate_tokens": 900000}
     assert dossier.budget() == (60, 900000)
     case_config.data["agent"] = {"investigate_steps": 15}
     assert dossier.budget()[0] == 15
+
+
+def test_times_the_model_shifted_are_flagged_in_the_stored_dossier(case):
+    case_config.data["scope"] = {"clock_offset_minutes": 60}
+    case.ingest_artifact_results([{"EventTime": "2020-09-19T03:36:23Z", "Message": "rdp client to 10.42.85.115"}],
+                                 "S", "H", "C.1")
+    eid = case.query_timeline()["events"][0]["evidence_id"]
+    llm = ScriptedLLM(AIMessage(content=f"## Intrusion timeline\n- 03:36:23 UTC (recorded 04:36:23) RDP out (`{eid}`)\n"
+                                        f"- 02:36:23 UTC (recorded 03:36:23) the same, right (`{eid}`)\n## Gaps\n- none"))
+    entry = dossier.investigate(llm, llm, emit=lambda *a: None)
+    assert entry["time_mismatches"] == 1
+    assert "## Time check (automatic, no model)" in entry["text"] and "recorded 04:36:23 is not a time" in entry["text"]
+    assert "A time\nlisted under \"Time check\" is wrong" in build_system_prompt(case_config)
+
+
+def test_the_checklists_the_case_needs_come_with_the_investigation(case, monkeypatch):
+    assert "Checklist (web_attack)" not in dossier.prompt()
+    case.ingest_artifact_results([{"Name": "httpd.exe", "Path": "C:\\xampp\\apache\\bin\\httpd.exe"}],
+                                 "Memory.windows.pslist.PsList", "H", "memory:x")
+    case_config.data["memory"] = {"image": "x.mem"}
+    asked = dossier.prompt()
+    assert "The data shows a web server (httpd.exe" in asked and "Checklist (web_attack)" in asked
+    assert "Checklist (memory)" in asked
+
+
+def test_a_long_dossier_keeps_its_gaps_and_leaves_out_whole_sections():
+    text = ("## Intrusion timeline\n" + "- step\n" * 200 + "## Hypotheses\n" + "- maybe\n" * 3000 +
+            "## Gaps\n- web logs not collected\n")
+    fitted = dossier.fit(text, 4000)
+    assert "## Gaps\n- web logs not collected" in fitted and "## Intrusion timeline" in fitted
+    assert "## Hypotheses" not in fitted and fitted.endswith("[... left out for length: Hypotheses]")
+    assert dossier.fit("short", 4000) == "short"

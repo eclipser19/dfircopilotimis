@@ -156,7 +156,7 @@ def _size(n: int) -> str:
         n /= 1024
 
 
-def evidence_sources(db, config) -> tuple:
+def evidence_sources(db, config, hosts: dict = None) -> tuple:
     """
     Provenance: each source the case's data came from (Velociraptor client, memory image) with
     what identifies it, how much came from it and when. Returns (sources, warnings).
@@ -173,7 +173,7 @@ def evidence_sources(db, config) -> tuple:
     for key in (config.client_id, f"memory:{config.memory_image}" if config.memory_image else ""):
         if key and key not in sources:
             sources[key] = {"collections": 0, "rows": 0, "times": []}       # named by the case, nothing yet
-    hosts = db.hosts_by_source()
+    hosts = db.hosts_by_source() if hosts is None else hosts      # a full scan: the app passes its cached copy
     hashes = {}
     for f in db.get_evidence_files():
         hashes.setdefault(f["source"], []).append(f)
