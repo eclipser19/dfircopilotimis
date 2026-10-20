@@ -181,6 +181,21 @@ def run_agent_loop():
         save()            # saved with the case it was asked in, even if the agent switched cases
         follow_case()
 
+    def investigate(extra: str = ""):
+        """The investigation turn (copilot/dossier.py): writes the case dossier every question starts from."""
+        from copilot import dossier
+        print("\n[*] Investigating the whole case (one longer agent turn that writes the case dossier) ...")
+        try:
+            entry = dossier.investigate(llm_with_tools, finalizer, usage, extra=extra)
+        except dossier.DossierError as e:
+            print(f"\n[!] {e}")
+            return
+        chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
+        state["ui"].append({"role": "assistant", "content": f"**Case dossier**\n\n{entry['text']}"})
+        save()
+        print(f"\n[*] Dossier saved ({entry['steps']} steps, {entry['tokens']:,} tokens). "
+              f"Every question now starts from it; /investigate writes it again.")
+
     from copilot import approvals
     approvals.ASK = _confirm
     try:
@@ -225,15 +240,10 @@ def run_agent_loop():
     if summaries and all(s.get("state") == "NOT_STARTED" for s in summaries):
         print("\n[!] No collection could be started, so the agent was not run on them. "
               "Fix the error above (Velociraptor connection, client ID, artifact names), then retry.")
-    elif summaries:
-        auto_prompt = (
-            "The initial collection has been run for you. Results per artifact (Memory.* = memory image):\n"
-            f"{json.dumps(summaries, indent=2)}\n"
-            "Follow up on any collection that is still RUNNING with check_collection. "
-            "If IOCs are defined in the case, search for them. "
-            "If an incident time window is defined, query the timeline for that window."
-        )
-        turn(auto_prompt, show_user=False)
+    elif summaries and input("\nInvestigate the case now (one longer agent turn that writes the case dossier "
+                             "every question starts from)? (y/n) [y]: ").lower() in ['', 'y', 'yes']:
+        from copilot.dossier import triage_note
+        investigate(triage_note(summaries))
 
     while True:
         user_input = input("\nInvestigator> ")
@@ -244,6 +254,10 @@ def run_agent_loop():
             conversation.clear(state["case"])
             open_chat()
             print("[*] New conversation for this case (data and findings are kept).")
+            continue
+
+        if user_input.strip().lower() == commands.INVESTIGATE:
+            investigate()
             continue
 
         reply = commands.handle(user_input)

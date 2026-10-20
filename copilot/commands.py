@@ -3,11 +3,15 @@ Chat commands handled locally, without the LLM (they cost no tokens):
   /cases          list investigations
   /case <id>      switch to another investigation (the conversation restarts)
   /help           this list
+/investigate (uses the LLM) is run by the CLI loop and the app themselves.
 """
 from copilot import cases
 
+INVESTIGATE = "/investigate"
 HELP = ("Commands (no LLM, free): `/cases` list cases · `/case <id>` switch case (each case keeps its own "
         "chat) · `/help`. CLI: `/new` starts a fresh conversation (Streamlit: sidebar button). "
+        "`/investigate` (uses the LLM) investigates the whole case and writes the case dossier every question "
+        "starts from. "
         "You can also just ask in words, e.g. \"switch to the szechuan case\" or \"create a case for host X\".")
 
 

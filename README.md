@@ -220,6 +220,20 @@ copilot produces (reports, case exports, CSV exports of query results, JSON evid
 extracts) go to the output directory: `DFIR_OUTPUT_DIR`, else `output.dir` in the case
 file (e.g. `/uploads` on a server), else the case's `data/outputs/`.
 
+**Investigate once, then answer.** After the triage, the agent investigates the whole case in
+one longer turn (40 tool steps by default) and writes the **case dossier**: the intrusion
+timeline, its findings, key entities, hypotheses, contradictions and gaps, with evidence IDs.
+The dossier is stored in the case and goes into every later conversation, so each question starts
+from it and only checks what it adds. Answers then agree with each other, and a question costs a
+fraction of re-investigating the case. In the app it runs after the triage ("Investigate
+afterwards", on by default) and from the sidebar's **🗂️ Case dossier** section (**Investigate
+again** after new data, e.g. the memory triage); in the CLI it is offered after the triage, and
+`/investigate` runs it in either. Running it again starts from the previous dossier and replaces
+it; every member of the case gets the new one with their next question. Its budget is
+`agent.investigate_steps` / `agent.investigate_tokens` in the case file (default: twice a
+question's). Requests it makes (collections, memory runs) wait for approval as usual; their
+results go to the chat, so investigate again to fold them into the dossier.
+
 In the Streamlit app:
 - an empty case offers the triage collection (same as the CLI's first question), and the
   sidebar's **Triage collection** panel can run it any time. **✏️ Choose what to collect**
@@ -434,13 +448,18 @@ the model can be compared run against run. The checks are done in code (free, re
 python -m copilot.benchmark run cases/szechuan-dc/benchmark.yaml --client C.<id of the image's client>
 python -m copilot.benchmark run <spec> --from-case <case id>   # reuse a case's collected data, skip triage
 python -m copilot.benchmark run <spec> --questions entry,malware
+python -m copilot.benchmark run <spec> --no-investigate        # questions without the case dossier first
 python -m copilot.benchmark score benchmark_results/<run>.json # score saved answers again (key corrected)
 python -m copilot.benchmark clean --yes                        # remove the bench-* run cases
 ```
 
 Each run creates a fresh case `bench-<name>-<time>` from the spec's case file (agent collections
 and memory runs approved automatically; case changes and lessons off), runs the triage without
-the LLM, then asks every question in a fresh conversation. Per question it records the answer,
+the LLM, runs the investigation that writes the case dossier (as the app does after triage; its
+steps, tokens and time count in the totals, and the scorecard shows the dossier), then asks every
+question in a fresh conversation that starts from the dossier. `--no-investigate` skips the
+investigation, as runs did before it existed; `--questions none` (a triage-only case) skips it
+too. Per question it records the answer,
 tool calls, steps, tokens and time, and scores each expected fact:
 - **found:** the answer has the fact's words (`all`, one of each `any` group, `regex`);
 - **time:** a true-UTC time in the expected range near those words; a recorded (host clock)

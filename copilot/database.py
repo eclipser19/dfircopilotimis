@@ -133,6 +133,17 @@ class CaseDatabase:
 
             CREATE TABLE IF NOT EXISTS conversation (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
 
+            -- The case dossier written by an investigation turn (copilot/dossier.py); the latest counts.
+            CREATE TABLE IF NOT EXISTS dossiers (
+                dossier_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT,
+                actor      TEXT,
+                text       TEXT,
+                findings   INTEGER,
+                steps      INTEGER,
+                tokens     INTEGER
+            );
+
             -- Evidence files the copilot reads itself (memory images), hashed once per version.
             CREATE TABLE IF NOT EXISTS evidence_files (
                 source     TEXT,          -- memory:<image name>, as in collections.client_id
@@ -452,6 +463,24 @@ class CaseDatabase:
         cur = self.conn.cursor()
         cur.execute("SELECT * FROM collections ORDER BY requested_at ASC")
         return [dict(r) for r in cur.fetchall()]
+
+    # --- Case dossier ---
+    def save_dossier(self, text: str, steps: int = 0, tokens: int = 0) -> dict:
+        from copilot import session
+        cur = self.conn.execute(
+            "INSERT INTO dossiers (created_at, actor, text, findings, steps, tokens) VALUES (?,?,?,?,?,?)",
+            (datetime.now(timezone.utc).isoformat(), session.current_user(), text, len(self.get_findings()),
+             steps, tokens))
+        self.conn.commit()
+        return self.get_dossier(cur.lastrowid)
+
+    def get_dossier(self, dossier_id: int = None) -> dict:
+        """The latest dossier (or the given one), {} if none was written."""
+        if dossier_id is None:
+            row = self.conn.execute("SELECT * FROM dossiers ORDER BY dossier_id DESC LIMIT 1").fetchone()
+        else:
+            row = self.conn.execute("SELECT * FROM dossiers WHERE dossier_id = ?", (dossier_id,)).fetchone()
+        return dict(row) if row else {}
 
     # --- Evidence files (provenance) ---
     def evidence_file(self, source: str, size: int, modified: str) -> dict:

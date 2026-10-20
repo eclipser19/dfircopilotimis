@@ -111,7 +111,7 @@ def test_a_full_run_scores_saves_and_leaves_a_readable_case(bench_dirs):
         AIMessage(content="RDP brute force (4625) from 194.61.24.102 at 02:20:00 UTC (recorded 03:20:00)."),
         AIMessage(content="coreupdater.exe, downloaded at 03:24:06 UTC."))
     results = benchmark.run(spec_path, client_id=CLIENT, model=(llm, llm, "scripted"),
-                            out_dir=str(bench_dirs / "results"), log=lambda *a: None)
+                            out_dir=str(bench_dirs / "results"), log=lambda *a: None, investigate_first=False)
     run_id = results["run_id"]
     assert run_id.startswith("bench-mini-") and case_config.client_id == CLIENT
     approvals = case_config.data["agent"]["approvals"]
@@ -141,6 +141,40 @@ def test_a_full_run_scores_saves_and_leaves_a_readable_case(bench_dirs):
 
     assert benchmark.clean(log=lambda *a: None) == [run_id]       # dry run: lists, removes nothing
     assert os.path.isdir(bench_dirs / "cases" / run_id)
+
+
+def test_the_investigation_runs_first_and_every_question_starts_from_its_dossier(bench_dirs):
+    prompts = []
+
+    class Recording(ScriptedLLM):
+        def invoke(self, history):
+            prompts.append(history[0].content)
+            return super().invoke(history)
+
+    llm = Recording(
+        AIMessage(content="", tool_calls=[{"name": "case_summary", "id": "1", "args": {}}]),
+        AIMessage(content="## Intrusion timeline\n- 02:20:00 UTC brute force from 194.61.24.102"),
+        AIMessage(content="From the dossier: brute force from 194.61.24.102 at 02:20:00 UTC."),
+        AIMessage(content="coreupdater.exe"))
+    results = benchmark.run(_spec(bench_dirs), client_id=CLIENT, model=(llm, llm, "scripted"),
+                            out_dir=str(bench_dirs / "results"), log=lambda *a: None)
+    inv = results["investigation"]
+    assert inv["dossier"].startswith("## Intrusion timeline") and inv["steps"] == 2 and inv["tool_calls"] == 1
+    assert "## CASE DOSSIER" not in prompts[0]                              # nothing to start from yet
+    assert all("- 02:20:00 UTC brute force from 194.61.24.102" in p for p in prompts[2:]) and len(prompts) == 4
+    t = results["totals"]
+    assert t["investigated"] and t["steps"] == 4 and t["tool_calls"] == 1 and t["facts_found"] == 2
+    report = (bench_dirs / "results" / f"{results['run_id']}.md").read_text(encoding="utf-8")
+    assert f"**Investigation first:** dossier of {len(inv['dossier'])} characters · 2 steps" in report
+    assert "## Case dossier (investigation)" in report
+    ui, _ = conversation.load(results["run_id"], "system")
+    assert ui[0]["content"].startswith("**Case dossier**")
+
+
+def test_a_triage_only_run_does_not_investigate(bench_dirs):
+    results = benchmark.run(_spec(bench_dirs), client_id=CLIENT, model=(ScriptedLLM(), None, "scripted"),
+                            only=["none"], out_dir=str(bench_dirs / "results"), log=lambda *a: None)
+    assert "investigation" not in results and results["questions"] == []
 
 
 def test_a_run_needs_an_evidence_client(bench_dirs):
@@ -245,7 +279,7 @@ def test_a_run_without_an_answer_key_says_so():
 def test_evidence_dump_shows_the_raw_records_an_answer_cites(bench_dirs):
     llm = ScriptedLLM(AIMessage(content="first"), AIMessage(content="second"))
     results = benchmark.run(_spec(bench_dirs), client_id=CLIENT, model=(llm, llm, "scripted"),
-                            out_dir=str(bench_dirs / "results"), log=lambda *a: None)
+                            out_dir=str(bench_dirs / "results"), log=lambda *a: None, investigate_first=False)
     from copilot.database import case_db
     real = case_db.conn.execute("SELECT evidence_id FROM records LIMIT 1").fetchone()[0]
     path = bench_dirs / "results" / f"{results['run_id']}.json"

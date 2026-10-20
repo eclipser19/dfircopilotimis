@@ -204,10 +204,14 @@ def score_answer(text: str, question: dict, spec: dict, db=None, citations: dict
             "forbidden": forbidden}
 
 
-def totals(questions: list) -> dict:
+def totals(questions: list, investigation: dict = None) -> dict:
+    """Scores and costs of a run; the costs include the investigation turn, if one ran."""
     t = {"facts_found": 0, "facts_total": 0, "times_ok": 0, "times_total": 0, "uncorrected_times": 0,
          "invalid_ids": 0, "forbidden": 0, "unscored_found": 0, "unscored_total": 0, "errors": 0,
-         "tokens_in": 0, "tokens_out": 0, "steps": 0, "tool_calls": 0, "seconds": 0, "questions": 0}
+         "tokens_in": 0, "tokens_out": 0, "steps": 0, "tool_calls": 0, "seconds": 0, "questions": 0,
+         "investigated": bool(investigation and investigation.get("dossier"))}
+    for key in ("tokens_in", "tokens_out", "steps", "tool_calls", "seconds"):
+        t[key] += (investigation or {}).get(key) or 0
     for q in questions:
         if q.get("skipped"):
             continue
@@ -256,9 +260,18 @@ def render_markdown(results: dict) -> str:
         f"invalid IDs {t['invalid_ids']} · forbidden claims {t['forbidden']} · errors {t['errors']}",
         "",
         f"{t['questions']} questions · {t['steps']} model steps · {t['tool_calls']} tool calls · "
-        f"{t['tokens_in']:,} tokens in / {t['tokens_out']:,} out · {round(t['seconds'] / 60, 1)} min",
+        f"{t['tokens_in']:,} tokens in / {t['tokens_out']:,} out · {round(t['seconds'] / 60, 1)} min"
+        + (" (investigation included)" if results.get("investigation") else ""),
         "",
     ]
+    inv = results.get("investigation")
+    if inv:
+        lines += [f"**Investigation first:** " + (f"dossier of {len(inv['dossier']):,} characters" if inv.get("dossier")
+                                                    else f"no dossier ({inv.get('error') or 'no answer'})") +
+                  f" · {inv.get('steps', 0)} steps · {inv.get('tokens_in', 0):,} tokens in · "
+                  f"{round((inv.get('seconds') or 0) / 60, 1)} min", ""]
+    else:
+        lines += ["Questions answered without an investigation first (no case dossier).", ""]
     for problem in results.get("setup") or []:
         lines += [f"⚠ **Setup:** {problem}", ""]
     lines += [
@@ -302,6 +315,9 @@ def render_markdown(results: dict) -> str:
         if tools:
             lines.append(f"- Tools: {', '.join(tools)}")
         lines += ["", "<details><summary>Answer</summary>", "", (q.get("answer") or "(none)"), "", "</details>"]
+    if inv and inv.get("dossier"):
+        lines += ["", "## Case dossier (investigation)", "", "<details><summary>Dossier</summary>", "",
+                  inv["dossier"], "", "</details>"]
     if results.get("triage"):
         fence = "~~~~"            # triage lines may contain backticks
         lines += ["", "## Triage", "", fence] + list(results["triage"]) + [fence]
@@ -376,6 +392,31 @@ def make_model():
     return llm.bind_tools(tools), llm.bind_tools(tools, tool_choice="none"), llm_config.model_name()
 
 
+def _emitter(steps_log: list, log=print):
+    """run_turn's progress events, logged and kept in the results."""
+    def emit(kind, payload):
+        if kind in ("tool", "collection", "notice"):
+            steps_log.append(f"{kind}: {payload}")
+            log(f"    {'⚙' if kind == 'tool' else ' '} {payload}")
+    return emit
+
+
+def investigate(llm_with_tools, finalizer, extra: str = "", log=print) -> dict:
+    """The investigation turn before the questions (copilot/dossier.py): its dossier and cost."""
+    from copilot import dossier
+    from copilot.agent import TokenUsage
+    usage, steps_log = TokenUsage(), []
+    started = time.monotonic()
+    try:
+        entry = dossier.investigate(llm_with_tools, finalizer, usage, _emitter(steps_log, log), extra)
+        result = {"dossier": entry["text"], "steps": entry["steps"], "error": ""}
+    except Exception as e:                    # the questions still run, without a dossier
+        result = {"dossier": "", "steps": 0, "error": f"{type(e).__name__}: {e}"}
+    return {**result, "log": steps_log, "tokens_in": usage.turn_input, "tokens_out": usage.turn_output,
+            "tool_calls": sum(line.startswith("tool:") for line in steps_log),
+            "seconds": round(time.monotonic() - started, 1)}
+
+
 def ask(text: str, llm_with_tools, finalizer, log=print) -> dict:
     """One question in a fresh conversation, as typed by an investigator."""
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -385,16 +426,10 @@ def ask(text: str, llm_with_tools, finalizer, log=print) -> dict:
     from copilot.prompts import build_system_prompt
     history = [SystemMessage(content=build_system_prompt(case_config)), HumanMessage(content=with_playbooks(text))]
     usage, steps_log = TokenUsage(), []
-
-    def emit(kind, payload):
-        if kind in ("tool", "collection", "notice"):
-            steps_log.append(f"{kind}: {payload}")
-            log(f"    {'⚙' if kind == 'tool' else ' '} {payload}")
-
     started, error, answer = time.monotonic(), "", ""
     try:
         answer = run_turn(llm_with_tools, history, case_config.max_steps, usage, case_config.max_tokens_per_turn,
-                          finalizer, emit)
+                          finalizer, _emitter(steps_log, log))
     except Exception as e:                    # an LLM or tool failure ends this question, not the run
         error = f"{type(e).__name__}: {e}"
     calls = [{"name": c["name"], "args": c.get("args")} for m in history if isinstance(m, AIMessage)
@@ -436,8 +471,12 @@ def finish_triage(summaries: list, wait_minutes: float = TRIAGE_WAIT_MINUTES, lo
 
 def run(spec_path: str, client_id: str = None, memory_image: str = None, from_case: str = None,
         skip_triage: bool = False, only: list = None, model=None, out_dir: str = RESULTS_DIR, log=print,
-        image_check: bool = True, triage_wait: float = TRIAGE_WAIT_MINUTES) -> dict:
-    """Runs a benchmark end to end and saves its results. model: (llm_with_tools, finalizer, name) for tests."""
+        image_check: bool = True, triage_wait: float = TRIAGE_WAIT_MINUTES, investigate_first: bool = True) -> dict:
+    """
+    Runs a benchmark end to end and saves its results. model: (llm_with_tools, finalizer, name) for tests.
+    investigate_first: the investigation turn writes the case dossier before the questions (as the app does
+    after triage); off, each question starts from the data alone (the runs before the dossier existed).
+    """
     from copilot import cases, conversation, memory
     from copilot.agent import auto_collect, status_line
     from copilot.case_config import case_config
@@ -482,9 +521,17 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
                "model": model_name, "started": started.isoformat(), "triage": triage, "setup": setup,
                "questions": []}
     chat = []
-    for question in spec["questions"]:
-        if only and question["id"] not in only:
-            continue
+    asked = [q for q in spec["questions"] if not only or q["id"] in only]
+    if investigate_first and asked:              # not for a triage-only run (--questions none)
+        log("\n[*] Investigation: one longer turn writes the case dossier the questions start from")
+        note = "Triage results (Memory.* = memory image):\n" + "\n".join(f"  {line}" for line in triage) if triage else ""
+        results["investigation"] = investigate(llm_with_tools, finalizer, note, log)
+        inv = results["investigation"]
+        log(f"[=] dossier {len(inv['dossier']):,} characters, {inv['steps']} steps, {inv['tokens_in']:,} tokens in, "
+            f"{inv['seconds']} s" + (f" · {inv['error']}" if inv["error"] else ""))
+        chat.append({"role": "assistant", "log": inv["log"],
+                     "content": f"**Case dossier**\n\n{inv['dossier'] or '(none) ' + inv['error']}"})
+    for question in asked:
         entry = {"id": question["id"], "ask": question["ask"]}
         if question.get("memory") and (not case_config.memory_image or memory_broken):
             entry["skipped"] = ("Volatility cannot read the memory image (setup)" if memory_broken
@@ -503,7 +550,7 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
                   "log": entry["log"]}]
         conversation.save(run_id, chat, None)       # readable in the app as the run case's chat
     results["finished"] = datetime.now(timezone.utc).isoformat()
-    results["totals"] = totals(results["questions"])
+    results["totals"] = totals(results["questions"], results.get("investigation"))
     paths = save(results, out_dir)
     if results["totals"]["facts_total"]:
         log(f"\n[*] Score {results['totals']['score_percent']}%: {paths[1]}")
@@ -532,7 +579,9 @@ def evidence_dump(results_path: str, out_path: str = None) -> str:
     lines = [f"# Evidence cited by {results['run_id']}", "",
              "Raw records behind every evidence ID the answers cite, from the run case's database. "
              "Check each claim against these, not against the answer's wording.", ""]
-    for entry in results["questions"]:
+    dossier = (results.get("investigation") or {}).get("dossier")
+    for entry in ([{"id": "dossier", "ask": "the investigation's case dossier", "answer": dossier}] if dossier else []) \
+            + results["questions"]:
         answer = entry.get("answer") or ""
         lines += [f"## {entry['id']}: {entry['ask']}", ""]
         ids = list(dict.fromkeys(EVIDENCE_RE.findall(answer)))
@@ -587,7 +636,7 @@ def rescore(results_path: str, spec_path: str = None, out_dir: str = None) -> di
             cites["evidence_invalid"] = list(cites.get("evidence_invalid", [])) + missing
             cites["evidence_cited"] = cites.get("evidence_cited", 0) + len(missing)
         entry["score"] = score_answer(entry.get("answer") or "", by_id[entry["id"]], spec, citations=cites)
-    results["totals"] = totals(results["questions"])
+    results["totals"] = totals(results["questions"], results.get("investigation"))
     save(results, out_dir or os.path.dirname(os.path.abspath(results_path)))
     return results
 
@@ -631,6 +680,8 @@ def main(argv=None) -> int:
                    help="run even if the time-window triage finds nothing (wrong image?)")
     r.add_argument("--triage-wait", type=float, default=TRIAGE_WAIT_MINUTES,
                    help=f"minutes to wait for triage collections still running (default {TRIAGE_WAIT_MINUTES})")
+    r.add_argument("--no-investigate", action="store_true",
+                   help="ask the questions without the investigation turn and its case dossier first")
     s = sub.add_parser("score", help="score saved answers again")
     s.add_argument("results")
     s.add_argument("--spec")
@@ -643,7 +694,8 @@ def main(argv=None) -> int:
         if args.command == "run":
             only = [q.strip() for q in args.questions.split(",")] if args.questions else None
             run(args.spec, args.client, args.memory_image, args.from_case, args.skip_triage, only, out_dir=args.out,
-                image_check=not args.no_image_check, triage_wait=args.triage_wait)
+                image_check=not args.no_image_check, triage_wait=args.triage_wait,
+                investigate_first=not args.no_investigate)
         elif args.command == "score":
             t = rescore(args.results, args.spec)["totals"]
             print(f"Score {t['score_percent']}%: facts {t['facts_found']}/{t['facts_total']}, "

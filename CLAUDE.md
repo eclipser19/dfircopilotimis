@@ -24,7 +24,7 @@ python -m copilot.config_check [file]          # unknown keys / wrong types in s
 python -m copilot.memory check [image]         # check Volatility, symbols, YARA, memory images
 python -m copilot.auth add <user> [--admin]    # accounts (also: admin on|off, remove, list)
 python -m copilot.lessons list|accept|remove   # lessons learned
-python -m copilot.benchmark run cases/szechuan-dc/benchmark.yaml --client C.<id>   # score the agent
+python -m copilot.benchmark run cases/szechuan-dc/benchmark.yaml --client C.<id>   # score the agent (--no-investigate: without the dossier)
 python -m copilot.benchmark score benchmark_results/<run>.json                     # re-score saved answers
 ```
 
@@ -33,6 +33,8 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 
 ## How a question flows through the code
 
+0. After the triage, `dossier.investigate()` runs one longer turn whose answer becomes the case
+   dossier; `prompts.build_system_prompt()` appends the latest dossier to every conversation.
 1. `app.py` / `main.py` take the investigator's text. `knowledge.with_playbooks()` appends the
    matching playbooks (regex `triggers` in `playbooks.yaml`) before it reaches the model.
 2. `agent.run_turn()` loops: model call -> tool calls (`tools.py`) -> `ToolMessage`s, within
@@ -52,6 +54,7 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 | `app.py` | Streamlit UI: sign-in, sidebar (case settings, triage picker, approvals, knowledge/lessons, database, findings, files), chat. Every agent turn ends with `st.rerun()` so the sidebar shows new approvals. |
 | `main.py` | CLI entry; the loop itself is `agent.run_agent_loop`. |
 | `copilot/agent.py` | Turn loop, token accounting (`TokenUsage`), history trimming/repair, CLI loop. |
+| `copilot/dossier.py` | Investigate once, then answer: one longer turn in its own conversation writes the case dossier (timeline, findings, entities, hypotheses, contradictions, gaps), stored in the `dossiers` table; `prompt_section()` puts the latest into every system prompt. Run after triage (app, CLI), by `/investigate` / the sidebar button, and before benchmark questions. |
 | `copilot/tools.py` | Every LangChain tool the model can call, and their descriptions (sent on every step: keep them short). `_dump` serialises results and adds `true_utc` fields. `record_finding` keeps "high" confidence only when two different records agree (prompt rule 11: correlate before claiming). |
 | `copilot/prompts.py` | System prompt (rules, memory, lessons, approvals); the case part comes from `case_config.build_system_context()`. |
 | `copilot/case_config.py` | `CaseConfig`: one case's `case.yaml` (scope, clock offset, IOCs, triage list, allow/denylists, limits, memory image). `case_config` is a proxy to the current session's case. |
@@ -146,5 +149,6 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 - **Recorded vs true UTC**: host-clock time as stored vs corrected by the case clock offset.
 - **Triage**: the case's `collect:` list (and memory `memory.collect`), run without the LLM.
 - **Playbook**: a checklist for a kind of question; **lesson**: approved, server-wide knowledge.
+- **Dossier**: the case summary an investigation turn writes; every later question starts from it.
 - **Heavy artifact**: can return millions of rows; the agent must pass a filter or a <= 60 min window.
 - **live_only**: an artifact that needs a running system; refused on disk images.

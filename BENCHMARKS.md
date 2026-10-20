@@ -25,6 +25,10 @@ benchmark file.
 ## Results
 
 Minutes are wall-clock for the whole run (triage + all questions) on the developer's laptop.
+Every run below answered its questions **without** a case dossier. From the commit that added
+`copilot/dossier.py`, runs investigate first by default (the investigation's steps, tokens and
+minutes count in the totals); note that in each new row, and use `--no-investigate` to compare
+with the rows below.
 
 ### szechuan-dc
 

@@ -119,11 +119,16 @@ links or file paths to them; just say what was produced.
    exists, say the claim rests on one record. Search results show one line per record: before
    writing that a record lacks something (source IP, arguments, account), open it with
    `get_event_detail`.
-'''
+{dossier}'''
 
 
 def build_system_prompt(case_config) -> str:
-    from copilot import lessons
+    from copilot import dossier, lessons
     topics = sorted({l["topic"] for l in lessons.active()})
     learned = f" (lessons so far about: {', '.join(topics[:30])})" if topics else " (none yet)"
-    return SYSTEM_PROMPT.format(case_context=case_config.build_system_context(), learned_topics=learned)
+    try:
+        notes = dossier.prompt_section()
+    except Exception:              # no case database (e.g. no case open): no dossier
+        notes = ""
+    return SYSTEM_PROMPT.format(case_context=case_config.build_system_context(), learned_topics=learned,
+                                dossier=notes)

@@ -7,8 +7,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
-from copilot import (approvals, auth, cases, citations, collection, commands, config_check, conversation, knowledge,
-                     lessons, memory, outputs, session)
+from copilot import (approvals, auth, cases, citations, collection, commands, config_check, conversation, dossier,
+                     knowledge, lessons, memory, outputs, session)
 from copilot import llm as llm_config
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
@@ -440,7 +440,9 @@ def triage_panel():
     st.button("✏️ Choose what to collect", key="tri_edit", on_click=set_triage_editing, args=(True,),
               help="Opens the triage list above the chat: suggestions for disk images and every artifact "
                    "on your Velociraptor server.")
-    analyze = st.checkbox("Analyze with the agent afterwards", value=True, key="triage_analyze")
+    analyze = st.checkbox("Investigate afterwards", value=True, key="triage_analyze",
+                          help="The agent investigates the whole case once and writes the case dossier "
+                               "that every question starts from.")
     c1, c2 = st.columns(2)
     if c1.button("Run triage", key=p + "run",
                  disabled=bool(case_config.client_id_error) or not chosen or bool(problem)):
@@ -554,6 +556,57 @@ def render_message(msg: dict, index: int):
             download_button(entry, key=f"dl-{index}-{entry['output_id']}")
 
 
+def status_emitter(status, log: list, notices: list):
+    """run_turn's progress events, shown in a status box and kept as the message's steps."""
+    def emit(kind, payload):
+        if kind == "tool":
+            log.append(f"⚙️ {payload}")
+            status.write(f"⚙️ `{payload}`")
+        elif kind == "collection":
+            log.append(f"   {payload}")
+            status.text(payload)
+        elif kind == "notice":
+            notices.append(payload)
+            status.warning(payload)
+        elif kind == "usage":
+            log.append(payload)
+    return emit
+
+
+def run_investigation(extra: str = "") -> bool:
+    """The investigation turn (copilot/dossier.py), in a conversation of its own; the dossier it writes
+    goes into every later system prompt and is shown in the chat. False: it couldn't run."""
+    if "llm_with_tools" not in st.session_state:
+        st.error("Enter the API key in the sidebar first.")
+        return False
+    log, notices = [], []
+    with st.chat_message("assistant"):
+        status = st.status("Investigating the whole case: one longer turn that writes the case dossier...",
+                           expanded=True)
+        try:
+            entry = dossier.investigate(st.session_state.llm_with_tools, st.session_state.finalizer,
+                                        st.session_state.usage, status_emitter(status, log, notices), extra)
+        except dossier.DossierError as e:
+            status.update(label="No dossier written", state="error", expanded=False)
+            st.session_state.messages.append({"role": "assistant", "log": log, "content": "\n\n".join(
+                f"⚠️ {n}" for n in [*notices, str(e)])})
+            return True
+        status.update(label="Case dossier written", state="complete", expanded=False)
+    st.session_state.messages.append({"role": "assistant", "log": log, "content":
+                                      f"🗂️ **Case dossier** — every question now starts from it "
+                                      f"({entry['steps']} steps, {entry['tokens']:,} tokens)\n\n{entry['text']}"})
+    refresh_dossier()
+    return True
+
+
+def refresh_dossier():
+    """Puts the latest dossier into this conversation's system prompt (also one another member wrote)."""
+    seen = (cases.current_id(), dossier.latest().get("dossier_id"))
+    if st.session_state.get("dossier_seen") != seen:
+        st.session_state.dossier_seen = seen
+        st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
+
+
 def agent_turn(text: str, show_user: bool = True) -> bool:
     """Runs one agent turn; new files the agent produced are attached to its message. False: it couldn't run."""
     if "llm_with_tools" not in st.session_state:
@@ -570,20 +623,7 @@ def agent_turn(text: str, show_user: bool = True) -> bool:
 
     with st.chat_message("assistant"):
         status = st.status("Investigating...", expanded=True)
-
-        def emit(kind, payload):
-            if kind == "tool":
-                log.append(f"⚙️ {payload}")
-                status.write(f"⚙️ `{payload}`")
-            elif kind == "collection":
-                log.append(f"   {payload}")
-                status.text(payload)
-            elif kind == "notice":
-                notices.append(payload)
-                status.warning(payload)
-            elif kind == "usage":
-                log.append(payload)
-
+        emit = status_emitter(status, log, notices)
         answer = run_turn(st.session_state.llm_with_tools, st.session_state.chat_history, case_config.max_steps,
                           st.session_state.usage, case_config.max_tokens_per_turn,
                           st.session_state.finalizer, emit)
@@ -623,13 +663,7 @@ def run_triage(analyze: bool, plan: list = None):
     started = [s for s in summaries if s.get("state") != "NOT_STARTED"]
     if not (analyze and started):
         st.rerun()  # refresh sidebar stats
-    return agent_turn(
-        "The initial collection has been run for you. Results per artifact:\n"
-        f"{json.dumps(summaries, indent=2)}\n"
-        "Follow up on any collection that is still RUNNING with check_collection. "
-        "If IOCs are defined in the case, search for them. "
-        "If an incident time window is defined, query the timeline for that window.",
-        show_user=False)
+    return run_investigation(dossier.triage_note(summaries))
 
 
 def run_memory_triage(analyze: bool, plugins: list = None):
@@ -650,14 +684,7 @@ def run_memory_triage(analyze: bool, plugins: list = None):
                                       "content": "**Memory triage**\n\n```\n" + "\n".join(lines) + "\n```"})
     if not (analyze and any(s.get("state") == "FINISHED" for s in summaries)):
         st.rerun()
-    return agent_turn(
-        "The memory triage has been run for you on the case's memory image. Results per plugin:\n"
-        f"{json.dumps(summaries, indent=2)}\n"
-        "Analyze the memory evidence: processes with odd names, parents or paths (pslist/pstree), processes "
-        "in psscan but not pslist, command lines, external network connections (netscan) and their owning "
-        "process, malfind hits, unusual services. Search for the case IOCs and correlate with the disk "
-        "timeline if there is one.",
-        show_user=False)
+    return run_investigation(dossier.triage_note(summaries))
 
 
 def resolve_request(request: dict, approved: bool):
@@ -731,6 +758,7 @@ else:
 cases.consume_switch()
 if cases.consume_settings_change():
     st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
+refresh_dossier()
 
 # ==========================================
 # Sidebar
@@ -874,6 +902,22 @@ with st.sidebar:
                     content=f"[Investigator] Retracted finding '{choice}': {reason.strip()}"))
                 st.rerun()
 
+    notes = dossier.latest()
+    with st.expander("🗂️ Case dossier · " + (notes["created_at"][:16].replace("T", " ") + " UTC" if notes
+                                             else "none yet"), expanded=False):
+        if notes:
+            st.caption(f"Written by {citations.md_literal(notes['actor'] or 'the copilot')} · {notes['steps']} steps · "
+                       f"{notes['tokens']:,} tokens · {notes['findings']} findings then")
+            st.markdown(citations.answer_markdown(notes["text"]))
+        else:
+            st.caption("One longer agent turn reads everything collected and writes the case's timeline, findings, "
+                       "hypotheses and gaps. Every question then starts from it: answers agree and cost less.")
+        if st.button("🔎 Investigate again" if notes else "🔎 Investigate the case", key="investigate",
+                     disabled="llm_with_tools" not in st.session_state or not n,
+                     help="Also `/investigate` in the chat. Runs as its own conversation; requests it makes "
+                          "wait for approval as usual."):
+            action = ("investigate", None)
+
     knowledge_panel()
 
     st.divider()
@@ -911,7 +955,7 @@ if (not case_db.get_collections() and not st.session_state.triage_dismissed and 
         sources = (["the disk image (Velociraptor)"] if not case_config.client_id_error else []) + \
                   ([f"the memory image `{case_config.memory_image}` (Volatility)"] if case_config.memory_image else [])
         st.markdown(f"**No data collected for this case yet.** Run the initial triage of {' and '.join(sources)}? "
-                    f"It needs no LLM; the agent can analyze the results afterwards.")
+                    f"It needs no LLM; afterwards the agent investigates the case and writes the case dossier.")
         c1, c2, c3 = st.columns([1, 1, 3])
         p = f"tri_{cases.current_id()}_"          # the same choice as the sidebar's triage panel
         if not case_config.client_id_error and c1.button("Run triage", type="primary"):
@@ -938,6 +982,10 @@ if action:
         if run_memory_triage(*arg):
             after_possible_switch()
             st.rerun()
+    elif kind == "investigate":
+        if run_investigation():
+            after_possible_switch()
+            st.rerun()
     elif kind in ("approve", "deny", "approve_all"):
         for request in (pending_here() if kind == "approve_all" else [arg]):
             resolve_request(request, approved=(kind != "deny"))
@@ -949,13 +997,19 @@ if action:
         st.rerun()
 
 if prompt := st.chat_input("Ask the copilot to investigate... (/help for commands)"):
-    reply = commands.handle(prompt)
-    if reply is not None:
+    investigate = prompt.strip().lower() == commands.INVESTIGATE      # uses the LLM: not a free command
+    reply = None if investigate else commands.handle(prompt)
+    if investigate:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        if run_investigation():
+            after_possible_switch()
+            st.rerun()
+    elif reply is not None:
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.session_state.messages.append({"role": "assistant", "content": reply})
         after_possible_switch()
         st.rerun()
-    if agent_turn(prompt):
+    elif agent_turn(prompt):
         after_possible_switch()
         st.rerun()      # the sidebar shows the agent's approval requests, findings and token use
 

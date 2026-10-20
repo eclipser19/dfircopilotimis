@@ -96,11 +96,15 @@ Still open from the review: steps 6 and 8 below (step 2 is done).
      collections, rows and times; it warns about a changed image or mixed clients.
    - Not covered: any signed-in investigator can still see which Velociraptor clients exist
      (IDs and host names) through the agent's `search_clients` tool, though not use them.
-3. **Investigate once, then answer.** One longer agent turn that builds the intrusion timeline and
-   records findings, hypotheses, contradictions and open gaps (a case dossier), before any
-   question. Questions then start from it and the leads, and only check what they add. This should
-   make answers consistent across questions and much cheaper. It fits the app as an "Investigate"
-   button, and the benchmark as a step before the questions.
+3. ~~**Investigate once, then answer.**~~ Built, **not measured yet**: one longer agent turn
+   (`copilot/dossier.py`, 40 steps by default) writes the case dossier (intrusion timeline,
+   findings, key entities, hypotheses, contradictions, gaps) before any question; every later
+   conversation's system prompt carries it. It runs after the triage in the app and the CLI,
+   from the sidebar's **Investigate** button or `/investigate`, and before the questions in a
+   benchmark run (`--no-investigate` for the old behaviour). Next: run DC and Injector (and OU)
+   with it and compare score, tokens and minutes with the runs in BENCHMARKS.md. If questions
+   still re-investigate everything, tighten the dossier section of the prompt; if the dossier
+   misses phases, give the investigation prompt the phase checklists directly.
 4. **Measure properly.**
    - Two runs per benchmark after each change, recorded in BENCHMARKS.md.
    - Each run saves what it ran with: commit and uncommitted changes, case and server settings,

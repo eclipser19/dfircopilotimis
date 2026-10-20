@@ -102,6 +102,25 @@ def test_agent_report_appears_as_downloads(app_env):
     assert "The report is ready." in _texts(at)
 
 
+def test_investigation_writes_the_dossier_every_question_starts_from(app_env):
+    app_env.ingest_artifact_results([{"Message": "x"}], "S", "D", "C.1")
+    at = AppTest.from_file(APP, default_timeout=30)
+    llm = ScriptedLLM(AIMessage(content="## Intrusion timeline\n- 02:20 UTC logon from 203.0.113.5"),
+                      AIMessage(content="## Intrusion timeline\n- rewritten"))
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    assert "none yet" in " ".join(e.label for e in at.expander)
+    next(b for b in at.button if b.key == "investigate").click().run()
+    assert not at.exception
+    assert "Case dossier" in _texts(at) and "203.0.113.5" in _plain(at)
+    assert "- 02:20 UTC logon from 203.0.113.5" in at.session_state["chat_history"][0].content
+    assert next(b for b in at.button if b.key == "investigate").label == "🔎 Investigate again"
+    at.chat_input[0].set_value("/investigate").run()                 # the same from the chat
+    assert not at.exception and "- rewritten" in at.session_state["chat_history"][0].content
+    assert app_env.get_dossier()["text"].endswith("- rewritten")
+
+
 def test_agent_collection_waits_for_approval(app_env):
     app_env.ingest_artifact_results([{"Message": "x"}], "S", "D", "C.1")
     at = AppTest.from_file(APP, default_timeout=30)
