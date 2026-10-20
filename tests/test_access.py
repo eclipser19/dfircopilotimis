@@ -261,6 +261,86 @@ def test_a_case_keeps_the_evidence_its_data_came_from(team, monkeypatch):
         cases.copy_data("a", "b")
 
 
+def _bobs_case_with_data(monkeypatch):
+    """bob's case on ONE with collected data, a finding and a dossier."""
+    as_user(monkeypatch, "bob")
+    cases.create("bob-case", "Bob's case", client_id=ONE)
+    cases.switch("bob-case")
+    case_db.ingest_artifact_results([{"EventTime": "2020-09-19T03:42:42Z", "Message": "service coreupdater"}],
+                                    "S", "H", ONE)
+    case_db.upsert_collection("F.1", client_id=ONE, artifact="S", state="FINISHED", rows_ingested=1)
+    eid = case_db.query_timeline()["events"][0]["evidence_id"]
+    fid = case_db.record_finding("coreupdater service installed", "d", [eid], "medium")
+    case_db.save_dossier("## Intrusion timeline\n- service installed")
+    return fid
+
+
+def test_a_shared_case_is_a_starting_point_not_an_open_door(team, monkeypatch):
+    fid = _bobs_case_with_data(monkeypatch)
+    as_user(monkeypatch, "carol")
+    assert cases.reusable_cases() == []
+    with pytest.raises(cases.CaseError, match="No case 'bob-case'"):
+        cases.create("mine", "Mine", copy_from="bob-case")
+
+    as_user(monkeypatch, "bob")
+    cases.set_access("bob-case", members=[])
+    assert cases.set_sharing("bob-case", ["carol"]) == {"shared_with": ["carol"], "share_findings": False}
+    cases.set_access("bob-case", members=[])                              # members saved: sharing stays
+    assert cases.sharing_of(yaml.safe_load(open(team / "cases" / "bob-case" / "case.yaml"))) == (["carol"], False)
+
+    as_user(monkeypatch, "carol")
+    [shared] = cases.reusable_cases()
+    assert shared["id"] == "bob-case" and shared["shared"] and not shared["findings"] and shared["owner"] == "bob"
+    assert cases.list_cases() == []                                        # still not hers to open
+    with pytest.raises(cases.CaseError, match="No case 'bob-case'"):
+        cases.switch("bob-case")
+    with pytest.raises(cases.CaseError, match="shared without its findings"):
+        cases.create("mine", "Mine", copy_from="bob-case", copy_findings=True)
+    cases.create("mine", "Mine", copy_from="bob-case")                     # its evidence and its data
+    cases.switch("mine")
+    assert case_config.client_id == ONE and case_db.get_stats()["total_records"] == 1
+    assert case_db.get_findings() == [] and case_db.get_dossier() == {}
+
+    as_user(monkeypatch, "bob")
+    cases.set_sharing("bob-case", [cases.EVERYONE], findings=True)
+    cases.switch("bob-case")
+    reused = case_db.conn.execute("SELECT query, actor FROM audit_log WHERE tool_name = 'case_reused'").fetchone()
+    assert reused["query"].startswith("copied into case mine") and reused["actor"] == "carol"
+
+    as_user(monkeypatch, "carol")
+    cases.create("second", "Second", copy_from="bob-case", copy_findings=True)
+    cases.switch("second")
+    [finding] = case_db.get_findings()
+    assert finding["finding_id"] == fid and finding["origin"] == "case bob-case (bob)"
+    assert case_db.get_dossier()["text"].startswith("Imported from case bob-case (bob): written ")
+    assert "- service installed" in case_db.get_dossier()["text"]
+
+    as_user(monkeypatch, "bob")
+    cases.set_sharing("bob-case", [])                                      # withdrawn: copies stay
+    as_user(monkeypatch, "carol")
+    assert cases.reusable_cases() and all(not c["shared"] for c in cases.reusable_cases())
+    with pytest.raises(cases.CaseError, match="No case 'bob-case'"):
+        cases.copy_data("bob-case", "second")
+    cases.create("third", "Third", client_id=ONE)       # her own cases are on that evidence: it stays reachable
+
+    as_user(monkeypatch, "bob")
+    cases.set_access("bob-case", members=["carol"])
+    as_user(monkeypatch, "carol")                                          # members can't share it further
+    with pytest.raises(cases.CaseError, match="Only the case owner or an admin can share"):
+        cases.set_sharing("bob-case", [cases.EVERYONE])
+
+
+def test_importing_into_an_existing_case_keeps_its_own_dossier(team, monkeypatch):
+    _bobs_case_with_data(monkeypatch)
+    cases.create("bob-two", "Bob's second look", client_id=ONE)
+    cases.switch("bob-two")
+    case_db.save_dossier("## Intrusion timeline\n- my own")
+    counts = cases.copy_data("bob-case", "bob-two", findings=True)
+    assert counts["records"] == 1 and counts["findings"] == 1 and counts["dossier"] == 0
+    assert case_db.get_dossier()["text"].endswith("- my own")
+    assert cases.copy_data("bob-case", "bob-two", findings=True)["findings"] == 0      # nothing twice
+
+
 def test_evidence_section_for_the_report(team, monkeypatch):
     as_user(monkeypatch, None)
     cases.create("a", "A")

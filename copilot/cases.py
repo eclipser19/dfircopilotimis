@@ -15,9 +15,13 @@ Admins see every case. A case without an owner (e.g. made before sign-in) is vis
 admins only, until an admin assigns it. Without sign-in (CLI, or the app without
 accounts) every case is accessible.
 
+Sharing (access.shared_with: accounts, or "*" for every account; access.share_findings) lets
+others start their own case from a case's evidence without opening it: copy its collected data,
+and its findings and dossier if shared too. Copies stay theirs when sharing is withdrawn.
+
 Evidence sources (a Velociraptor client, a memory image) are protected too, not only case
 folders: a case may name a source only if no case uses it yet, or if the user can open one of
-the cases that use it (an admin may name any). `login.new_evidence: admins` in server.yaml
+the cases that use it or has it shared with them (an admin may name any). `login.new_evidence: admins` in server.yaml
 keeps unused sources for admins. Once a case holds data from a source, its settings can't be
 pointed at another one: that would mix two machines' evidence in one database.
 """
@@ -71,6 +75,19 @@ def access_of(data: dict) -> tuple:
     return str(access.get("owner") or ""), [str(m) for m in (members if isinstance(members, list) else [members])]
 
 
+EVERYONE = "*"
+
+
+def sharing_of(data: dict) -> tuple:
+    """(shared_with, share_findings) from a case file's data; shared_with ["*"] = every account."""
+    access = data.get("access") or {}
+    if not isinstance(access, dict):
+        return [], False
+    shared = access.get("shared_with") or []
+    shared = [str(u) for u in (shared if isinstance(shared, list) else [shared])]
+    return shared, bool(access.get("share_findings"))
+
+
 def can_access(case_id: str, user=CURRENT) -> bool:
     user = _user(user)
     if user is None:
@@ -83,6 +100,23 @@ def can_access(case_id: str, user=CURRENT) -> bool:
     except CaseError:
         return False
     return user == owner or user in members
+
+
+def can_reuse(case_id: str, user=CURRENT, findings: bool = False) -> bool:
+    """
+    May start from this case's evidence: name its client or memory image, copy its collected data
+    (and, with findings=True, its findings and dossier) into a case of their own. Members can; others
+    only if the owner shares the case with them or with everyone (access.shared_with). Sharing never
+    opens the case itself: its chats, files and audit log stay with its members.
+    """
+    if can_access(case_id, user):
+        return True
+    user = _user(user)
+    try:
+        shared_with, share_findings = sharing_of(_read(case_id))
+    except CaseError:
+        return False
+    return (EVERYONE in shared_with or user in shared_with) and (share_findings or not findings)
 
 
 def can_manage(case_id: str, user=CURRENT) -> bool:
@@ -137,14 +171,37 @@ def list_cases(user=CURRENT) -> list:
     return cases
 
 
-def _check(case_id: str) -> str:
+def reusable_cases(user=CURRENT) -> list:
+    """Cases with collected data this user may start from: their own (shared: False) and those
+    shared with them, with what each allows (findings: its findings and dossier too)."""
+    user = _user(user)
+    out = []
+    for case_id in _all_ids():
+        if not can_reuse(case_id, user):
+            continue
+        path = _case_file(case_id)
+        if not os.path.isfile(os.path.join(data_dir_for(path), "case.db")):
+            continue
+        try:
+            data = _read(case_id)
+        except (CaseError, OSError, yaml.YAMLError):
+            continue
+        sources = _sources(data)
+        out.append({"id": case_id, "name": (data.get("case") or {}).get("name", case_id),
+                    "owner": access_of(data)[0], "client_id": sources.get("client", ""),
+                    "memory_image": sources.get("memory", ""), "shared": not can_access(case_id, user),
+                    "findings": can_reuse(case_id, user, findings=True)})
+    return out
+
+
+def _check(case_id: str, reuse: bool = False) -> str:
     """The case file of a case this session's user may open (CaseError otherwise, without
-    revealing whether a case they can't open exists)."""
+    revealing whether a case they can't open exists). reuse=True: or one shared with them."""
     case_id = (case_id or "").strip()
     if not (case_id == LEGACY_ID or CASE_ID_RE.match(case_id)):
         raise CaseError(f"'{case_id}' is not a valid case ID (letters, digits, - and _).")
     path = _case_file(case_id)
-    if not os.path.isfile(path) or not can_access(case_id):
+    if not os.path.isfile(path) or not (can_reuse(case_id) if reuse else can_access(case_id)):
         known = ", ".join(c["id"] for c in list_cases()) or "none"
         raise CaseError(f"No case '{case_id}'. Known cases: {known}.")
     return path
@@ -261,12 +318,12 @@ def source_problem(kind: str, value: str, user=CURRENT, index: list = None) -> s
         return ""
     using = [case_id for case_id, sources in (index if index is not None else _case_sources())
              if _same_source(kind, sources.get(kind), value)]
-    if any(can_access(case_id, user) for case_id in using):
+    if any(can_reuse(case_id, user) for case_id in using):
         return ""
     label = SOURCE_LABELS[kind]
     if using:
         return (f"The {label} {value} is evidence in an investigation you are not part of. Ask the owner "
-                f"of a case on it, or an admin, to add you to that case.")
+                f"of a case on it, or an admin, to add you to that case or share it with you.")
     if new_evidence_policy() == "admins":
         return f"Only an admin can open the first case on new evidence ({label} {value})."
     return ""
@@ -323,11 +380,13 @@ def _check_sources(case_id: str, before: dict, after: dict):
 
 def create(case_id: str, name: str, client_id: str = "", start_time: str = "", end_time: str = "",
            description: str = "", clock_offset_minutes: int = 0, iocs: dict = None,
-           copy_from: str = None, dry_run: bool = False, memory_image: str = "", memory_os: str = "windows") -> str:
+           copy_from: str = None, dry_run: bool = False, memory_image: str = "", memory_os: str = "windows",
+           copy_findings: bool = False) -> str:
     """
     Creates cases/<case_id>/case.yaml from the template (does not switch to it); the current
     user owns it. Required: case_id and name. IOCs are validated; copy_from copies another
-    case's collected data (same evidence client only; findings are not copied).
+    case's collected data (one of the user's or shared with them; same evidence only), and with
+    copy_findings its findings and dossier too. The new case is on that case's evidence.
     """
     from copilot.iocs import clean
     if not (name or "").strip():
@@ -336,16 +395,19 @@ def create(case_id: str, name: str, client_id: str = "", start_time: str = "", e
         raise CaseError(f"'{client_id}' is not a valid Velociraptor client ID (expected C.<hex>).")
     source = None
     if copy_from:
-        _check(copy_from)
+        _check(copy_from, reuse=True)
         source = _read(copy_from)
         source_client = (source.get("velociraptor", {}) or {}).get("client_id", "")
         if client_id and source_client and client_id != source_client:
             raise CaseError(f"Case '{copy_from}' is about client {source_client}, not {client_id}: "
                             f"data can only be copied between cases on the same evidence.")
         client_id = client_id or source_client
+        memory_image = memory_image or _sources(source).get("memory", "")
         # Checked before anything is written, so a failed copy never leaves a half-made case.
         if not os.path.isfile(os.path.join(data_dir_for(_case_file(copy_from)), "case.db")):
             raise CaseError(f"Case '{copy_from}' has no data yet.")
+        if copy_findings and not can_reuse(copy_from, findings=True):
+            raise CaseError(f"Case '{copy_from}' is shared without its findings: only its collected data can be copied.")
     from copilot.normalize import normalize_bound
     if not CASE_ID_RE.match(case_id or "") or case_id == LEGACY_ID:
         raise CaseError("Case ID must be 1-64 letters, digits, - or _ (and not 'default').")
@@ -384,7 +446,7 @@ def create(case_id: str, name: str, client_id: str = "", start_time: str = "", e
         f.write(f"# Created by DFIR Copilot. Edit freely; see cases/szechuan/case.yaml for all options.\n")
         yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
     if copy_from:
-        copy_data(copy_from, case_id)
+        copy_data(copy_from, case_id, findings=copy_findings)
     return path
 
 
@@ -556,11 +618,46 @@ def set_access(case_id: str, members: list = None, owner: str = None) -> dict:
     if unknown:
         raise CaseError(f"No such account: {', '.join(unknown)}.")
     new_members = [m for m in new_members if m != new_owner]
-    data["access"] = {"owner": new_owner, "members": new_members}
+    access = data["access"] if isinstance(data.get("access"), dict) else {}
+    access.update(owner=new_owner, members=new_members)          # sharing settings stay
+    data["access"] = access
     _write(case_id, data)
     _audit(case_id, "case_access", f"owner {old_owner or '-'} -> {new_owner or '-'}; "
                                   f"members {old_members} -> {new_members}")
-    return data["access"]
+    return {"owner": new_owner, "members": new_members}
+
+
+def set_sharing(case_id: str, shared_with: list, findings: bool = False) -> dict:
+    """
+    Lets others start their own case from this one's evidence (the owner or an admin; never the
+    agent): shared_with lists accounts, or ["*"] for every account; findings=True shares its findings
+    and dossier too. Copies already made stay with their cases. Written to the case's audit log.
+    """
+    from copilot import auth
+    _check(case_id)
+    if not can_manage(case_id):
+        raise CaseError("Only the case owner or an admin can share a case.")
+    wanted = sorted({str(u).strip() for u in shared_with or [] if str(u).strip()})
+    if EVERYONE in wanted:
+        wanted = [EVERYONE]
+    known = set(auth.usernames())
+    unknown = [u for u in wanted if u != EVERYONE and known and u not in known]
+    if unknown:
+        raise CaseError(f"No such account: {', '.join(unknown)}.")
+    data = _read(case_id)
+    old = sharing_of(data)
+    access = data["access"] if isinstance(data.get("access"), dict) else {}
+    if wanted:
+        access.update(shared_with=wanted, share_findings=bool(findings))
+    else:
+        access.pop("shared_with", None)
+        access.pop("share_findings", None)
+    data["access"] = access
+    _write(case_id, data)
+    shown = lambda s: ("everyone" if s[0] == [EVERYONE] else ", ".join(s[0]) or "nobody") + \
+        (" (with findings)" if s[0] and s[1] else "")
+    _audit(case_id, "case_sharing", f"shared with {shown(old)} -> {shown((wanted, bool(findings)))}")
+    return {"shared_with": wanted, "share_findings": bool(findings) and bool(wanted)}
 
 
 def _audit(case_id: str, tool: str, text: str):
@@ -583,16 +680,20 @@ def consume_settings_change() -> bool:
     return changed
 
 
-def copy_data(source_id: str, target_id: str) -> dict:
+def copy_data(source_id: str, target_id: str, findings: bool = False) -> dict:
     """
     Copies collected data (records, timeline, search index, collections) from one case to
-    another on the same evidence client. Findings, outputs and the audit trail stay behind;
-    the copy itself is written to the target's audit log.
+    another on the same evidence; the source may be one shared with the user. findings=True also
+    copies its active findings (marked with their origin) and, if the target has none, its latest
+    dossier. Outputs, chats and the audit trail stay behind. The copy is written to both cases'
+    audit logs, so a case's owner sees who started from it.
     """
     import sqlite3
     from copilot.database import CaseDatabase
-    _check(source_id)
+    _check(source_id, reuse=True)
     _check(target_id)
+    if findings and not can_reuse(source_id, findings=True):
+        raise CaseError(f"Case '{source_id}' is shared without its findings: only its collected data can be copied.")
     source_sources, target_sources = _sources(_read(source_id)), _sources(_read(target_id))
     held = collected_sources(source_id)
     for kind, label in (("client", "evidence clients"), ("memory", "memory images")):
@@ -623,11 +724,44 @@ def copy_data(source_id: str, target_id: str) -> dict:
                                     "(SELECT evidence_id FROM records_fts)")
             except sqlite3.OperationalError:
                 pass
+        if findings:
+            counts.update(_copy_findings(target.conn, source_id))
         target.conn.commit()
         target.conn.execute("DETACH DATABASE src")
-        target.log_query("copy_case_data", f"from case {source_id} ({src_db})", counts["records"])
+        target.log_query("copy_case_data", f"from case {source_id}: {counts}", counts["records"])
     finally:
         target.conn.close()
+    _audit(source_id, "case_reused", f"copied into case {target_id}: {counts}")
+    return counts
+
+
+FINDING_COLUMNS = ["finding_id", "timestamp_utc", "title", "description", "evidence_ids", "confidence",
+                   "mitre_technique", "created_at"]
+
+
+def _copy_findings(conn, source_id: str) -> dict:
+    """Active findings and the latest dossier of the attached database `src` (copy_data)."""
+    owner = access_of(_read(source_id))[0]
+    origin = f"case {source_id}" + (f" ({owner})" if owner else "")
+    cols = {r[1] for r in conn.execute("PRAGMA src.table_info(findings)")}
+    where = "WHERE COALESCE(status, 'active') = 'active'" if "status" in cols else ""
+    keep = "COALESCE(origin, ?)" if "origin" in cols else "?"      # a finding imported twice keeps its first origin
+    before = conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+    conn.execute(f"INSERT OR IGNORE INTO findings ({', '.join(FINDING_COLUMNS)}, status, origin) "
+                 f"SELECT {', '.join(FINDING_COLUMNS)}, 'active', {keep} FROM src.findings {where}", (origin,))
+    counts = {"findings": conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0] - before, "dossier": 0}
+    tables = {r[0] for r in conn.execute("SELECT name FROM src.sqlite_master WHERE type = 'table'")}
+    has_own = conn.execute("SELECT 1 FROM dossiers LIMIT 1").fetchone()
+    if "dossiers" in tables and not has_own:
+        row = conn.execute("SELECT text, created_at, actor, findings, steps, tokens FROM src.dossiers "
+                           "ORDER BY dossier_id DESC LIMIT 1").fetchone()
+        if row:
+            by = f" by {row[2]}" if row[2] else ""
+            text = (f"Imported from {origin}: written {str(row[1])[:16].replace('T', ' ')} UTC{by}. Check it against "
+                    f"this case before relying on it.\n\n{row[0]}")
+            conn.execute("INSERT INTO dossiers (created_at, actor, text, findings, steps, tokens) VALUES (?,?,?,?,?,?)",
+                         (row[1], row[2], text, row[3], row[4], row[5]))
+            counts["dossier"] = 1
     return counts
 
 

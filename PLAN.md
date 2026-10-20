@@ -91,6 +91,10 @@ Still open from the review: steps 6 and 8 below (step 2 is done).
    - A client or memory image the case holds data from is locked; copying data checks where
      the data came from.
    - Queued agent collections and memory runs are bound to the evidence they were asked for.
+   - Owners can share a case's evidence (with accounts or everyone, optionally with its findings
+     and dossier): others start their own case from a copy without opening the original; both
+     audit logs record each copy. Copies are full copies (simple, independent); for very large
+     cases a read-only link to the shared case's database would save disk later.
    - The report lists each evidence source: host, disk image name and hash (`evidence:` in
      `case.yaml` or the settings form), memory image size and SHA-256 (hashed on first use),
      collections, rows and times; it warns about a changed image or mixed clients.

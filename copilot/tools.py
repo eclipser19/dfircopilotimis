@@ -416,7 +416,8 @@ def case_summary() -> str:
     stats = case_db.get_stats()
     findings = case_db.get_findings()
     stats["findings"] = [{"id": f["finding_id"], "time_recorded": f["timestamp_utc"], "title": f["title"],
-                          "confidence": f["confidence"], "mitre": f["mitre_technique"]} for f in findings]
+                          "confidence": f["confidence"], "mitre": f["mitre_technique"],
+                          **({"imported_from": f["origin"]} if f.get("origin") else {})} for f in findings]
     retracted = case_db.get_findings(include_retracted=True)
     stats["retracted_findings"] = len(retracted) - len(findings)
     stats["leads"] = leads.leads(case_db)
@@ -826,7 +827,7 @@ def switch_case(case_id: str) -> str:
 def create_case(case_id: str, name: str, client_id: Optional[str] = None, start_time: Optional[str] = None,
                 end_time: Optional[str] = None, description: Optional[str] = None,
                 clock_offset_minutes: Optional[int] = None, iocs: Optional[dict] = None,
-                copy_data_from: Optional[str] = None) -> str:
+                copy_data_from: Optional[str] = None, copy_findings: Optional[bool] = None) -> str:
     """
     Creates a new case (does not switch to it). Only when the investigator asks; use only the details
     they gave. IOCs in the description are extracted automatically.
@@ -839,14 +840,16 @@ def create_case(case_id: str, name: str, client_id: Optional[str] = None, start_
         description: What happened / what to find out, in their words.
         clock_offset_minutes: How far the host clock ran ahead of UTC.
         iocs: {"ips": [], "domains": [], "hashes": [], "filenames": [], "users": []}.
-        copy_data_from: ID of a case on the SAME evidence to copy collected data from (not findings).
+        copy_data_from: ID of a case on the SAME evidence to copy collected data from.
+        copy_findings: Also copy that case's findings and dossier (only if asked).
     """
     from copilot import approvals, cases
     from copilot.iocs import extract_iocs, merge
     all_iocs = merge(iocs or {}, extract_iocs(description or ""))
     kwargs = {"case_id": case_id, "name": name, "client_id": client_id or "", "start_time": start_time or "",
               "end_time": end_time or "", "description": description or "",
-              "clock_offset_minutes": clock_offset_minutes or 0, "iocs": all_iocs, "copy_from": copy_data_from}
+              "clock_offset_minutes": clock_offset_minutes or 0, "iocs": all_iocs, "copy_from": copy_data_from,
+              "copy_findings": bool(copy_findings and copy_data_from)}
     try:
         cases.create(**kwargs, dry_run=True)          # validate before asking the investigator
     except cases.CaseError as e:
@@ -854,7 +857,8 @@ def create_case(case_id: str, name: str, client_id: Optional[str] = None, start_
     found = {k: v for k, v in all_iocs.items() if v}
     summary = (f"'{case_id}' ({name})" + (f", client {client_id}" if client_id else "") +
                (f", IOCs {_dump(found)}" if found else "") +
-               (f", copying data from '{copy_data_from}'" if copy_data_from else ""))
+               (f", copying data{' and findings' if kwargs['copy_findings'] else ''} from '{copy_data_from}'"
+                if copy_data_from else ""))
     try:
         result = approvals.run("create_case", summary, {"kwargs": kwargs})
     except (approvals.ApprovalError, cases.CaseError) as e:

@@ -58,7 +58,7 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 | `copilot/tools.py` | Every LangChain tool the model can call, and their descriptions (sent on every step: keep them short). `_dump` serialises results and adds `true_utc` fields. `record_finding` keeps "high" confidence only when two different records agree (prompt rule 11: correlate before claiming). |
 | `copilot/prompts.py` | System prompt (rules, memory, lessons, approvals); the case part comes from `case_config.build_system_context()`. |
 | `copilot/case_config.py` | `CaseConfig`: one case's `case.yaml` (scope, clock offset, IOCs, triage list, allow/denylists, limits, memory image). `case_config` is a proxy to the current session's case. |
-| `copilot/cases.py` | Case folders `cases/<id>/case.yaml`: list, create, update (rewrites the YAML), switch, access control (owner/members/admin), evidence sources (who may name a client/memory image, lock once data came from it, `evidence:` section). |
+| `copilot/cases.py` | Case folders `cases/<id>/case.yaml`: list, create, update (rewrites the YAML), switch, access control (owner/members/admin), sharing (`access.shared_with` / `share_findings`: others may start a case from its data, `can_reuse`, `copy_data(findings=)`), evidence sources (who may name a client/memory image, lock once data came from it, `evidence:` section). |
 | `copilot/session.py` | One `Session` (active case + its DB connection + user) per browser session or CLI process. `PROVIDER` lets the app supply its own. |
 | `copilot/database.py` | SQLite per case: records, timeline, FTS, collections, findings, audit log, outputs, conversation. `data_dir_for()` decides where. |
 | `copilot/normalize.py` | Raw row -> record: timestamps, entities, event types, description templates. Windows event rows lead with `event_fields` (LogonType, user, ip, workstation, logon_id, by...; from EventData or the message text). Bump `NORMALIZER_VERSION` when templates/entities change (stored descriptions are rebuilt). |
@@ -96,8 +96,8 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
   memory request carries the client and memory image it was asked for (`bound`); `resolve()` refuses
   it if the case now points elsewhere.
 - **Evidence sources.** Access is per source as well as per case: `cases.source_problem()` lets a user
-  name a client or memory image only if no case uses it or they can open a case that does (admins:
-  any; `login.new_evidence: admins` keeps unused ones for admins). `cases.collected_sources()` reads
+  name a client or memory image only if no case uses it or they can open or reuse a case that does
+  (shared with them: `cases.can_reuse`; admins: any; `login.new_evidence: admins` keeps unused ones for admins). `cases.collected_sources()` reads
   `collections.client_id` (`memory:<image>` for memory runs): a source with rows locks that setting,
   and `copy_data` compares it too. Provenance for the report: `evidence_files` (memory image SHA-256,
   hashed by `memory.image_identity` on the first run) and `case.yaml` `evidence:` for the disk image.

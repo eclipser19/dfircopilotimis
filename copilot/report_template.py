@@ -121,6 +121,9 @@ Every timestamp of the records cited by findings{% if has_scope %}, inside the i
 - **Time:** no timestamp in the cited evidence
 {% endif %}
 - **Confidence:** {{ (f.confidence or "—") | md }}
+{% if f.origin %}
+- **Imported from:** {{ f.origin | md }} (copied with its evidence; review it for this case)
+{% endif %}
 {% if f.mitre_technique %}
 - **MITRE ATT&CK:** {{ f.mitre_technique | md }}
 {% endif %}

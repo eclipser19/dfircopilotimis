@@ -41,7 +41,7 @@ CASE_SCHEMA = {
     "agent": {"allow_raw_vql": BOOL, "max_steps": INT, "max_tokens_per_turn": INT,
               "investigate_steps": INT, "investigate_tokens": INT,
               "approvals": {kind: one_of(*MODES) for kind in ACTIONS}},
-    "access": {"owner": TEXT, "members": LIST},
+    "access": {"owner": TEXT, "members": LIST, "shared_with": LIST, "share_findings": BOOL},
     "evidence": {"image_name": TEXT, "image_sha256": TEXT, "image_md5": TEXT, "acquired": TIME,
                  "notes": TEXT},
 }

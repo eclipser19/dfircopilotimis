@@ -121,6 +121,25 @@ def test_investigation_writes_the_dossier_every_question_starts_from(app_env):
     assert app_env.get_dossier()["text"].endswith("- rewritten")
 
 
+def test_without_a_dossier_the_investigation_is_offered_not_forced(app_env):
+    app_env.ingest_artifact_results([{"Message": "x"}], "S", "D", CLIENT)
+    app_env.upsert_collection("F.1", client_id=CLIENT, artifact="S", state="FINISHED", rows_ingested=1)
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert "No case dossier yet" not in _texts(at)                  # nothing to run it with: no model yet
+    llm = ScriptedLLM(AIMessage(content="## Intrusion timeline\n- from the card"))
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    assert "No case dossier yet" in _texts(at) and "Optional" in _texts(at)
+    next(b for b in at.button if b.key == "dossier_not_now").click().run()
+    assert "No case dossier yet" not in _texts(at) and app_env.get_dossier() == {}
+    at.session_state["dossier_dismissed"] = None
+    at.run()
+    next(b for b in at.button if b.key == "investigate_card").click().run()
+    assert not at.exception and app_env.get_dossier()["text"].endswith("- from the card")
+    assert "No case dossier yet" not in _texts(at)
+
+
 def test_agent_collection_waits_for_approval(app_env):
     app_env.ingest_artifact_results([{"Message": "x"}], "S", "D", "C.1")
     at = AppTest.from_file(APP, default_timeout=30)
@@ -212,6 +231,29 @@ def test_case_settings_panel_saves(app_env, tmp_path, monkeypatch):
     assert not at.exception
     assert case_config.iocs["ips"] == ["10.0.0.5"] and case_config.clock_offset_minutes == 60
     assert "10.0.0.5" in at.session_state["chat_history"][0].content     # the agent sees the new settings
+
+
+def test_case_settings_import_another_cases_data_and_findings(app_env, tmp_path, monkeypatch):
+    monkeypatch.setenv("DFIR_CASES_DIR", str(tmp_path / "cases"))
+    monkeypatch.setenv("DFIR_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("DFIR_CASE_DIR", raising=False)
+    monkeypatch.setattr(case_config, "path", case_config.path)
+    from copilot.database import case_db
+    cases.create("first", "First look", client_id=CLIENT)
+    cases.switch("first")
+    case_db.ingest_artifact_results([{"Message": "x"}], "S", "H", CLIENT)
+    case_db.upsert_collection("F.1", client_id=CLIENT, artifact="S", state="FINISHED", rows_ingested=1)
+    case_db.record_finding("odd service", "d", [], "low")
+    cases.create("second", "Second look", client_id=CLIENT)
+    cases.switch("second")
+    cases.consume_switch()
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    assert at.selectbox(key="cs_second_imp").value == "first"
+    at.checkbox(key="cs_second_imp_findings").check()
+    next(b for b in at.button if b.key == "cs_second_imp_go").click().run()
+    assert not at.exception and "Imported from `first`: 1 new records, 1 findings" in _plain(at)
+    assert [f["origin"] for f in case_db.get_findings()] == ["case first"]
+    assert "[Investigator] Imported from case first" in at.session_state["chat_history"][-1].content
 
 
 @pytest.fixture
@@ -535,6 +577,36 @@ def test_owner_shares_a_case_from_the_sidebar(team_app):
     assert "The owner or an admin can change this" in _texts(carol)
 
 
+def test_owner_shares_evidence_and_others_start_their_own_case_from_it(team_app, monkeypatch):
+    monkeypatch.setattr(session, "PROVIDER", lambda: session.Session("bob"))
+    cases.update("bob-case", client_id=CLIENT)
+    s = session.Session("bob")
+    s.open(cases._case_file("bob-case"))
+    s.db.ingest_artifact_results([{"Message": "x"}], "S", "H", CLIENT)
+    s.db.upsert_collection("F.1", client_id=CLIENT, artifact="S", state="FINISHED", rows_ingested=1)
+    s.db.record_finding("odd service", "d", [], "low")
+    monkeypatch.setattr(session, "PROVIDER", None)
+
+    bob = _browser("bob")
+    bob.radio(key="ac_bob-case_share_mode").set_value("Everyone on this server").run()
+    bob.checkbox(key="ac_bob-case_share_findings").check()
+    next(b for b in bob.button if b.label == "Save sharing").click().run()
+    assert not bob.exception and "Sharing saved" in _texts(bob)
+
+    dave = _browser("dave")                                       # no case of his own, not a member
+    assert any("You have no case yet" in i.value for i in dave.info)       # bob's case is not his to open
+    picker = dave.selectbox(key="nc_copy")
+    assert any(o.startswith("bob-case — Bob's case (" + CLIENT + "; shared by bob)") for o in picker.options)
+    picker.select(next(o for o in picker.options if o.startswith("bob-case"))).run()
+    dave.text_input(key="nc_id").input("dave-case")
+    dave.text_input(key="nc_name").input("Dave's look")
+    dave.checkbox(key="nc_copy_findings").check()
+    next(b for b in dave.button if b.label == "Create and open").click().run()
+    assert not dave.exception and "copied from `bob-case`" in _plain(dave)
+    assert [o.split(" — ")[0] for o in _case_choices(dave)] == ["dave-case"]         # bob's case stays closed
+    assert "Evidence client: " + CLIENT in _texts(dave)
+
+
 def test_model_change_in_server_yaml_applies_without_reloading(app_env, tmp_path, monkeypatch):
     import time
 
@@ -574,15 +646,22 @@ def mem_app(app_env, tmp_path, monkeypatch):
     return fake
 
 
-def test_memory_triage_from_the_first_visit_prompt(mem_app, app_env):
+def test_first_visit_runs_disk_and_memory_triage_and_the_investigation_is_optional(mem_app, app_env):
     at = AppTest.from_file(APP, default_timeout=30).run()
     assert "the memory image `desktop.mem` (Volatility)" in _texts(at)
-    at.checkbox(key="triage_analyze").uncheck().run()
-    next(b for b in at.button if b.key == "first_memory_triage").click().run()
+    first = at.checkbox(key="first_investigate")
+    assert first.value and first.label == "Then investigate the case (optional)"   # shown where triage starts
+    first.uncheck().run()
+    assert not at.checkbox(key="triage_analyze").value                             # one choice, both places
+    button = next(b for b in at.button if b.key == "first_triage")
+    assert button.label == "Run triage (disk + memory)"
+    button.click().run()
     assert not at.exception
+    assert "Generic.Client.Info -> FINISHED" in _texts(at)
     assert "Memory.windows.pslist.PsList -> FINISHED: rows 2, new 2" in _texts(at)
     assert len(mem_app.commands) == 8
     assert app_env.search_events("203.78.103.109")["total"] == 1
+    assert app_env.get_dossier() == {}                                             # not investigated
 
 
 def test_memory_image_is_picked_from_the_server_folder(mem_app, app_env, tmp_path, monkeypatch):

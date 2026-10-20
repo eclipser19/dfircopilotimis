@@ -240,10 +240,12 @@ def run_agent_loop():
     if summaries and all(s.get("state") == "NOT_STARTED" for s in summaries):
         print("\n[!] No collection could be started, so the agent was not run on them. "
               "Fix the error above (Velociraptor connection, client ID, artifact names), then retry.")
-    elif summaries and input("\nInvestigate the case now (one longer agent turn that writes the case dossier "
-                             "every question starts from)? (y/n) [y]: ").lower() in ['', 'y', 'yes']:
-        from copilot.dossier import triage_note
-        investigate(triage_note(summaries))
+    elif summaries:
+        from copilot.dossier import budget, triage_note
+        if input(f"\nOptional: investigate the case now? One longer agent turn (up to {budget()[0]} steps) writes "
+                 f"the case dossier every question starts from; /investigate runs it later. (y/n) [y]: "
+                 ).lower() in ['', 'y', 'yes']:
+            investigate(triage_note(summaries))
 
     while True:
         user_input = input("\nInvestigator> ")

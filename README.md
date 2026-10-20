@@ -117,8 +117,11 @@ python -m copilot.cases move-data --yes    # moves it
   the description for free (patterns, including defanged `1.2.3[.]4` / `hxxp://`) or with
   **✨ AI extract** (one small LLM call; values must appear in the text). Saving rewrites the
   case.yaml without its comments.
-- A new case on the same evidence can **copy the collected data** of another case instead of
-  re-collecting (same client ID only; findings are not copied). Ask the agent or use the form.
+- A new case can **start from another case's data** instead of re-collecting: it gets that case's
+  evidence (client and memory image) and a copy of its collected data, and optionally its findings
+  and dossier (copied findings say which case they came from). **Case settings → Import from another
+  case** does the same for an existing case on the same evidence. Ask the agent or use the forms.
+  The source can be one of your cases or one shared with you (see [Sign-in](#sign-in)).
 - `DFIR_CASES_DIR` changes the cases folder. `DFIR_DATA_DIR` keeps the data apart instead, in
   `<DFIR_DATA_DIR>/<case-id>/` (e.g. on a larger disk).
 
@@ -225,10 +228,13 @@ one longer turn (40 tool steps by default) and writes the **case dossier**: the 
 timeline, its findings, key entities, hypotheses, contradictions and gaps, with evidence IDs.
 The dossier is stored in the case and goes into every later conversation, so each question starts
 from it and only checks what it adds. Answers then agree with each other, and a question costs a
-fraction of re-investigating the case. In the app it runs after the triage ("Investigate
-afterwards", on by default) and from the sidebar's **🗂️ Case dossier** section (**Investigate
-again** after new data, e.g. the memory triage); in the CLI it is offered after the triage, and
-`/investigate` runs it in either. Running it again starts from the previous dossier and replaces
+fraction of re-investigating the case. It is optional: questions work without it. In the app the
+checkbox **Then investigate the case (optional)** sits next to the triage buttons (ticked by
+default; untick it to look at the data first). The first-visit **Run triage (disk + memory)** runs
+both triages and then one investigation. A case with data but no dossier shows an **Investigate
+now / Not now** card, and the sidebar's **🗂️ Case dossier** section shows the dossier and runs it
+(again, e.g. after new data). In the CLI it is offered after the triage, and `/investigate` runs it
+in either. Running it again starts from the previous dossier and replaces
 it; every member of the case gets the new one with their next question. Its budget is
 `agent.investigate_steps` / `agent.investigate_tokens` in the case file (default: twice a
 question's). Requests it makes (collections, memory runs) wait for approval as usual; their
@@ -396,6 +402,14 @@ and its memory image, so those are protected, not only the case folders:
 - An agent collection or memory run waiting for approval runs only if the case still points
   at the evidence it was asked for. If another member changed it meanwhile, approving it
   does nothing and says so.
+
+**Sharing a case's evidence.** The owner (or an admin) can share a case under **👥 Access → Share
+its evidence** with chosen accounts or with everyone on the server, with or without its findings
+and dossier. Those people can start their own case from it (**New case → Start from another case's
+data**) or import it into one of theirs, and may use its client and memory image. They can't open
+the shared case, its chats, files or audit log; members are still needed for that. Each copy is
+written to both cases' audit logs, so the owner sees who started from their case. Stopping the
+sharing prevents new copies; cases already started from it keep their copy and their evidence.
 
 **Provenance in the report.** Section 2 lists each evidence source the data came from: the
 client (with the host name Velociraptor reports, and the disk image's file name and SHA-256

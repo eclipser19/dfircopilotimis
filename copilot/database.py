@@ -169,6 +169,9 @@ class CaseDatabase:
         if "status" not in cols:
             cur.execute("ALTER TABLE findings ADD COLUMN status TEXT DEFAULT 'active'")
             cur.execute("ALTER TABLE findings ADD COLUMN status_reason TEXT")
+        # Added with case sharing: the case a finding was copied from (cases.copy_data).
+        if "origin" not in cols:
+            cur.execute("ALTER TABLE findings ADD COLUMN origin TEXT")
         # Added with sign-in: who was working when the entry was written.
         if "actor" not in {r[1] for r in cur.execute("PRAGMA table_info(audit_log)")}:
             cur.execute("ALTER TABLE audit_log ADD COLUMN actor TEXT")
