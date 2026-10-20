@@ -63,31 +63,72 @@ held-out `corporatesecrets`).
 - **CorporateSecrets** (the last blind benchmark) has never been run: it needs the AD1 extracted
   first (see its `answer_key.md`).
 
+## External review (Codex, 2026-10-20)
+
+An outside review of commit `1a90448` put evidence correctness, access boundaries and reproducible
+measurement ahead of new agent behaviour. Fixed right after it:
+- **Runtime secrets:** Velociraptor writeback files (client private keys), remap files and
+  binaries are git-ignored; the setup docs name remap files `deaddisk-<case>.yaml`.
+- **False "not found":** a search the index (first 300 characters per value) can't answer now
+  reads the full records, so a negative is a real one.
+- **Partial reads:** a collection is marked done only when every reported row was read, or the
+  case's row limit stopped the read; otherwise the agent is told the result is incomplete, and
+  `check_collection` reads the rest.
+- **Exports:** CSVs are written from the same database snapshot as the export's `case.db`, and
+  cells that would run as spreadsheet formulas are neutralised.
+
+Still open from the review: steps 1, 2, 6 and 8 below.
+
 ## Next steps, most valuable first
 
-1. **Investigate once, then answer.** One longer agent turn that builds the intrusion timeline
-   and records findings ("investigate this case"), before any question. Questions then start from
-   the findings and the leads, and only check what they add. This should make answers consistent
-   and much cheaper. It fits the app as an "Investigate" button, and the benchmark as a step
-   before the questions.
-2. **Measure properly.**
+1. **Reproducible baseline.** CI running `pytest`, secret scanning, pinned dependency versions
+   and a declared Python version, validated `case.yaml` / `server.yaml` schemas. Small, and it
+   protects everything after it.
+2. **Evidence provenance and access.**
+   - Each evidence source (Velociraptor client, memory image) gets an identity with its image
+     hash.
+   - Investigators get permissions per source, not only per case: today a new case can name any
+     client ID or memory image and reach that evidence.
+   - Approvals are bound to the exact source and case settings they were asked for, and a case's
+     target can't be changed silently after data was collected from it.
+   - This matters as soon as several investigators share a server.
+3. **Investigate once, then answer.** One longer agent turn that builds the intrusion timeline and
+   records findings, hypotheses, contradictions and open gaps (a case dossier), before any
+   question. Questions then start from it and the leads, and only check what they add. This should
+   make answers consistent across questions and much cheaper. It fits the app as an "Investigate"
+   button, and the benchmark as a step before the questions.
+4. **Measure properly.**
    - Two runs per benchmark after each change, recorded in BENCHMARKS.md.
+   - Each run saves what it ran with: commit and uncommitted changes, case and server settings,
+     knowledge and lesson versions, model settings, normalizer version.
+   - Scoring also checks dates (not only times of day), negated claims ("X did not happen"
+     matching X's words) and whether cited records support the sentence. Forbidden claims and
+     invalid citations count as failures, not only as side notes.
    - To compare agent or prompt changes without Velociraptor time, keep one triage-only case per
      image (`benchmark run ... --questions none`) and reuse it with `--from-case <that case>`.
    - Run CorporateSecrets once, blind.
-3. **More leads in code.**
+5. **More leads in code.**
    - What each attacker session did: files written, tasks and services created, programs run
      between the logon and its logoff (join on logon ID and time).
    - Executions from Prefetch, 4688 and BAM in those windows.
    - Timestomping candidates ($SI vs $FN, zero fractions).
    - Persistence that differs from the operating system's own.
-4. **File activity in triage.** Archives, scripts and executables created in the incident window
+   - Each lead keeps showing its records and join keys, and never presents presence as execution.
+6. **Durable investigations.**
+   - Jobs, approvals and progress are stored in the case, not the browser session: a refresh or
+     restart loses nothing, and retries don't repeat side effects.
+   - Volatility output is streamed and capped instead of buffered whole.
+   - The orchestration moves out of the Streamlit page into shared services.
+7. **File activity in triage.** Archives, scripts and executables created in the incident window
    are only in the USN journal and the MFT, which triage doesn't collect (too large unfiltered).
-   A filtered collection (incident window, those extensions) would let the data question see them;
-   the DC run keeps missing `secret.zip` for this reason.
-5. **Speed.** Per-step timings in the run log (to tell slow model calls from slow Velociraptor);
+   A filtered collection (incident window, those extensions) would let the data question see them.
+   The DC run keeps missing `secret.zip` for this reason.
+8. **Speed.** Per-step timings in the run log (to tell slow model calls from slow Velociraptor);
    collect triage artifacts in parallel; a shorter system prompt and fewer tools once the leads
    carry more of the work.
-6. **Prompt rewrite** once the tools are stable: fewer, shorter rules.
-7. **Report:** PDF export; report sharing.
-8. **Environment:** image hashing and the read-only mount procedure recorded in the case file.
+9. **Prompt rewrite** once the tools are stable: fewer, shorter rules.
+10. **Release.**
+    - A person reviews findings before they reach a report.
+    - Every change is audited; evidence manifests; export/restore checks.
+    - Deployment and backup guidance, PDF export, report sharing.
+    - Evaluation across more models and images.

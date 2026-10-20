@@ -32,8 +32,8 @@ Velociraptor cannot open `.ad1` files, but it can read a folder that holds a Win
    folder is the "C: drive" of the image.
 3. **Make the remapping and start the client** (stop the client of the previous image first, Ctrl+C):
    ```powershell
-   .\velociraptor.exe deaddisk --add_windows_directory="F:\...\[root]" --hostname corpsec-image corpsec.yaml -v
-   .\velociraptor.exe --config deaddisk_client.config.yaml --remap corpsec.yaml client -v
+   .\velociraptor.exe deaddisk --add_windows_directory="F:\...\[root]" --hostname corpsec-image deaddisk-corpsec.yaml -v
+   .\velociraptor.exe --config deaddisk_client.config.yaml --remap deaddisk-corpsec.yaml client -v
    ```
    Keep `--hostname` neutral: the agent sees it, and the real name is one of the answers. With the
    same client config the client keeps its client ID (`C.xxxx`), now reading this image.

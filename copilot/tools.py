@@ -10,6 +10,15 @@ from copilot.case_config import case_config
 from copilot.normalize import EVENT_TYPE_NAMES
 
 
+# Evidence text opened in a spreadsheet must not run as a formula (CSV injection): a cell that
+# starts with one of these is written with a leading apostrophe.
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_cell(value):
+    return "'" + value if isinstance(value, str) and value.startswith(_FORMULA_START) else value
+
+
 def _dump(obj, **_) -> str:
     """Compact JSON for tool output: every character here is paid for in tokens."""
     return json.dumps(_with_true_times(obj), separators=(",", ":"), default=str, ensure_ascii=False)
@@ -581,7 +590,7 @@ def export_results(query_type: str, start_time: Optional[str] = None, end_time: 
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=header, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows([{k: _csv_cell(v) for k, v in row.items()} for row in rows])
     note = f" (first {EXPORT_MAX_ROWS:,} of {total:,})" if total > len(rows) else ""
     outputs.register(path, "results", f"{label}: {len(rows):,} rows{note}")
     case_db.log_query("export_results", f"type={query_type} start={start_time} end={end_time} type={event_type} "
@@ -737,12 +746,12 @@ def export_case(include_csv: bool = True) -> str:
     import tempfile
     export_dir = tempfile.mkdtemp(prefix="case_export_")
 
-    # Consistent copy of the live database
-    with sqlite3.connect(os.path.join(export_dir, "case.db")) as dest:
-        case_db.conn.backup(dest)
+    # Consistent copy of the live database; the CSVs are read from that copy, so they match it.
+    snapshot = sqlite3.connect(os.path.join(export_dir, "case.db"))
+    case_db.conn.backup(snapshot)
 
     if include_csv:
-        cur = case_db.conn.cursor()
+        cur = snapshot.cursor()
         exports = {
             "records": "SELECT * FROM records",
             "timeline": ("SELECT t.timestamp_utc, t.timestamp_desc, r.source, r.event_type, r.hostname, "
@@ -761,7 +770,8 @@ def export_case(include_csv: bool = True) -> str:
                 with open(csv_path, "w", newline="", encoding="utf-8") as f:
                     writer = csv.writer(f)
                     writer.writerow([desc[0] for desc in cur.description])
-                    writer.writerows(rows)
+                    writer.writerows([[_csv_cell(v) for v in row] for row in rows])
+    snapshot.close()
 
     # Create the zip in the output directory
     zip_path = shutil.make_archive(outputs.new_path("case_export", "zip")[:-4], "zip", export_dir)

@@ -20,8 +20,8 @@ Apache log times (local, -0700) converted.
 2. **Disk:** Velociraptor reads raw disk images directly, no FTK needed. Stop the client of the
    previous image (Ctrl+C), then:
    ```powershell
-   .\velociraptor.exe deaddisk --add_windows_disk="D:\evidence\injector\s4a-challenge4" --hostname injector-image injector.yaml -v
-   .\velociraptor.exe --config deaddisk_client.config.yaml --remap injector.yaml client -v
+   .\velociraptor.exe deaddisk --add_windows_disk="D:\evidence\injector\s4a-challenge4" --hostname injector-image deaddisk-injector.yaml -v
+   .\velociraptor.exe --config deaddisk_client.config.yaml --remap deaddisk-injector.yaml client -v
    ```
    `deaddisk` should log "Found Windows Partition". Keep `--hostname` neutral (the real name is an
    answer).

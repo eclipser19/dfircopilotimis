@@ -280,17 +280,19 @@ class CaseDatabase:
 
     def search_events(self, keyword: str, limit: int = 100) -> dict:
         """Case-insensitive substring search across descriptions, entities and raw data."""
-        cur = self.conn.cursor()
         if self.has_fts and len(keyword) >= 3:
             match = '"' + keyword.replace('"', '""') + '"'
-            ids_sql = "SELECT evidence_id FROM records_fts WHERE records_fts MATCH ?"
-            params = [match]
-        else:
-            like = f"%{_escape_like(keyword)}%"
-            ids_sql = ("SELECT evidence_id FROM records WHERE description LIKE ? ESCAPE '\\' "
-                       "OR raw_data LIKE ? ESCAPE '\\'")
-            params = [like, like]
-        return self._records_where(f"r.evidence_id IN ({ids_sql})", params, limit)
+            found = self._records_where("r.evidence_id IN (SELECT evidence_id FROM records_fts "
+                                        "WHERE records_fts MATCH ?)", [match], limit)
+            if found["total"]:
+                return found
+            # The index keeps only the start of long values (FTS_VALUE_CHARS, FTS_RECORD_CHARS). Before
+            # answering "not there", read the full records, so a negative is a real one.
+        # Raw rows are stored as JSON: a backslash in the keyword is doubled there.
+        forms = list(dict.fromkeys([keyword, json.dumps(keyword)[1:-1]]))
+        likes = [f"%{_escape_like(form)}%" for form in forms]
+        condition = " OR ".join(["r.description LIKE ? ESCAPE '\\'"] + ["r.raw_data LIKE ? ESCAPE '\\'"] * len(likes))
+        return self._records_where(f"({condition})", [likes[0], *likes], limit)
 
     def pivot_entity(self, entity: str, field: str = None, limit: int = 100) -> dict:
         """

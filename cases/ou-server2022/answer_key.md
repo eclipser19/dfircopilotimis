@@ -129,8 +129,8 @@ That run cited records the first one never reached. Each was checked in its evid
 1. Download the E01 from ORDO and keep it **outside OneDrive** (e.g. `C:\evidence\ou-server2022\`).
 2. Stop the Velociraptor client of the previous image (Ctrl+C), then:
    ```powershell
-   .\velociraptor.exe deaddisk --add_windows_disk="C:\evidence\ou-server2022\<image>.E01" --hostname ou-image ou.yaml -v
-   .\velociraptor.exe --config deaddisk_client.config.yaml --remap ou.yaml client -v
+   .\velociraptor.exe deaddisk --add_windows_disk="C:\evidence\ou-server2022\<image>.E01" --hostname ou-image deaddisk-ou.yaml -v
+   .\velociraptor.exe --config deaddisk_client.config.yaml --remap deaddisk-ou.yaml client -v
    ```
    `deaddisk` should log "Found Windows Partition". Keep `--hostname` neutral.
 3. Check: collect `Windows.EventLogs.RDPAuth` in the GUI; it should return rows from 2023-2024.

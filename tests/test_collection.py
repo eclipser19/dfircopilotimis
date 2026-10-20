@@ -179,6 +179,17 @@ def test_reported_rows_that_cannot_be_read_are_not_marked_done(case):
     assert retry["new_rows_ingested"] == 1
 
 
+def test_a_partial_read_stays_open_and_is_finished_later(case):
+    # Velociraptor reports 3 rows, only 1 can be read: not done, and the agent is told so.
+    vql = FakeVQL(rows={"Generic.Client.Info/BasicInformation": [{"Hostname": "WS01"}]}, reported_rows=3)
+    summary = collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None)
+    assert "INCOMPLETE" in summary["note"] and not case.get_collection("F.TEST1")["ingested"]
+    rows = [{"Hostname": "WS01"}, {"Hostname": "WS02"}, {"Hostname": "WS03"}]
+    retry = collection.check("F.TEST1", vql=FakeVQL(rows={"Generic.Client.Info/BasicInformation": rows},
+                                                    reported_rows=3))
+    assert retry["new_rows_ingested"] == 2 and case.get_collection("F.TEST1")["ingested"]
+
+
 def test_zero_rows_from_velociraptor_is_explained(case):
     vql = FakeVQL(rows={}, reported_rows=0)
     summary = collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None)

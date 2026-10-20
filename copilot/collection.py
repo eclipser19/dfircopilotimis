@@ -346,7 +346,10 @@ def ingest(flow_id: str, status: dict, vql=None) -> dict:
         if not counted[0] and _clean_log("\n".join(logs)):
             case_db.upsert_collection(flow_id, error=_clean_log("\n".join(logs))[:2000])
 
-    complete = read > 0 or not status["total_collected_rows"]
+    # Done when every row Velociraptor reports was read, or the case's row limit stopped the read on
+    # purpose. A partial read stays open so check_collection reads it again (rows already stored are
+    # skipped by their evidence ID).
+    complete = truncated or read >= (status["total_collected_rows"] or 0)
     if complete:
         case_db.upsert_collection(flow_id, ingested=1, rows_ingested=new, finished_at=_now())
     return {"rows_read": read, "new_rows": new, "truncated": truncated}
@@ -434,6 +437,10 @@ def _summary(flow_id: str, status: dict, result: dict = None) -> dict:
                                "will retry.")
             if known.get("error"):
                 summary["read_log"] = known["error"]
+        elif result["rows_read"] < total and not result.get("truncated"):
+            summary["note"] = (f"Only {result['rows_read']:,} of {total:,} rows could be read back: the results "
+                               f"are INCOMPLETE. check_collection will read the rest; don't conclude from what "
+                               f"is missing.")
         elif not result.get("new_rows"):
             summary["note"] = "All rows were already in the case database (collected before)."
         if result.get("truncated") or (total and total >= case_config.max_rows):

@@ -132,3 +132,29 @@ def test_output_dir_is_absolute(case, monkeypatch, tmp_path):
 def test_tool_replies_tell_the_agent_not_to_write_links(case, monkeypatch):
     _seed(case, monkeypatch)
     assert "do not write links" in tools.generate_report.invoke({"executive_summary": "S", "recommendations": "- R"})
+
+
+def test_csv_exports_do_not_carry_spreadsheet_formulas(case, monkeypatch):
+    monkeypatch.setattr(outputs, "output_dir", lambda: str(case_dir_outputs(case)))
+    case.ingest_artifact_results([{"EventTime": "2020-09-19T03:00:00Z", "CommandLine": "=HYPERLINK(\"http://x\")",
+                                   "Message": "attacker text"},
+                                  {"EventTime": "2020-09-19T03:01:00Z", "Message": "@SUM(1+1)"}],
+                                 "Test.Source", client_id="C.1")
+    tools.export_results.invoke({"query_type": "search", "keyword": "HYPERLINK", "include_raw": False})
+    with open(outputs.produced_since(0)[-1]["path"], encoding="utf-8") as f:
+        text = f.read()
+    assert "'=HYPERLINK" in text and ",=HYPERLINK" not in text
+
+    import zipfile
+    tools.export_case.invoke({"include_csv": True})
+    with zipfile.ZipFile(outputs.produced_since(0)[-1]["path"]) as z:
+        records = z.read("records.csv").decode("utf-8")
+        assert "case.db" in z.namelist()
+    assert "'=HYPERLINK" in records and "'@SUM" in records
+
+
+def case_dir_outputs(case):
+    import os
+    path = os.path.join(case.case_dir, "outputs")
+    os.makedirs(path, exist_ok=True)
+    return path
