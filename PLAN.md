@@ -100,7 +100,7 @@ Still open from the review: steps 6 and 8 below (step 2 is done).
      collections, rows and times; it warns about a changed image or mixed clients.
    - Not covered: any signed-in investigator can still see which Velociraptor clients exist
      (IDs and host names) through the agent's `search_clients` tool, though not use them.
-3. ~~**Investigate once, then answer.**~~ Built, **not measured yet**: one longer agent turn
+3. ~~**Investigate once, then answer.**~~ Built and partly measured: one longer agent turn
    (`copilot/dossier.py`, 40 steps by default) writes the case dossier (intrusion timeline,
    findings, key entities, hypotheses, contradictions, gaps) before any question; every later
    conversation's system prompt carries it. It runs after the triage in the app and the CLI,
@@ -118,13 +118,13 @@ Still open from the review: steps 6 and 8 below (step 2 is done).
    investigation turn per phase group.
 4. **Measure properly.**
    - Two runs per benchmark after each change, recorded in BENCHMARKS.md.
-   - Each run saves what it ran with: commit and uncommitted changes, case and server settings,
-     knowledge and lesson versions, model settings, normalizer version.
+   - Each run saves what it ran with: commit and uncommitted changes and the data source (done),
+     case and server settings, knowledge and lesson versions, model settings, normalizer version.
    - Scoring also checks dates (not only times of day), negated claims ("X did not happen"
      matching X's words) and whether cited records support the sentence. Forbidden claims and
      invalid citations count as failures, not only as side notes.
-   - To compare agent or prompt changes without Velociraptor time, keep one triage-only case per
-     image (`benchmark run ... --questions none`) and reuse it with `--from-case <that case>`.
+   - To compare agent or prompt changes without Velociraptor time, start from an earlier run of
+     the same image with `--from-case <that run's case>` (done: only its triage is copied).
    - Run CorporateSecrets once, blind.
 5. **More leads in code.**
    - What each attacker session did: files written, tasks and services created, programs run
