@@ -5,8 +5,9 @@ CTF): a Windows 10 workstation (build 16299) of "Fruit Inc." shared by six accou
 a logical image (`.ad1`, about 700 MB). Not an intrusion: an insider / HR case (browser searches,
 documents, deleted files, a hidden Tor Browser).
 
-**Held out.** The copilot's knowledge was not tuned on this image. Do not add facts from this file
-(names, paths, searches) to prompts, tool descriptions or `copilot/knowledge_data/`.
+**Run blind once** (20261020-141019, 60.7%: BENCHMARKS.md), never tuned on. Keep it that way: do not
+add facts from this file (names, paths, searches) to prompts, tool descriptions or
+`copilot/knowledge_data/`, so later runs stay comparable with the blind one.
 
 Source of the answers: the public writeup
 `github.com/moe-naj/htb_writeups/blob/main/ccd_CorporateSecrets_writeup/ccd_CorporateSecrets.md`.
@@ -62,7 +63,7 @@ Registry, event logs, Prefetch, LNK, Recycle Bin and browser databases are read 
 | 14 | documents: CEO plans | `C:\Users\tim.apple\Documents\secret.odt`: 4 plans incl. "Fire Jim Tomato" | file content (not scored) |
 | 15 | installs | miriam.grapes: LibreCAD-Installer-2.1.3.exe (Downloads, ran: Prefetch) | file system, Prefetch |
 | 16 | archives | 7zG.exe last ran 2020-04-12 02:32:09 (also 04-12 01:29:05, 04-11 23:23:06, 23:20:36, 23:17:34); `Users\miriam.grapes\Pictures\vegetable` is a 7z archive without extension | Prefetch, file magic |
-| 17 | deleted | `$RGETALS.jpg` (dog photo) in hansel.apricot's bin (SID ...-1005); `$RQ1FSDY.docx` "Fruit inc. company secrets" (4th: "Customer data is not stored securely") in the bin of SID ...-1003 | Recycle Bin |
+| 17 | deleted | `$RGETALS.jpg` (dog photo, originally `Users\hansel.apricot\Downloads\Chinook-On-White-03.jpg`: the only file in that bin) in hansel.apricot's bin (SID ...-1005); `$RQ1FSDY.docx` "Fruit inc. company secrets" (4th: "Customer data is not stored securely") in the bin of SID ...-1003 | Recycle Bin |
 
 Left out of the benchmark (CTF puzzles rather than investigation questions, or outside the
 copilot's reach): CRC64 of fruit_apricot.jpg (`ED865AA6DFD756BF`), size of strawberry.jpg (72448),

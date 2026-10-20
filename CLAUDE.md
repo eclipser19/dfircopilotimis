@@ -82,7 +82,7 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 | `copilot/benchmark.py` | Benchmark runner: model checked first (`make_model` pings it), fresh `bench-*` case, triage (waits for unfinished flows: `finish_triage`) or `--from-case` (triage part only: `cases.copy_data(triage=)`, then the missing triage artifacts), investigation, fixed questions in fresh conversations, scoring in code (facts, true-UTC times near the fact's words, uncorrected times, invalid IDs, forbidden claims, times not in cited records), commit recorded, results in `benchmark_results/`. |
 | `cases/szechuan/` | Example case (DFIR Madness "Szechuan Sauce" desktop) and `answer_key.md`; used to tune the knowledge. |
 | `cases/szechuan-dc/` | The same case's domain controller: `case.yaml`, `benchmark.yaml` (questions and expected facts), `answer_key.md`. Benchmark (no longer fully blind). |
-| `cases/corporatesecrets/` | CyberDefenders "CorporateSecrets" (insider case, AD1 logical image read as a folder): held-out benchmark; `answer_key.md` has the setup. |
+| `cases/corporatesecrets/` | CyberDefenders "CorporateSecrets" (insider case, AD1 logical image read as a folder): benchmark run blind once (60.7%), never tuned on; `answer_key.md` has the setup. |
 | `cases/injector/` | CyberDefenders "Injector" (web server breach, raw disk + memory): benchmark (no longer fully blind); web logs via `Generic.Detection.Logs`. |
 | `cases/ou-server2022/` | Open University "Compromised Windows Server 2022 (simulation)" (E01, RDP + ransomware): benchmark (no longer fully blind); no published solution, so its key was built from a blind run's cited records, Hayabusa hits and lookups (`answer_key.md`). |
 | `tests/conftest.py` | `FakeVQL` (answers Velociraptor queries; `artifact_params` take names or dicts), fixtures `case`, `approve_all`, and isolation from real `server.yaml`/accounts/lessons. |
@@ -123,7 +123,7 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 - **Knowledge must stay generic.** The answer keys (`answer_key.md`, `benchmark.yaml`) score the
   agent, so prompts, tool descriptions and `knowledge_data/` must not contain facts of the test
   cases (their file names, IPs, users). Improve the agent on the desktop case, measure on the
-  benchmarks; `cases/corporatesecrets/` is still held out, so don't tune on it.
+  benchmarks; `cases/corporatesecrets/` was run blind once: don't tune on it, so later runs compare with that one.
 - **Streamlit quirks.** `RerunException`/`StopException` are `BaseException` (they can cut a turn
   short: `repair_history`); widget state is dropped when a widget is not drawn, so selections are
   copied to plain keys in `on_change`; `AppTest` cannot keep `st.dialog` open, so editors live in

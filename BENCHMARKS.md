@@ -17,7 +17,7 @@ key. Re-score saved runs with `python -m copilot.benchmark score benchmark_resul
 | `szechuan-dc` | DFIR Madness "Szechuan Sauce", domain controller (E01 + memory) | RDP brute force, malware download, service persistence, C2 in memory | 7 (13 facts) | Published solution. Used for tuning since its first runs: no longer blind |
 | `injector` | CyberDefenders "Injector" (raw disk + memory, Windows Server 2008) | Web application attacked (SQL injection, file inclusion, web shell), accounts added | 5 (19 facts) | Published writeups. Its runs led to the web-attack knowledge: no longer blind |
 | `ou-server2022` | Open University "Compromised Windows Server 2022 (simulation)" (E01, very large logs) | Password guessing, RDP, new domain admin, PsExec task pushing a payload, ransom note | 9 (49 facts) | No published solution: key built from verified records (see its `answer_key.md`). No longer blind |
-| `corporatesecrets` | CyberDefenders "CorporateSecrets" (AD1 logical image) | Insider data theft | 8 (22 facts) | **Held out**: never run, never tuned on. The only blind benchmark left |
+| `corporatesecrets` | CyberDefenders "CorporateSecrets" (AD1 logical image) | Insider data theft | 8 (22 facts) | **Run blind once** (20261020-141019), never tuned on: keep it that way, so later runs compare with the blind one |
 
 `cases/szechuan/` (the same case's desktop) is the tuning case: it has an answer key but no
 benchmark file.
@@ -57,6 +57,14 @@ with the rows below.
 | 20261020-100143 | 58.3% | 12/19 | 2/5 | 7.2 | First Injector run with the investigation first (`fe4f8be`). *entry* 1/5 in 3 steps: the dossier said the web server's access logs were "not collected" and the question took that as the answer instead of reading them (072754 read them: 5/5), so the attacker IP, sqlmap and the file-inclusion requests were missed, and *uploads* lost the `cmd` parameter and the sqlmap uploader. *accounts* missed the `hacker` RDP-group change that *commands* found in memory. 1.45M tokens in. Fixed next: the dossier's gaps are a to-do list for the questions, and the investigation is pointed at the web-attack checklist when a web server runs |
 | 20261020-125447 | 70.8% | 14/19 | 3/5 | 9.2 | `526db25`, from 100143's triage. The investigation read the Apache logs (web-attack checklist attached by the data): *entry* 4/5 with one tool call (was 1/5), *uploads* found the `cmd` parameter. Missed: sqlmap's first-request time, the sqlmap uploader in *uploads* (*commands* found it), `netsh` this time. 1.76M tokens in |
 
+### corporatesecrets
+
+The only run on an image the copilot was never tuned on, and the only insider (not intrusion) case.
+
+| Run | Score | Facts | Times | Min | Notes |
+|---|---|---|---|---|---|
+| 20261020-141019 | **60.7%** (64.3% re-scored) | 14/22 (15) | 3/6 | 7.7 | **Blind.** `ead4457` + local changes, investigation first (dossier 12,587 characters, 8 steps, 5.1 min); 1.31M tokens in; 0 forbidden claims, 0 uncorrected times, 1 garbled ID. Strong where the triage collects the answer: *system* 5/5, *privacy_tools* 3/3 (Tor Browser in the non-standard folder, its user, launch counts), *installs*, the hacking video to the second. Misses, by cause: (1) **answered from another source**: *accounts* 0/2 used the logon events (last interactive logon, 4624 counts) and never the registry's own answers (Winlogon last user name, SAM logon count); (2) **keyword search over small sources**: *web* missed the search typed with doubled letters and the VSCO search, in browser histories of 63 rows it could have read whole; (3) **files never listed or opened**: a secret document in a user's Documents and an archive without an extension (file type only from its content) are on no triage list; *archives* also tied 7-Zip to the wrong user and missed its last run. Re-scored: *deleted* named Hansel's deleted dog photo by its original path, not its `$R` name (key widened). Probably 2/2 there: the deleted company-secrets document may be the `Document1.docx` it listed (the dossier pairs it with `$RQ1FSDY.docx`), not checked yet. Two credits are generous: *documents* gave the RecentDocs key's write time as "last .docx" (the matching time is elsewhere in the answer), *installs* said LibreCAD was not shown to run (Prefetch shows it did). The dossier kept intrusion headings ("Intrusion timeline", C2) on an insider case |
+
 ### ou-server2022
 
 Scores on the **current key (49 facts)**; the score each run got on the key of its day in brackets.
@@ -80,6 +88,11 @@ Scores on the **current key (49 facts)**; the score each run got on the key of i
   9.4 min without it to 4.5 min and 1.18M tokens, at the same score. But a question trusts it: when
   the dossier says data was not collected, the question must collect it, not repeat the gap (Injector
   100143 lost its *entry* question that way).
+- On an image it was never tuned on (CorporateSecrets, an insider case) it scored 60.7% (64.3% with
+  the deleted file it named by its original path). It answers well and carefully (no forbidden claims)
+  what the triage collects; it misses what needs a file listed or opened, the registry's own count or
+  last-user values, and text that keyword search can't match. Expect about 60% on a new kind of case
+  before analysts' notes and corrections.
 - On a large server image (OU, ~270,000 logon events) the agent stays near 50%. It loses most on
   the entry and ransomware questions, where it has to pick the right few events out of hundreds
   of thousands. That is what the leads in `case_summary` (logons grouped per source address,

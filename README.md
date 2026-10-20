@@ -530,7 +530,7 @@ are also the run case's chat, so you can open the run in the app. Benchmarks:
 - `cases/szechuan-dc/`: the Szechuan Sauce domain controller (disk + memory, intrusion). Its first
   runs were used to fix the knowledge, so it is no longer fully blind.
 - `cases/corporatesecrets/`: CyberDefenders "CorporateSecrets" (disk only, insider / HR case),
-  held out. It comes as an AD1 logical image: `answer_key.md` explains how to present it to
+  run blind once (60.7%) and never tuned on. It comes as an AD1 logical image: `answer_key.md` explains how to present it to
   Velociraptor as a folder (`deaddisk --add_windows_directory`).
 - `cases/injector/`: CyberDefenders "Injector" (raw disk + memory, web server breached through
   its web application). Its runs led to the web-attack knowledge, so it is no longer fully blind.

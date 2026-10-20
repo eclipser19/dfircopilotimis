@@ -46,7 +46,7 @@ local ones included.
 **Benchmarks.** Runner (fresh case, triage, fixed questions, scoring in code: facts, true-UTC times,
 uncorrected times, invalid evidence IDs, forbidden claims), image check, triage wait, re-scoring,
 evidence dump for building keys. Four benchmarks (`szechuan-dc`, `injector`, `ou-server2022`,
-held-out `corporatesecrets`).
+`corporatesecrets`, run blind once).
 
 ## Known weaknesses
 
@@ -60,8 +60,11 @@ held-out `corporatesecrets`).
 - **Variance.** The same code scored 95.7% and 73.9% on the DC. One run proves little.
 - **Only one model measured** (`gpt-5.6-luna`). Local models work but were never benchmarked.
 - **Memory** measured on two images only (DC, Injector).
-- **CorporateSecrets** (the last blind benchmark) has never been run: it needs the AD1 extracted
-  first (see its `answer_key.md`).
+- **A new kind of case:** CorporateSecrets (insider, never tuned on) scored 60.7% blind. Its misses
+  are generic gaps: files in user folders are never listed and no file's type is read from its
+  content; small sources (browser history) are keyword-searched instead of read whole, so odd
+  spellings slip through; logon counts and the last user come from events, never from the SAM or
+  Winlogon; the dossier keeps intrusion headings on an insider case.
 
 ## External review (Codex, 2026-10-20)
 
@@ -83,7 +86,8 @@ Still open from the review: steps 6 and 8 below (step 2 is done).
 
 The copilot investigates a disk and memory image end to end, writes a case dossier, answers questions
 from it with cited records, and builds the report; several investigators share one server with
-per-case and per-evidence access. Benchmarks: DC 83-91%, Injector 71%, OU ~50% (before the dossier).
+per-case and per-evidence access. Benchmarks: DC 83-91%, Injector 71%, OU ~50% (before the dossier);
+on CorporateSecrets, never tuned on, 60.7% blind: the honest estimate for a new kind of case.
 From here, improvement comes from use, not from tuning on the benchmarks: analysts correct answers,
 add notes and confirm findings (`copilot/feedback.py`), the copilot takes those as given in the case,
 and `python -m copilot.feedback export` hands everything they said to whoever improves the knowledge
@@ -136,7 +140,7 @@ a change to the agent, to check nothing broke.
      invalid citations count as failures, not only as side notes.
    - To compare agent or prompt changes without Velociraptor time, start from an earlier run of
      the same image with `--from-case <that run's case>` (done: only its triage is copied).
-   - Run CorporateSecrets once, blind.
+   - ~~Run CorporateSecrets once, blind.~~ Done: 60.7% (BENCHMARKS.md).
 5. **More leads in code.**
    - What each attacker session did: files written, tasks and services created, programs run
      between the logon and its logoff (join on logon ID and time).
@@ -152,7 +156,10 @@ a change to the agent, to check nothing broke.
 7. **File activity in triage.** Archives, scripts and executables created in the incident window
    are only in the USN journal and the MFT, which triage doesn't collect (too large unfiltered).
    A filtered collection (incident window, those extensions) would let the data question see them.
-   The DC run keeps missing `secret.zip` for this reason.
+   The DC run keeps missing `secret.zip` for this reason. Logical images (AD1) have no USN journal:
+   there, a listing of the user folders (Documents, Desktop, Downloads, Pictures) with each file's
+   type read from its first bytes would have found CorporateSecrets' secret document and its
+   archive without an extension.
 8. **Speed.** Per-step timings in the run log (to tell slow model calls from slow Velociraptor);
    collect triage artifacts in parallel; a shorter system prompt and fewer tools once the leads
    carry more of the work.
