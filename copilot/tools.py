@@ -417,7 +417,8 @@ def case_summary() -> str:
     findings = case_db.get_findings()
     stats["findings"] = [{"id": f["finding_id"], "time_recorded": f["timestamp_utc"], "title": f["title"],
                           "confidence": f["confidence"], "mitre": f["mitre_technique"],
-                          **({"imported_from": f["origin"]} if f.get("origin") else {})} for f in findings]
+                          **({"imported_from": f["origin"]} if f.get("origin") else {}),
+                          **({"confirmed_by": f["confirmed_by"]} if f.get("confirmed_by") else {})} for f in findings]
     retracted = case_db.get_findings(include_retracted=True)
     stats["retracted_findings"] = len(retracted) - len(findings)
     stats["leads"] = leads.leads(case_db)

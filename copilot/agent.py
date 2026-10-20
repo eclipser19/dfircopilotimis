@@ -140,6 +140,7 @@ def run_agent_loop():
     def open_chat():
         """Loads the active case's saved conversation (the agent gets its memory back)."""
         state["case"] = cases.current_id()
+        state["last"] = None            # /good and /wrong rate answers of the case they were given in
         from copilot import config_check
         for problem in config_check.case_problems(case_config):
             print(f"[!] case settings: {problem}")
@@ -178,6 +179,8 @@ def run_agent_loop():
         if show_user:
             state["ui"].append({"role": "user", "content": text})
         state["ui"].append({"role": "assistant", "content": answer or "No answer."})
+        if answer:
+            state["last"] = (text if show_user else "", answer, "answer")
         save()            # saved with the case it was asked in, even if the agent switched cases
         follow_case()
 
@@ -192,9 +195,27 @@ def run_agent_loop():
             return
         chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
         state["ui"].append({"role": "assistant", "content": f"**Case dossier**\n\n{entry['text']}"})
+        state["last"] = ("Investigate the whole case (the case dossier)", entry["text"], "dossier")
         save()
         print(f"\n[*] Dossier saved ({entry['steps']} steps, {entry['tokens']:,} tokens). "
               f"Every question now starts from it; /investigate writes it again.")
+
+    def rate_last(text: str):
+        """/good or /wrong <what is right>: rates the last answer (copilot/feedback.py)."""
+        from copilot import feedback
+        word, _, comment = text.strip().partition(" ")
+        if not state.get("last"):
+            print("[!] No answer to rate yet.")
+            return
+        question, answer, kind = state["last"]
+        try:
+            entry = feedback.rate(kind, 1 if word.lower() == "/good" else -1, comment, question, answer)
+        except feedback.FeedbackError as e:
+            print(f"[!] {e} Usage: /wrong <what is right>")
+            return
+        print("[*] Kept with the question." if entry["rating"] > 0 else
+              f"[*] Note {entry['feedback_id']}: the copilot takes this as given in this case from now on.")
+        follow_case()                   # the system prompt gets the correction
 
     from copilot import approvals
     approvals.ASK = _confirm
@@ -260,6 +281,10 @@ def run_agent_loop():
 
         if user_input.strip().lower() == commands.INVESTIGATE:
             investigate()
+            continue
+
+        if user_input.strip().lower().split(" ")[0] in ("/good", "/wrong"):
+            rate_last(user_input)
             continue
 
         reply = commands.handle(user_input)

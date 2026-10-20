@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 from copilot import (approvals, auth, cases, citations, collection, commands, config_check, conversation, dossier,
-                     knowledge, lessons, memory, outputs, report, session)
+                     feedback, knowledge, lessons, memory, outputs, report, session)
 from copilot import llm as llm_config
 from copilot.agent import TokenUsage, run_turn, status_line
 from copilot.case_config import case_config
@@ -626,6 +626,59 @@ def render_message(msg: dict, index: int):
                 cited_box(msg["content"])
         for entry in msg.get("files", []):
             download_button(entry, key=f"dl-{index}-{entry['output_id']}")
+        if msg["role"] == "assistant" and msg.get("answer"):
+            feedback_row(msg, index)
+
+
+def feedback_cb(index: int, rating: int):
+    """A rating of an answer or dossier; a correction becomes a note the agent takes as given."""
+    msg = st.session_state.messages[index]
+    comment = st.session_state.get(f"fb_text_{index}", "") if rating < 0 else ""
+    st.session_state.fb_message_index = index
+    try:
+        entry = feedback.rate(msg.get("kind", "answer"), rating, comment, msg.get("question", ""), msg.get("content", ""))
+    except feedback.FeedbackError as e:
+        st.session_state.fb_message = f"❌ {e}"
+        return
+    msg["rated"] = {"rating": entry["rating"], "by": USER or "", "comment": entry["comment"], "id": entry["feedback_id"]}
+    st.session_state.fb_open = None
+    extra = ""
+    if rating < 0 and st.session_state.get(f"fb_lesson_{index}"):
+        try:
+            lesson = lessons.add(st.session_state.get(f"fb_topic_{index}", ""), entry["comment"], source="investigator",
+                                 approver=USER, case=cases.current_id())
+            extra = (" Saved as a lesson for every case too." if lesson["status"] == "active" else
+                     " Proposed as a lesson for every case: an admin accepts it.")
+        except lessons.LessonError as e:
+            extra = f" Not saved as a lesson: {e}"
+    st.session_state.fb_message = ("✅ Kept with the question." if rating > 0 else
+                                   "✅ The copilot takes this as given in this case from now on." + extra)
+
+
+def feedback_row(msg: dict, index: int):
+    """👍 / 👎 under an answer: how investigators teach the copilot (copilot/feedback.py)."""
+    rated = msg.get("rated")
+    if rated:
+        st.caption(("👍 Marked right" if rated["rating"] > 0 else "👎 Corrected") +
+                   (f" by {citations.md_literal(rated['by'])}" if rated.get("by") else "") +
+                   (f": {citations.md_literal(rated['comment'])}" if rated.get("comment") else ""))
+    else:
+        c1, c2, _ = st.columns([1, 1, 8])
+        c1.button("👍", key=f"fb_up_{index}", on_click=feedback_cb, args=(index, 1),
+                  help="Right: kept with the question for whoever improves the copilot.")
+        if c2.button("👎", key=f"fb_down_{index}", help="Wrong or incomplete: say what is right. The copilot takes "
+                                                       "it as given in this case from now on."):
+            st.session_state.fb_open = index
+        if st.session_state.get("fb_open") == index:
+            st.text_area("What is wrong, and what is right?", key=f"fb_text_{index}",
+                         help="A fact or correction, e.g. 'the C2 connection belongs to the injected process, not the "
+                              "dropper'. It goes into every conversation and investigation of this case.")
+            if st.checkbox("Also propose it as a lesson for every case (how to read an artifact or a kind of "
+                           "record, never a fact of this case)", key=f"fb_lesson_{index}"):
+                st.text_input("Lesson topic (an artifact or a kind of question)", key=f"fb_topic_{index}")
+            st.button("Save correction", key=f"fb_save_{index}", on_click=feedback_cb, args=(index, -1))
+    if st.session_state.get("fb_message_index") == index and st.session_state.get("fb_message"):
+        st.caption(st.session_state.fb_message)
 
 
 def status_emitter(status, log: list, notices: list):
@@ -664,7 +717,8 @@ def run_investigation(extra: str = "") -> bool:
                 f"⚠️ {n}" for n in [*notices, str(e)])})
             return True
         status.update(label="Case dossier written", state="complete", expanded=False)
-    st.session_state.messages.append({"role": "assistant", "log": log, "content":
+    st.session_state.messages.append({"role": "assistant", "log": log, "answer": True, "kind": "dossier",
+                                      "question": "Investigate the whole case (the case dossier)", "content":
                                       f"🗂️ **Case dossier** — every question now starts from it "
                                       f"({entry['steps']} steps, {entry['tokens']:,} tokens)\n\n{entry['text']}"})
     refresh_dossier()
@@ -672,8 +726,9 @@ def run_investigation(extra: str = "") -> bool:
 
 
 def refresh_dossier():
-    """Puts the latest dossier into this conversation's system prompt (also one another member wrote)."""
-    seen = (cases.current_id(), dossier.latest().get("dossier_id"))
+    """Puts the latest dossier and the case's notes into this conversation's system prompt (also when another
+    member wrote them)."""
+    seen = (cases.current_id(), dossier.latest().get("dossier_id"), feedback.stamp())
     if st.session_state.get("dossier_seen") != seen:
         st.session_state.dossier_seen = seen
         st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
@@ -709,7 +764,8 @@ def agent_turn(text: str, show_user: bool = True) -> bool:
         for entry in files:
             download_button(entry, key=f"dl-new-{entry['output_id']}")
         st.caption(st.session_state.usage.summary())
-    st.session_state.messages.append({"role": "assistant", "content": content, "log": log, "files": files})
+    st.session_state.messages.append({"role": "assistant", "content": content, "log": log, "files": files,
+                                      "answer": bool(answer), "question": text if show_user else ""})
     return True
 
 
@@ -901,9 +957,50 @@ def case_header(stats: dict, findings: list, notes: dict):
                     (f"🗂️ dossier {notes['created_at'][11:16]} UTC" if notes else "no dossier yet"))
 
 
+def note_cb(kind: str, feedback_id: int = None):
+    try:
+        if kind == "add":
+            entry = feedback.add_note(st.session_state.get("note_text", ""))
+            st.session_state.note_text = ""
+            st.session_state.note_message = f"✅ Note {entry['feedback_id']} added: the copilot takes it as given."
+        else:
+            feedback.withdraw(feedback_id)
+            st.session_state.note_message = f"Note {feedback_id} withdrawn."
+    except feedback.FeedbackError as e:
+        st.session_state.note_message = f"❌ {e}"
+
+
+def confirm_cb(finding_id: str):
+    try:
+        found = feedback.confirm_finding(finding_id)
+    except feedback.FeedbackError as e:
+        st.session_state.note_message = f"❌ {e}"
+        return
+    st.session_state.chat_history.append(HumanMessage(
+        content=f"[Investigator] Confirmed finding {found['finding_id']} ('{found['title']}') after checking its records."))
+
+
 def findings_view(stats: dict, findings: list, notes: dict):
-    """The case dossier and every finding with its records; retracting is the investigator's call."""
+    """Investigator notes, the case dossier, and every finding with its records; confirming and retracting are
+    the investigator's call."""
     action = None
+    rows = feedback.notes()
+    st.subheader(f"📝 Investigator notes · {len(rows)}")
+    st.caption("Facts and corrections the copilot takes as given in this case, above the dossier and its own "
+               "answers. Also `/note <text>` in the chat, or 👎 under an answer.")
+    for r in rows:
+        c1, c2 = st.columns([12, 1])
+        c1.markdown(f"**{r['feedback_id']}** · {citations.md_literal(r.get('actor') or 'investigator')}: "
+                    f"{citations.md_literal(r['comment'])}")
+        c2.button("✖", key=f"note_rm_{r['feedback_id']}", on_click=note_cb, args=("remove", r["feedback_id"]),
+                  help="Withdraw this note")
+    c1, c2 = st.columns([6, 1])
+    c1.text_input("New note", key="note_text", label_visibility="collapsed",
+                  placeholder="A fact or correction, e.g. 'the 10.0.0.5 logons are the admin's own VPN'")
+    c2.button("Add note", key="note_add", on_click=note_cb, args=("add",))
+    if st.session_state.get("note_message"):
+        st.caption(st.session_state.note_message)
+
     st.subheader("🗂️ Case dossier")
     if notes:
         st.caption(f"Written {notes['created_at'][:16].replace('T', ' ')} UTC by "
@@ -927,12 +1024,19 @@ def findings_view(stats: dict, findings: list, notes: dict):
     clock = report.Clock(case_config.clock_offset_minutes)
     st.dataframe([{"#": n, "UTC": clock.corrected(f["timestamp_utc"]), "Recorded": clock.recorded(f["timestamp_utc"]),
                    "Finding": f["title"], "Confidence": f["confidence"] or "", "MITRE": f["mitre_technique"] or "",
-                   "Records": len(json.loads(f["evidence_ids"] or "[]")), "Imported from": f.get("origin") or "",
-                   "ID": f["finding_id"]} for n, f in enumerate(findings, 1)],
+                   "Records": len(json.loads(f["evidence_ids"] or "[]")), "Confirmed by": f.get("confirmed_by") or "",
+                   "Imported from": f.get("origin") or "", "ID": f["finding_id"]} for n, f in enumerate(findings, 1)],
                  hide_index=True, width="stretch")
     for n, f in enumerate(findings, 1):
-        with st.expander(f"{n}. {citations.md_literal(f['title'])}", expanded=False):
+        with st.expander(f"{n}. {'✅ ' if f.get('confirmed_by') else ''}{citations.md_literal(f['title'])}",
+                         expanded=False):
             st.markdown(citations.md_literal(f["description"] or ""))
+            if f.get("confirmed_by"):
+                st.caption(f"✅ Confirmed by {citations.md_literal(f['confirmed_by'])}")
+            else:
+                st.button("✅ Confirm: I checked its records", key=f"confirm_{f['finding_id']}", on_click=confirm_cb,
+                          args=(f["finding_id"],), help="The copilot then treats it as established, and the report "
+                                                        "says who confirmed it.")
             found = citations.cited(" ".join(json.loads(f["evidence_ids"] or "[]")), case_db, case_config)
             if found["evidence"]:
                 st.table([{k: citations.md_literal(v) for k, v in row.items()} for row in found["evidence"]])

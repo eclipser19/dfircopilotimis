@@ -79,6 +79,17 @@ measurement ahead of new agent behaviour. Fixed right after it:
 
 Still open from the review: steps 6 and 8 below (step 2 is done).
 
+## Where it stands (handover)
+
+The copilot investigates a disk and memory image end to end, writes a case dossier, answers questions
+from it with cited records, and builds the report; several investigators share one server with
+per-case and per-evidence access. Benchmarks: DC 83-91%, Injector 71%, OU ~50% (before the dossier).
+From here, improvement comes from use, not from tuning on the benchmarks: analysts correct answers,
+add notes and confirm findings (`copilot/feedback.py`), the copilot takes those as given in the case,
+and `python -m copilot.feedback export` hands everything they said to whoever improves the knowledge
+and prompts (CONTRIBUTING, "Learning from analysts"). Re-run a benchmark (`--from-case`, ~10 min) after
+a change to the agent, to check nothing broke.
+
 ## Next steps, most valuable first
 
 1. ~~**Reproducible baseline.**~~ Done: CI on Python 3.10-3.12, a test that fails on tracked keys,

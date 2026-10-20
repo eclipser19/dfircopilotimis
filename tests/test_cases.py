@@ -4,6 +4,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 import copilot.database as database
+from copilot.database import case_db
 from copilot import cases, commands, tools
 from copilot.agent import run_turn
 from copilot.case_config import case_config
@@ -180,6 +181,35 @@ def test_cli_keeps_a_chat_per_case(two_cases, monkeypatch, capsys):
     assert [m["content"] for m in beta_ui][:2] == ["first beta question", "answer to: first beta question"]
     assert "first beta question" in [m.content for m in beta_history]
     assert [m["content"] for m in alpha_ui] == ["alpha question", "answer to: alpha question"]
+
+
+def test_cli_rates_the_last_answer_of_the_case_it_was_given_in(two_cases, monkeypatch, capsys):
+    import builtins
+    import copilot.llm
+    from copilot import agent
+
+    class FakeLLM:
+        def bind_tools(self, tools, **kw):
+            return self
+
+        def invoke(self, history):
+            return AIMessage(content=f"answer to: {history[-1].content}")
+
+    monkeypatch.setattr(copilot.llm, "make_llm", lambda key=None: FakeLLM())
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    cases.switch("beta")
+    cases.consume_switch()
+    inputs = iter(["/good", "who got in?", "/wrong", "/wrong it was the VPN user, not the attacker",
+                   "/case alpha", "/good", "exit"])
+    monkeypatch.setattr(builtins, "input", lambda prompt="": next(inputs))
+    agent.run_agent_loop()
+    out = capsys.readouterr().out
+    assert out.count("No answer to rate yet.") == 2                   # before any answer, and after switching
+    assert "Usage: /wrong <what is right>" in out and "the copilot takes this as given" in out
+    cases.switch("beta")
+    [entry] = case_db.get_feedback()
+    assert entry["question"] == "who got in?" and entry["comment"] == "it was the VPN user, not the attacker"
+    cases.consume_switch()
 
 
 def test_a_case_keeps_its_data_in_its_own_folder_and_old_data_can_be_moved(tmp_path, monkeypatch):

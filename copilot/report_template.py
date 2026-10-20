@@ -64,10 +64,10 @@ REPORT_TEMPLATE = """# Digital Forensics & Incident Response Report
 ## 3. Findings Overview
 
 {% if findings %}
-| # | UTC | Recorded | Finding | Confidence | MITRE |
-|---|---|---|---|---|---|
+| # | UTC | Recorded | Finding | Confidence | MITRE | Confirmed |
+|---|---|---|---|---|---|---|
 {% for f in findings %}
-| {{ f.number }} | {{ f.time | utc }} | {{ f.time | rec }} | {{ f.title | md }} | {{ (f.confidence or "—") | md }} | {{ (f.mitre_technique or "—") | md }} |
+| {{ f.number }} | {{ f.time | utc }} | {{ f.time | rec }} | {{ f.title | md }} | {{ (f.confidence or "—") | md }} | {{ (f.mitre_technique or "—") | md }} | {{ "✔" if f.confirmed_by else "—" }} |
 {% endfor %}
 
 A finding's time is the earliest timestamp of the first (primary) record it cites.
@@ -121,6 +121,8 @@ Every timestamp of the records cited by findings{% if has_scope %}, inside the i
 - **Time:** no timestamp in the cited evidence
 {% endif %}
 - **Confidence:** {{ (f.confidence or "—") | md }}
+- **Review:** {% if f.confirmed_by %}confirmed by {{ f.confirmed_by | md }}{% else %}not confirmed by an investigator{% endif %}
+
 {% if f.origin %}
 - **Imported from:** {{ f.origin | md }} (copied with its evidence; review it for this case)
 {% endif %}

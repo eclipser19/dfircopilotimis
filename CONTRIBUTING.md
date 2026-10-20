@@ -75,6 +75,18 @@ through `approvals.gate(kind, ...)`. Add a test.
 - The Velociraptor API user should have the `investigator` role: it is the real safety net behind
   the copilot's own artifact allowlist.
 
+## Learning from analysts
+
+Analysts correct answers, add notes and confirm findings as they work (README, "Teaching the copilot").
+`python -m copilot.feedback export` gathers all of it from every case on the server. Use it like this:
+- A correction that repeats across cases means the knowledge is missing or wrong: fix the playbook,
+  the artifact tip or the prompt rule (generic wording only), or accept the matching lesson.
+- A corrected answer with checked records is a ready benchmark question: put the question and the
+  corrected facts into a case's `benchmark.yaml`, with the records as evidence in its `answer_key.md`.
+- Answers marked right are regression checks: a change that breaks them needs a reason.
+- Confirmed findings show what analysts trust; retracted ones (with their reasons) show what misleads.
+Never copy a case's facts (names, addresses, hashes) into knowledge, prompts or lessons.
+
 ## Benchmarks and answer keys
 
 A benchmark is a folder `cases/<name>/` with:

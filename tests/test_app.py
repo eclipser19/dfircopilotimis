@@ -147,6 +147,47 @@ def test_without_a_dossier_the_investigation_is_offered_not_forced(app_env):
     assert "No case dossier yet" not in _texts(at)
 
 
+def test_investigators_correct_answers_and_the_copilot_takes_it_as_given(app_env):
+    app_env.ingest_artifact_results([{"Message": "x"}], "S", "D", CLIENT)
+    at = AppTest.from_file(APP, default_timeout=30)
+    llm = ScriptedLLM(AIMessage(content="The dropper owns the C2 connection."), AIMessage(content="RDP after guessing."))
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    at.chat_input[0].set_value("What does memory show?").run()
+    next(b for b in at.button if b.key == "fb_down_1").click().run()
+    next(b for b in at.button if b.key == "fb_save_1").click().run()                  # no correction given
+    assert "Say what is wrong or what is right" in _texts(at)
+    at.text_area(key="fb_text_1").input("The C2 connection belongs to the injected spoolsv.exe.")
+    at.checkbox(key="fb_lesson_1").check().run()
+    next(b for b in at.button if b.key == "fb_save_1").click().run()
+    assert not at.exception
+    assert "The copilot takes this as given in this case from now on" in _texts(at)
+    assert "Not saved as a lesson" in _texts(at)                                       # no topic given
+    assert "injected spoolsv.exe" in at.session_state["chat_history"][0].content     # in the next answers' prompt
+    assert app_env.get_feedback()[0]["question"] == "What does memory show?"
+    at.chat_input[0].set_value("How did they get in?").run()
+    next(b for b in at.button if b.key == "fb_up_3").click().run()
+    assert "👍 Marked right" in _texts(at) and [r["rating"] for r in app_env.get_feedback()] == [-1, 1]
+
+
+def test_notes_and_confirmed_findings_in_the_findings_tab(app_env):
+    app_env.ingest_artifact_results([{"EventTime": "2020-09-19T03:42:42Z", "Message": "service updater"}],
+                                    "S", "D", CLIENT)
+    eid = app_env.query_timeline()["events"][0]["evidence_id"]
+    fid = app_env.record_finding("Service updater installed", "d", [eid], "medium")
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.text_input(key="note_text").input("The admin's VPN address is 10.0.0.5.")
+    next(b for b in at.button if b.key == "note_add").click().run()
+    assert not at.exception and "Note 1 added" in _texts(at)
+    assert "admin's VPN address" in at.session_state["chat_history"][0].content
+    next(b for b in at.button if b.key == f"confirm_{fid}").click().run()
+    assert app_env.get_findings()[0]["confirmed_by"].startswith("investigator (")
+    assert at.dataframe[0].value["Confirmed by"].tolist()[0].startswith("investigator (")
+    next(b for b in at.button if b.key == "note_rm_1").click().run()
+    assert "admin's VPN address" not in at.session_state["chat_history"][0].content
+
+
 def test_agent_collection_waits_for_approval(app_env):
     app_env.ingest_artifact_results([{"Message": "x"}], "S", "D", "C.1")
     at = AppTest.from_file(APP, default_timeout=30)

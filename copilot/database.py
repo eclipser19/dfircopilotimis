@@ -133,6 +133,19 @@ class CaseDatabase:
 
             CREATE TABLE IF NOT EXISTS conversation (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT);
 
+            -- What investigators told the copilot (copilot/feedback.py): notes, corrections, ratings.
+            CREATE TABLE IF NOT EXISTS feedback (
+                feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at  TEXT,
+                actor       TEXT,
+                kind        TEXT,          -- note | answer | dossier
+                rating      INTEGER,       -- 1 right, -1 wrong, 0 no rating (a note)
+                question    TEXT,
+                answer      TEXT,
+                comment     TEXT,          -- the note or correction: what the agent takes as given
+                active      INTEGER DEFAULT 1
+            );
+
             -- The case dossier written by an investigation turn (copilot/dossier.py); the latest counts.
             CREATE TABLE IF NOT EXISTS dossiers (
                 dossier_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,6 +185,9 @@ class CaseDatabase:
         # Added with case sharing: the case a finding was copied from (cases.copy_data).
         if "origin" not in cols:
             cur.execute("ALTER TABLE findings ADD COLUMN origin TEXT")
+        # Added with feedback: the investigator who checked the finding's records and confirmed it.
+        if "confirmed_by" not in cols:
+            cur.execute("ALTER TABLE findings ADD COLUMN confirmed_by TEXT")
         # Added with sign-in: who was working when the entry was written.
         if "actor" not in {r[1] for r in cur.execute("PRAGMA table_info(audit_log)")}:
             cur.execute("ALTER TABLE audit_log ADD COLUMN actor TEXT")
@@ -401,6 +417,16 @@ class CaseDatabase:
             return {}
         return rows[0]
 
+    def confirm_finding(self, finding_id: str, by: str) -> dict:
+        """An investigator checked the finding's records and agrees: recorded with who and when."""
+        found = self.find_finding(finding_id)
+        if found:
+            when = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+            self.conn.execute("UPDATE findings SET confirmed_by = ? WHERE finding_id = ?",
+                              (f"{by or 'investigator'} ({when} UTC)", found["finding_id"]))
+            self.conn.commit()
+        return found
+
     def retract_finding(self, finding_id: str, reason: str) -> dict:
         found = self.find_finding(finding_id)
         if found:
@@ -468,6 +494,25 @@ class CaseDatabase:
         cur = self.conn.cursor()
         cur.execute("SELECT * FROM collections ORDER BY requested_at ASC")
         return [dict(r) for r in cur.fetchall()]
+
+    # --- Feedback (copilot/feedback.py) ---
+    def add_feedback(self, kind: str, rating: int = 0, comment: str = "", question: str = "", answer: str = "") -> dict:
+        from copilot import session
+        cur = self.conn.execute(
+            "INSERT INTO feedback (created_at, actor, kind, rating, question, answer, comment, active) "
+            "VALUES (?,?,?,?,?,?,?,1)", (datetime.now(timezone.utc).isoformat(), session.current_user(), kind,
+                                         int(rating), question or "", answer or "", (comment or "").strip()))
+        self.conn.commit()
+        return dict(self.conn.execute("SELECT * FROM feedback WHERE feedback_id = ?", (cur.lastrowid,)).fetchone())
+
+    def get_feedback(self, include_withdrawn: bool = False) -> list:
+        where = "" if include_withdrawn else "WHERE active = 1"
+        return [dict(r) for r in self.conn.execute(f"SELECT * FROM feedback {where} ORDER BY feedback_id")]
+
+    def withdraw_feedback(self, feedback_id: int) -> bool:
+        cur = self.conn.execute("UPDATE feedback SET active = 0 WHERE feedback_id = ? AND active = 1", (int(feedback_id),))
+        self.conn.commit()
+        return bool(cur.rowcount)
 
     # --- Case dossier ---
     def save_dossier(self, text: str, steps: int = 0, tokens: int = 0) -> dict:

@@ -191,5 +191,5 @@ def time_check_note(mismatches: list) -> str:
     lines = [f"- recorded {m['time']} is not a time of the records cited with it ("
              + "; ".join(f"`{k}`: {', '.join(v)}" for k, v in m["cited"].items())
              + f"): \"{m['line'][:100]}\"" for m in mismatches[:20]]
-    return ("\n\n## Time check (automatic, no model)\nThese times do not match the records cited next to them. "
-            "Use the record's own time (and its true UTC) before quoting them:\n" + "\n".join(lines))
+    return ("\n\n## Time check (automatic, no model)\nThese times are not held by the records cited on the same line. "
+            "Check each before quoting it: it may belong to another record, or be shifted:\n" + "\n".join(lines))

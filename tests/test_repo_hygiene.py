@@ -13,7 +13,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Files that hold secrets, accounts or evidence: they belong next to the code, never in Git.
 NEVER_TRACKED = ["api_client.yaml", "server.yaml", "auth.yaml", "learned_knowledge.yaml", ".streamlit/secrets.toml",
                  "*.writeback.yaml", "*.config.yaml", "*.pem", "*.key", ".env", "case_data/*", "cases/*/data/*",
-                 "benchmark_results/*", "*.db", "*.db-wal", "*.E0[0-9]", "*.ad1", "*.mem", "*.vmem", "*.dmp",
+                 "benchmark_results/*", "feedback_exports/*", "*.db", "*.db-wal", "*.E0[0-9]", "*.ad1", "*.mem", "*.vmem", "*.dmp",
                  "imagetest/*"]
 SECRET_TEXT = [
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "a private key"),

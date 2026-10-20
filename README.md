@@ -177,6 +177,29 @@ get onto this machine?" → initial access; "which process owned the connection?
 to the agent with that playbook and its lessons attached, so it follows them without having to
 look them up. The chat still shows what you typed. Add or tune triggers in the YAML file.
 
+## Teaching the copilot as you use it
+
+Every answer can be corrected, and the copilot keeps what it is told:
+
+- **👍 / 👎 under each answer** (and under the dossier). 👎 asks what is wrong and what is right; that
+  correction becomes a **note** of the case. CLI: `/good`, `/wrong <what is right>` rate the last answer.
+- **Notes** (🚩 Findings & dossier tab, or `/note <text>`, `/notes`, `/notes remove <n>` in the chat):
+  facts and corrections the copilot takes as given in this case. Every conversation and investigation
+  of the case gets them, above the dossier; when evidence contradicts one, the copilot says so instead
+  of overriding it. "Investigate again" builds the next dossier on them. Other members of the case get
+  them with their next question.
+- **Confirm a finding** (✅ in its row) once you have checked its records: the copilot treats it as
+  established, and the report shows who confirmed each finding ("Review" line, "Confirmed" column).
+  Retract the ones the data contradicts.
+- **A correction that holds for every case** (how to read an artifact or a kind of record, never a fact
+  of this case) can also be proposed as a lesson from the 👎 form; an admin accepts it (see below).
+- **For whoever improves the copilot**: `python -m copilot.feedback list` (counts per case) and
+  `python -m copilot.feedback export` write every note, rating and confirmed finding, with its question
+  and answer, to `feedback_exports/` (git-ignored: answers quote evidence). Corrected answers are the
+  best source of new benchmark questions and of fixes to playbooks and prompts (see CONTRIBUTING).
+
+Everything is written to the case's audit log with who did it.
+
 ## Lessons learned
 
 The agent improves its own knowledge, with a person in the loop. When it has verified

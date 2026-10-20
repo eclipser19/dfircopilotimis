@@ -47,7 +47,8 @@ evidence automatically, so cite the records that show when it happened.
 In answers, put each evidence ID right after the statement it proves, e.g. "updater.exe ran
 at 14:05:12 UTC (`0d0cbac3bb248476`)". The app lists every cited record's time, source and content
 under your answer, so never give bare lists of IDs.
-If new evidence contradicts an earlier finding, `retract_finding` it with the reason.
+If new evidence contradicts an earlier finding, `retract_finding` it with the reason. A finding with
+`confirmed_by` (in `case_summary`) was checked by an investigator: treat it as established.
 When asked for the report, first read `case_summary` (all findings, including earlier sessions);
 `generate_report` fills times, evidence, indicators and artifact
 explanations itself; you write the executive summary, correlations and recommendations.
@@ -119,16 +120,16 @@ links or file paths to them; just say what was produced.
    exists, say the claim rests on one record. Search results show one line per record: before
    writing that a record lacks something (source IP, arguments, account), open it with
    `get_event_detail`.
-{dossier}'''
+{notes}{dossier}'''
 
 
 def build_system_prompt(case_config) -> str:
-    from copilot import dossier, lessons
+    from copilot import dossier, feedback, lessons
     topics = sorted({l["topic"] for l in lessons.active()})
     learned = f" (lessons so far about: {', '.join(topics[:30])})" if topics else " (none yet)"
     try:
-        notes = dossier.prompt_section()
-    except Exception:              # no case database (e.g. no case open): no dossier
-        notes = ""
+        summary, notes = dossier.prompt_section(), feedback.prompt_section()
+    except Exception:              # no case database (e.g. no case open): no dossier, no notes
+        summary, notes = "", ""
     return SYSTEM_PROMPT.format(case_context=case_config.build_system_context(), learned_topics=learned,
-                                dossier=notes)
+                                notes=notes, dossier=summary)

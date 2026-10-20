@@ -42,6 +42,7 @@ learned_knowledge.yaml
 # Benchmark runs (cases/bench-*/, data included, and their results)
 cases/bench-*/
 benchmark_results/
+feedback_exports/
 
 # Evidence images kept next to the code (never commit evidence)
 imagetest/
