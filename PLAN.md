@@ -89,7 +89,7 @@ Still open from the review: steps 6 and 8 below (step 2 is done).
 
 The copilot investigates a disk and memory image end to end, writes a case dossier, answers questions
 from it with cited records, and builds the report; several investigators share one server with
-per-case and per-evidence access. Benchmarks: DC 83-91%, Injector 71%, OU ~50% (before the dossier);
+per-case and per-evidence access. Benchmarks: DC 83-100% (100% with the session leads and the MFT check), Injector 71%, OU ~50% (before the dossier);
 on CorporateSecrets 60.7% blind (the honest estimate for a new kind of case), 82.1% after generic fixes
 for its misses.
 From here, improvement comes from use, not from tuning on the benchmarks: analysts correct answers,
@@ -146,7 +146,7 @@ a change to the agent, to check nothing broke.
      the same image with `--from-case <that run's case>` (done: only its triage is copied).
    - ~~Run CorporateSecrets once, blind.~~ Done: 60.7% (BENCHMARKS.md). Its misses led to generic fixes,
      so no blind benchmark is left: an unbiased number now needs a new image.
-5. ~~**More leads in code.**~~ Done, not yet measured:
+5. ~~**More leads in code.**~~ Done:
    - Files whose content is not their name, web searches and YouTube videos (with the CorporateSecrets
      fixes).
    - What each session did, from logon to logoff: events carrying its logon ID (4688 processes, tasks,
@@ -158,7 +158,9 @@ a change to the agent, to check nothing broke.
      touched (`copilot/checks.py`): the DC's timestomp no longer depends on the model picking the file.
    - Autostart entries that point into user folders or through scripting tools (with the services and
      tasks leads: persistence that differs from the operating system's own).
-   - Next run to watch: the DC's *anti_forensics* question (the timestomp was missed in the last two runs).
+   - Measured: DC 100.0% (20261021-094310), the timestomp found again after two misses.
+   - Open, from that run: the scorer credited a fact the answer hedged (negation more than 40 characters
+     before the matched words). Step 4's negation check would make the score strict.
 6. ~~**Durable investigations.**~~ Done:
    - Questions, the investigation, the triage and decided approvals run as jobs in a thread pool of
      the server (`copilot/jobs.py`), not in the page: a reload, a closed tab or another computer

@@ -45,6 +45,7 @@ with the rows below.
 | 20261020-104949 | 87.0% | 11/13 | 9/10 | 4.5 | With the investigation reaching every phase (`fe4f8be`): the dossier now had the file access, timestomp candidates and the RDP to the workstation, in 6 steps (320k tokens). Same score as 091413, but 1.18M tokens in (was 1.66M) and 4.5 min (6.1; 9.4 without a dossier): *entry* answered from the dossier with one tool call (27k tokens). Same two misses (`secret.zip`, `spoolsv.exe`). The dossier (12,791 characters) was cut at 12,000 in the prompts, and it shifted one time by an hour (the RDP to the workstation as 03:36:23 UTC; the *lateral* answer had it right, 02:36:23). Fixed next: copy times from the tools, 16,000-character prompt limit |
 | 20261020-124851 | 82.6% | 11/13 | 8/10 | 4.8 | `526db25`, from 104949's triage (no Velociraptor wait). *memory* found the injected `spoolsv.exe` this time; *anti_forensics* missed the timestomp (it checked the shortcut files' MFT records, not the file's). Variance in both directions. 1.10M tokens in |
 | 20261021-082137 | 91.3% | 12/13 | 9/10 | 6.1 | `e76f1ba`, from 124851's triage plus the new triage entries (SAM, the user-folder listing, the file-type scan: 0 rows, probably no user file with a time in the window (it scans only those); the USN journal filtered to archives: 27 rows). *data* found `secret.zip` with its time, from the triage's USN rows (every run before missed it); *memory* named the injected `spoolsv.exe` again. *anti_forensics* missed the timestomp again: it checked the malware's MFT record, not the secret file's. 1.34M tokens in |
+| 20261021-094310 | **100.0%** (95.7% strictly) | 13/13 | 10/10 | 6.1 | `b711a93` (the session, timestamp and autostart leads, and the code's MFT check before the investigation), from 082137's triage. First full DC score. *anti_forensics* found the timestomp on `Beth_Secret.txt` (missed in the two runs before): its MFT record ($SI created at whole seconds, before $FN) was in the case before the question asked anything, and the dossier already had it as a finding; the code's check reads the MFT records of the files the sessions to check touched. *data* and *end* used `session_activity`. One generous credit: *memory*'s `spoolsv.exe` fact, where the answer names `spoolsv.exe` holding the C2 address but calls injection undetermined (95.7% without it; the scorer's negation check only looks 40 characters back). The dossier shifted one time by an hour (the outbound RDP as 03:36:23 UTC) and its time check flagged it; the *lateral* answer had it right. 1.19M tokens in |
 
 ### injector
 
@@ -97,6 +98,10 @@ Scores on the **current key (49 facts)**; the score each run got on the key of i
   before analysts' notes and corrections. Generic fixes for those misses (files in user folders and
   their types, decoded web searches, an account-usage playbook) took it to 82.1%, and gave the DC the
   archive no run had found before: what the triage collects decides most of the score.
+- Misses that came and went between runs stopped when code, not the model, decides what is looked at:
+  the archive only in the USN journal (a filtered USN collection in the triage), the timestomp (the MFT
+  records of every file the sessions touched, read before the investigation). DC 100% (094310) after
+  both; prompt wording alone never held for long.
 - On a large server image (OU, ~270,000 logon events) the agent stays near 50%. It loses most on
   the entry and ransomware questions, where it has to pick the right few events out of hundreds
   of thousands. That is what the leads in `case_summary` (logons grouped per source address,
