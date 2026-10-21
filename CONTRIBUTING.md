@@ -75,6 +75,10 @@ through `approvals.gate(kind, ...)`. Add a test.
   (all git-ignored).
 - The Velociraptor API user should have the `investigator` role: it is the real safety net behind
   the copilot's own artifact allowlist.
+- **Work that takes long runs as a job.** In the app, anything that calls the model or Velociraptor
+  goes through `copilot/jobs.py` (a handler in `HANDLERS`), not the page script: the page only
+  submits and follows. A job writes the conversation through `copilot/conversation.py`, never
+  Streamlit state, and must be safe to run again (reuse what an earlier run already started).
 
 ## Learning from analysts
 

@@ -8,9 +8,15 @@ work on different cases at the same time.
 
 `copilot.case_config.case_config` and `copilot.database.case_db` are views of the current
 session's case, so the rest of the code uses them exactly as before.
+
+Background work (copilot/jobs.py) runs on a fork of the session that asked for it: the same case
+and settings, its own database connection, set for its thread with `use()`. The page can switch
+its own case meanwhile without moving the work.
 """
+import copy
 import os
 import threading
+from contextlib import contextmanager
 
 
 class NoCase(Exception):
@@ -65,6 +71,16 @@ class Session:
         if self.config is not None:
             self._mtime = _mtime(self.config.path)
 
+    def fork(self) -> "Session":
+        """A twin on the same case for work in another thread: the same settings, its own connection."""
+        from copilot.database import CaseDatabase
+        twin = Session(self.user)
+        twin.config = copy.copy(self.config)      # switching one does not move the other
+        twin.db = CaseDatabase(self.db.case_dir)
+        twin.report_formats = self.report_formats
+        twin._mtime = self._mtime
+        return twin
+
 
 def _mtime(path: str):
     try:
@@ -80,6 +96,18 @@ PROVIDER = None
 
 _default = None
 _lock = threading.Lock()
+_thread = threading.local()         # a session set for one thread (use()), before PROVIDER and the default
+
+
+@contextmanager
+def use(session: Session):
+    """Runs the block (in this thread) on `session`."""
+    previous = getattr(_thread, "session", None)
+    _thread.session = session
+    try:
+        yield session
+    finally:
+        _thread.session = previous
 
 
 def default() -> Session:
@@ -95,6 +123,9 @@ def default() -> Session:
 
 
 def current() -> Session:
+    local = getattr(_thread, "session", None)
+    if local is not None:
+        return local
     if PROVIDER is not None:
         session = PROVIDER()
         if session is not None:

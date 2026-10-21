@@ -970,3 +970,43 @@ def test_typed_questions_carry_the_playbook_but_show_as_typed(app_env):
     sent = [m.content for m in at.session_state["chat_history"] if m.type == "human"][-1]
     assert "[Copilot] Playbook" in sent and "EvidenceOfDownload" in sent
     assert "[Copilot] Playbook" not in _texts(at)                 # the chat shows what you typed
+
+
+def test_a_reloaded_page_follows_the_job_that_is_still_running(app_env):
+    import threading
+    from copilot import jobs
+    gate = threading.Event()
+
+    class Slow(ScriptedLLM):
+        def invoke(self, history):
+            gate.wait(10)
+            return super().invoke(history)
+
+    jobs.submit("ask", {"text": "a long question"}, Slow(AIMessage(content="Finished while you were away.")), None)
+    threading.Timer(0.5, gate.set).start()
+    at = AppTest.from_file(APP, default_timeout=30).run()        # the page opened again while it runs
+    assert not at.exception
+    assert "Finished while you were away." in _texts(at) and "a long question" in _texts(at)
+    assert jobs.active() == {}
+
+
+def test_work_a_stopped_server_was_doing_can_be_continued(app_env):
+    import json
+    from langchain_core.messages import HumanMessage
+    from copilot import conversation, jobs
+    conversation.save(cases.current_id(), [{"role": "user", "content": "who logged on?"}],
+                      [HumanMessage(content="who logged on?")])
+    app_env.conn.execute("INSERT INTO jobs (job_id, kind, user, label, state, payload, process, created_at) VALUES "
+                         "('J.old', 'ask', '', ?, 'running', ?, 'gone', '2026-10-21T00:00:00Z')",
+                         (jobs.LABELS["ask"], json.dumps({"text": "who logged on?"})))
+    app_env.conn.commit()
+    at = AppTest.from_file(APP, default_timeout=30)
+    llm = ScriptedLLM(AIMessage(content="Resumed: alice."))
+    at.session_state["llm_with_tools"] = llm
+    at.session_state["finalizer"] = llm
+    at.run()
+    assert "Your question did not finish" in _texts(at) and jobs.get("J.old")["state"] == "interrupted"
+    next(b for b in at.button if b.key == "job_retry").click().run()
+    assert not at.exception
+    assert "Resumed: alice." in _texts(at) and "did not finish" not in _texts(at)
+    assert [m.content for m in at.session_state["chat_history"][1:3]] == ["who logged on?", jobs.RESUME]

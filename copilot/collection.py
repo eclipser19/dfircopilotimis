@@ -508,6 +508,28 @@ def check_agent_request(artifact: str, params: dict):
                 f"minutes around an event. Patterns that match everything don't count.")
 
 
+def same_collection(artifact: str, params: dict) -> dict:
+    """
+    An earlier collection of this artifact with these parameters on the case's client that is still running,
+    returned rows, or was not read to the end ({} if none). Collecting it again would repeat Velociraptor's
+    work for the same rows (a retried job, a repeated request), so its flow is used instead. One that
+    returned nothing or failed is run again: the image or its mapping may have changed since.
+    """
+    wanted, client = encode_params(params), case_config.client_id.lower()
+    for c in reversed(case_db.get_collections()):
+        if c.get("artifact") != artifact or (c.get("client_id") or "").lower() != client:
+            continue
+        try:
+            if json.loads(c.get("parameters") or "{}") != wanted:
+                continue
+        except ValueError:
+            continue
+        if c.get("state") == "RUNNING" or (c.get("state") == "FINISHED" and
+                                           (not c.get("ingested") or (c.get("rows_ingested") or 0) > 0)):
+            return c
+    return {}
+
+
 def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=None,
             sleep=time.sleep, requested_by: str = "investigator") -> dict:
     """
@@ -523,7 +545,8 @@ def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=No
         params = check_parameter_names(artifact, params, specs)
     params = csv_parameters(params, specs)
     params, window = with_time_window(artifact, params, vql, specs)
-    if requested_by == "agent":
+    reused = same_collection(artifact, params)
+    if requested_by == "agent" and not reused:          # reading an earlier flow changes nothing: no approval
         # The investigator approves (or the case allows) agent collections before anything runs.
         # Requests approved later (Streamlit) are run by approvals.execute as the investigator's.
         from copilot import approvals
@@ -534,7 +557,7 @@ def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=No
         except approvals.ApprovalError as e:
             raise CollectionError(str(e))
     wait = case_config.collection_wait_seconds if wait_seconds is None else wait_seconds
-    flow_id = schedule(artifact, params, vql)
+    flow_id = reused.get("flow_id") or schedule(artifact, params, vql)
 
     deadline = time.monotonic() + wait
     while True:
@@ -546,4 +569,9 @@ def collect(artifact: str, params: dict = None, wait_seconds: int = None, vql=No
     summary = _finish(flow_id, status, vql)
     if window:
         summary["time_window_applied"] = {name: params[name] for name in window}
+    if reused:
+        earlier = summary.get("note") if summary.get("note") != "Already ingested earlier." else ""
+        summary["reused"] = True
+        summary["note"] = (f"The same collection ran before ({flow_id}, asked {str(reused.get('requested_at'))[:19]} "
+                           f"UTC): its results are used, nothing was collected again." + (f" {earlier}" if earlier else ""))
     return summary

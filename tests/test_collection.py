@@ -248,3 +248,15 @@ def test_a_disabled_function_the_artifact_does_without_is_not_blamed(case):
     summary = collection.collect("Windows.Timeline.Prefetch",
                                  vql=FakeVQL(rows={}, reported_rows=0, flow_logs=logs), sleep=lambda s: None)
     assert "running system" not in summary.get("note", "") and "0 rows" in summary["note"]
+
+def test_the_same_collection_again_reuses_its_flow_without_asking(case, monkeypatch):
+    vql = FakeVQL(unique_flows=True)
+    first = collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None)
+    again = collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None)
+    assert again["flow_id"] == first["flow_id"] and again["reused"]
+    assert "nothing was collected again" in again["note"]
+    assert sum("collect_client" in q for q, _ in vql.calls) == 1
+    # The agent asking for it again needs no approval: nothing new runs (no approval channel here at all).
+    assert collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None, requested_by="agent")["reused"]
+    other = collection.collect("Generic.Client.Info", {"Extra": "1"}, vql=vql, sleep=lambda s: None)
+    assert other["flow_id"] != first["flow_id"] and not other.get("reused")

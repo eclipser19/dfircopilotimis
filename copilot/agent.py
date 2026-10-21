@@ -144,7 +144,7 @@ def run_agent_loop():
         from copilot import config_check
         for problem in config_check.case_problems(case_config):
             print(f"[!] case settings: {problem}")
-        state["ui"], history = conversation.load(state["case"], build_system_prompt(case_config))
+        state["ui"], history = conversation.begin(state["case"], build_system_prompt(case_config))
         chat_history[:] = history
         if len(history) > 1:
             print(f"[*] Restored the conversation of case '{state['case']}' ({len(state['ui'])} messages). "
@@ -418,7 +418,8 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
     """
     One investigator turn: the tool-calling loop within step and token limits, shared by the
     CLI and Streamlit. Progress is reported through emit(kind, payload) with kind in
-    tool | collection | notice | answer | usage. With a `finalizer` (the model without tools)
+    step | tool | collection | notice | answer | usage ("step": a model call is about to start,
+    every earlier step's results are in the history). With a `finalizer` (the model without tools)
     the agent is made to answer at 80% of the token budget instead of stopping with nothing.
     Returns the answer text ("" if none).
     """
@@ -442,6 +443,7 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
                 break
             step_count += 1
             trim_chat_history(chat_history)
+            emit("step", step_count)
 
             response = llm_with_tools.invoke(chat_history)
             usage.add(response, _prompt_chars(chat_history))

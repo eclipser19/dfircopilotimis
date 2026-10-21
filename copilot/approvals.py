@@ -17,10 +17,16 @@ A collection or memory run decided later is bound to the evidence it was asked f
 member changed the case's client or memory image meanwhile, approving it does not run it (it
 would read other evidence than the investigator was shown).
 
+In the web app, requests wait in the case database (queue / pending), so a refresh or a server
+restart loses none; claim() hands each to one decision only, so a double click or two open pages
+never run it twice.
+
 Every request and decision is written to the case's audit log.
 """
 import json
+from datetime import datetime, timezone
 
+from copilot import session
 from copilot.case_config import case_config
 from copilot.database import case_db
 
@@ -172,6 +178,56 @@ def execute(request: dict):
         path = cases.create(**d["kwargs"])
         return f"Created case '{d['kwargs']['case_id']}' at {path}."
     raise ApprovalError(f"Unknown action '{kind}'.")
+
+
+# ---------------------------------------------------------------- requests waiting in the case (web app)
+def queue(request: dict) -> str:
+    """ASK for the web app: the request waits in the case database for its user's decision."""
+    from copilot import jobs
+    cur = case_db.conn.execute(
+        "INSERT INTO approval_requests (user, job_id, kind, summary, details, bound, state, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+        (session.current_user() or "", jobs.current_job_id(), request["kind"], request["summary"],
+         json.dumps(request["details"], default=str), json.dumps(request.get("bound") or {}),
+         datetime.now(timezone.utc).isoformat()))
+    case_db.conn.commit()
+    request["id"] = cur.lastrowid
+    return "queued"
+
+
+def _request(row) -> dict:
+    from copilot import cases
+    return {"id": row["request_id"], "kind": row["kind"], "summary": row["summary"],
+            "details": json.loads(row["details"] or "{}"), "bound": json.loads(row["bound"] or "{}"),
+            "case_id": cases.current_id(), "user": row["user"], "state": row["state"]}
+
+
+def pending(user: str = None, conn=None) -> list:
+    """The case's requests waiting for this user (whose conversation asked), oldest first. `conn`: the case
+    database's connection, if not the current session's (a job whose agent switched cases keeps its own)."""
+    conn = conn or case_db.conn
+    rows = conn.execute("SELECT * FROM approval_requests WHERE state = 'pending' AND user = ? ORDER BY request_id",
+                        (user or "",)).fetchall()
+    return [_request(r) for r in rows]
+
+
+def claim(request_id: int, job_id: str = None, conn=None) -> dict:
+    """The request, now being decided by this job; None if it was decided (or is being decided) already."""
+    conn = conn or case_db.conn
+    cur = conn.execute("UPDATE approval_requests SET state = 'deciding', decide_job = ? "
+                       "WHERE request_id = ? AND state = 'pending'", (job_id, int(request_id)))
+    conn.commit()
+    if not cur.rowcount:
+        return None
+    return _request(conn.execute("SELECT * FROM approval_requests WHERE request_id = ?", (int(request_id),)).fetchone())
+
+
+def finish(request_id: int, state: str, actor: str = None, result=None, conn=None):
+    """Records how a claimed request ended: approved | declined | failed."""
+    conn = conn or case_db.conn
+    conn.execute("UPDATE approval_requests SET state = ?, decided_by = ?, decided_at = ?, result = ? WHERE request_id = ?",
+                 (state, actor, datetime.now(timezone.utc).isoformat(), json.dumps(result, default=str), int(request_id)))
+    conn.commit()
 
 
 def describe(request: dict) -> str:

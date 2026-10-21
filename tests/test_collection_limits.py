@@ -46,8 +46,8 @@ def test_no_window_when_artifact_has_no_date_params_or_disabled(case, monkeypatc
 
     _config(monkeypatch, apply_time_window=False)
     vql = FakeVQL(artifact_params=["DateAfter"])
-    collection.collect("Windows.System.TaskScheduler", vql=vql, sleep=lambda s: None)
-    assert _spec(vql)["Windows.System.TaskScheduler"] == {}
+    collection.collect("Windows.Sys.StartupItems", vql=vql, sleep=lambda s: None)
+    assert _spec(vql)["Windows.Sys.StartupItems"] == {}
 
 
 def test_row_limit_sent_to_velociraptor(case, monkeypatch):
@@ -195,6 +195,7 @@ def test_csv_parameters_get_the_artifacts_header(case, monkeypatch):
     _config(monkeypatch, agent_collections="auto")
     declared = [{"name": "DirectoryPathGlob", "type": "csv", "default": "Path\nC:/Users/*/Downloads/**/*\n"}]
     for given in ("C:/Windows/System32/x.exe", ["C:/Windows/System32/x.exe"]):
+        case.conn.execute("DELETE FROM collections")       # the same request again would reuse the first flow
         vql = FakeVQL(artifact_params=declared)
         collection.collect("Windows.Analysis.EvidenceOfDownload", {"DirectoryPathGlob": given}, vql=vql,
                            requested_by="agent", sleep=lambda s: None)

@@ -157,6 +157,49 @@ class CaseDatabase:
                 tokens     INTEGER
             );
 
+            -- Work the web app runs in the background (copilot/jobs.py): questions, investigations, triage,
+            -- decided approvals. Kept here so a refresh or a server restart loses nothing.
+            CREATE TABLE IF NOT EXISTS jobs (
+                job_id      TEXT PRIMARY KEY,
+                kind        TEXT,          -- ask | investigate | triage | decide
+                user        TEXT,          -- whose conversation it answers in ("" without sign-in)
+                label       TEXT,
+                state       TEXT,          -- queued | running | done | failed | interrupted
+                payload     TEXT,          -- JSON: what to do (enough to run it again)
+                result      TEXT,          -- JSON
+                error       TEXT,
+                process     TEXT,          -- the server process running it (another one = interrupted)
+                created_at  TEXT,
+                started_at  TEXT,
+                finished_at TEXT,
+                seen        INTEGER DEFAULT 0   -- an interrupted or failed job the investigator dismissed
+            );
+            CREATE TABLE IF NOT EXISTS job_events (
+                job_id TEXT,
+                seq    INTEGER,
+                at     TEXT,
+                kind   TEXT,               -- tool | collection | notice | status
+                text   TEXT,
+                PRIMARY KEY (job_id, seq)
+            );
+
+            -- Agent requests waiting for an investigator's decision (copilot/approvals.py).
+            CREATE TABLE IF NOT EXISTS approval_requests (
+                request_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user       TEXT,           -- whose conversation asked
+                job_id     TEXT,           -- the job that asked
+                decide_job TEXT,           -- the job carrying out the decision
+                kind       TEXT,
+                summary    TEXT,
+                details    TEXT,           -- JSON
+                bound      TEXT,           -- JSON: the evidence a collection or memory run was asked for
+                state      TEXT,           -- pending | deciding | approved | declined | failed
+                created_at TEXT,
+                decided_by TEXT,
+                decided_at TEXT,
+                result     TEXT
+            );
+
             -- Evidence files the copilot reads itself (memory images), hashed once per version.
             CREATE TABLE IF NOT EXISTS evidence_files (
                 source     TEXT,          -- memory:<image name>, as in collections.client_id

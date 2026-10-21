@@ -290,6 +290,18 @@ the results by itself (untick "Continue the agent…" to do it yourself). Files 
 also appear in the chat as download buttons: ask e.g. "export the timeline 02:30-03:00 as a file"
 or "give me the full records of the evidence for finding 3".
 
+Long work keeps going without the page. A question, the investigation, the triage and the
+approvals you decided run in the server as a job (`copilot/jobs.py`); the page only shows its
+progress. Reload the page, close the tab or open the case on another computer: the page picks the
+running job up again and shows its progress, and its answer lands in your conversation either
+way. The chat box waits while one of your jobs runs (one at a time per investigator and case;
+other investigators' jobs run alongside). Requests waiting for your approval are kept in the case
+and survive a reload or restart; each is carried out once, however many times it is clicked.
+Stopping the server normally lets running jobs finish first. After a crash or a hard kill, the
+chat says what did not finish, with **↻ Continue**: a question goes on from the conversation as
+saved after its last step, and collections it had started are picked up, not run again (the same
+collection with the same parameters is never scheduled twice while its results are usable).
+
 The agent is told to correlate before it claims: who, from where, that something ran, or that
 one event caused another needs a second record that agrees (a logon's own source IP, the same
 logon ID, path or hash), and it says when a claim rests on one record. A finding recorded as

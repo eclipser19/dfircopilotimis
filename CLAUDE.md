@@ -52,7 +52,8 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 
 | File | What it does |
 |---|---|
-| `app.py` | Streamlit UI: sign-in; sidebar (case picker, new case, approvals, knowledge/lessons); main area = case header + keyed tabs `TABS` (Chat, Findings & dossier, Evidence & data with search, Report & files, Case settings/access/sharing). Buttons that start work call `to_chat`; actions run inside the Chat tab. Every agent turn ends with `st.rerun()` so the header and sidebar show new data and approvals. |
+| `app.py` | Streamlit UI: sign-in; sidebar (case picker, new case, approvals, knowledge/lessons); main area = case header + keyed tabs `TABS` (Chat, Findings & dossier, Evidence & data with search, Report & files, Case settings/access/sharing). Buttons that start work call `to_chat`; in the Chat tab, `start()` submits a job (`copilot/jobs.py`) and `follow()` shows its events until it ends, then `st.rerun()`s. Every run reloads the conversation from the case (`load_chat`), follows the user's running job if any, and offers **Continue** for one a stopped server interrupted. |
+| `copilot/jobs.py` | Durable work for the web app: questions (`ask`), `investigate`, `triage`, `decide` (approvals) run in a thread pool of the server process on a `Session.fork()`; `jobs` / `job_events` tables hold state and progress, the conversation is checkpointed after every agent step. One active job per user and case. `recover()` marks another process's running jobs interrupted (their claimed approvals go back to pending, RUNNING memory flows to ERROR); `retry()` resumes a question from the saved history. Job bookkeeping uses its own connection to the starting case's DB (the agent may switch the job's session to another case). |
 | `main.py` | CLI entry; the loop itself is `agent.run_agent_loop`. |
 | `copilot/agent.py` | Turn loop, token accounting (`TokenUsage`), history trimming/repair, CLI loop. |
 | `copilot/dossier.py` | Investigate once, then answer: one longer turn in its own conversation writes the case dossier (timeline, findings, entities, hypotheses, contradictions, gaps), stored in the `dossiers` table; `prompt_section()` puts the latest into every system prompt (`fit()` drops whole low-priority sections, never Gaps). Code, not the prompt, attaches the checklists the case needs (`checklists()`: web attack on `leads.web_server` signs, memory with an image) and appends a time check (`citations.time_mismatches`: times not held by the records cited on the same line). Run after triage (app, CLI), by `/investigate` / the Investigate button, and before benchmark questions. |
@@ -68,7 +69,7 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 | `copilot/vql_client.py` | gRPC client (pyvelociraptor), lazy, `api_client.yaml` / `DFIR_API_CONFIG`. |
 | `copilot/memory.py` | Volatility 3 as a subprocess (`-r json`), plugin allowlist `PLUGINS`, triage, `strings` search done in Python, settings from `server.yaml` `memory:`. |
 | `copilot/vol_plugins/dfir_memsearch.py` | Our own Volatility plugin (loaded with `-p`): text or YARA search per process. Runs inside Volatility, imports nothing from `copilot`. |
-| `copilot/approvals.py` | Approval kinds (collect, memory, retract_finding, update/switch/create_case, lesson), modes confirm/auto/off per case, `ASK` hook set by the UI, `execute()` for queued requests. |
+| `copilot/approvals.py` | Approval kinds (collect, memory, retract_finding, update/switch/create_case, lesson), modes confirm/auto/off per case, `ASK` hook set by the UI (the app: `queue`, requests in the `approval_requests` table per user; `pending`, `claim` once, `finish`), `execute()` for queued requests. |
 | `copilot/knowledge.py` + `knowledge_data/` | `artifacts.yaml` (first matching pattern wins; `live_only` = refused on images; verified `params`; tips), `playbooks.yaml`, `event_ids.yaml`, `triage.yaml` (suggestions), `file_types.yaml`. |
 | `copilot/forensic_artifacts.py` | "Where is X stored?": search over `knowledge_data/forensic_artifacts.yaml` (generated from ForensicArtifacts, Apache-2.0; `python -m copilot.forensic_artifacts import <checkout>`), returning ready FileFinder / NTUser parameters; the `find_data_location` tool. |
 | `copilot/lessons.py` | Lessons proposed by the agent, approved by a person, stored server-wide in `learned_knowledge.yaml`, merged into `knowledge.artifact_info`. Refuses case facts (IPs, hashes, domains). |
@@ -77,7 +78,7 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 | `copilot/citations.py` | Evidence/finding ID lookup for answers; `md_literal` / `answer_markdown` keep attacker text from rendering as Markdown, links, images or math. |
 | `copilot/report.py`, `report_template.py`, `report_html.py`, `charts.py` | Report built from the DB (only the narrative comes from the LLM); HTML with `html=False` and a CSP; charts as static SVG. `report.Clock` converts recorded -> true UTC. |
 | `copilot/outputs.py` | Files produced for download (reports, exports), registered per case. |
-| `copilot/conversation.py` | Saves/restores each user's chat per case (`ui@user` / `agent@user`). |
+| `copilot/conversation.py` | Saves/restores each user's chat per case (`ui@user` / `agent@user` / `inbox@user`). Changes go through `append`, `update_message`, `save_history`, `begin` under a process lock (jobs and the page write the same conversation); `note_for_agent` leaves investigator actions in the inbox until the agent's next turn (`begin` moves them into the history). |
 | `copilot/settings.py`, `llm.py`, `auth.py` | `server.yaml` (env vars win), the chat model, local accounts (PBKDF2, lockout). |
 | `copilot/iocs.py`, `commands.py`, `selftest.py` | IOC extraction, `/cases` `/case` `/help` chat commands, setup check. |
 | `copilot/benchmark.py` | Benchmark runner: model checked first (`make_model` pings it), fresh `bench-*` case, triage (waits for unfinished flows: `finish_triage`) or `--from-case` (triage part only: `cases.copy_data(triage=)`, then the missing triage artifacts), investigation, fixed questions in fresh conversations, scoring in code (facts, true-UTC times near the fact's words, uncorrected times, invalid IDs, forbidden claims, times not in cited records), commit recorded, results in `benchmark_results/`. |
@@ -93,11 +94,18 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 - **Sessions and proxies.** `case_config` and `case_db` are `CaseView` proxies onto
   `session.current()`: import them, never keep their attributes. Several Streamlit users share one
   process, so module-level state is shared; per-user state lives in the `Session` or `st.session_state`.
-- **Approvals.** The CLI answers `ASK` immediately; Streamlit returns `"queued"`, the tool tells the
-  model it is waiting, and `approvals.resolve()` runs it after the click, then the agent continues
-  by itself. Investigator actions (sidebar buttons, commands) bypass approvals. A queued collect or
-  memory request carries the client and memory image it was asked for (`bound`); `resolve()` refuses
-  it if the case now points elsewhere.
+- **Approvals.** The CLI answers `ASK` immediately; the app's `ASK` is `approvals.queue` (the request is
+  stored in the case, the tool tells the model it is waiting), and a `decide` job claims it, runs
+  `approvals.resolve()`, then the agent continues by itself. Investigator actions (sidebar buttons,
+  commands) bypass approvals. A queued collect or memory request carries the client and memory image
+  it was asked for (`bound`); `resolve()` refuses it if the case now points elsewhere.
+- **Background jobs.** The app never runs agent turns, triage or approvals in the page's script run:
+  `jobs.submit` runs them in a server thread on `session.Session.fork()` (same settings, own DB
+  connection, set per thread with `session.use`). The page's `st.session_state.messages` /
+  `chat_history` are a view reloaded every run; never write them, write through `conversation` or
+  `tell_agent`. `collection.collect` reuses an identical running or usable flow (`same_collection`), so
+  retries repeat no collection. Volatility output is streamed to a temp file and parsed with
+  `memory.json_items`, capped at `max_rows`.
 - **Evidence sources.** Access is per source as well as per case: `cases.source_problem()` lets a user
   name a client or memory image only if no case uses it or they can open or reuse a case that does
   (shared with them: `cases.can_reuse`; admins: any; `login.new_evidence: admins` keeps unused ones for admins). `cases.collected_sources()` reads

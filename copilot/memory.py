@@ -28,11 +28,13 @@ memory, but no process); windows.memsearch finds it per process, or scans with a
 yara_dir (rules need `pip install yara-x` or yara-python next to Volatility). windows.memsearch
 is the copilot's own Volatility plugin (vol_plugins/dfir_memsearch.py, loaded with -p).
 """
+import codecs
 import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -670,47 +672,59 @@ def execute(short: str, options: dict, image: str = None) -> dict:
                               requested_at=started.isoformat())
     summary = {"artifact": source, "flow_id": flow_id, "image": case_config.memory_image}
     clock = time.monotonic()
-    try:
-        if cmd:
-            code, stdout, stderr = _run_process(cmd)
-        else:
-            found, truncated = search_image(image, options.get("words") or options["text"])
-            code, stdout, stderr = 0, json.dumps(found), ""
-    except subprocess.TimeoutExpired:
-        code, stdout, stderr = None, "", f"Stopped after {timeout()} s (memory.timeout)."
-    except OSError as e:
-        code, stdout, stderr = None, "", f"Could not read the image: {e}"
-    seconds = round(time.monotonic() - clock)
-    finished = datetime.now(timezone.utc).isoformat()
-    if code != 0:
-        error = explain_failure(stdout + "\n" + stderr) if code is not None else stderr
-        case_db.upsert_collection(flow_id, state="ERROR", error=error[:4000], finished_at=finished)
-        case_db.log_query("analyze_memory", f"{plugin_name} {json.dumps(options)} -> error", 0, source)
-        return {**summary, "state": "ERROR", "error": error, "seconds": seconds}
-    try:
-        tree = json.loads(stdout.strip() or "[]")
-    except ValueError:
-        error = f"Volatility's output was not JSON: {explain_failure(stdout + chr(10) + stderr)}"
-        case_db.upsert_collection(flow_id, state="ERROR", error=error[:4000], finished_at=finished)
-        return {**summary, "state": "ERROR", "error": error, "seconds": seconds}
-    returned = list(_rows(tree if isinstance(tree, list) else [tree]))
-    if spec.post:
-        returned = spec.post(returned, options)
-    # Some scans report the same record many times (svcscan finds each service list from
-    # several headers): keep one copy of identical rows.
-    rows = list({json.dumps(r, sort_keys=True, default=str): r for r in returned}.values())
-    limit = case_config.max_rows
-    kept = rows[:limit]
-    new = case_db.ingest_artifact_results(kept, source, hostname=os.path.basename(case_config.memory_image),
+    # Volatility's output goes to a file and is read row by row: a scan can print far more than should
+    # be held in memory, and only max_rows distinct rows are kept.
+    with tempfile.TemporaryFile() as out:
+        try:
+            if cmd:
+                code, stderr = _run_process(cmd, out)
+            else:
+                found, truncated = search_image(image, options.get("words") or options["text"])
+                out.write(json.dumps(found).encode())
+                code, stderr = 0, ""
+        except subprocess.TimeoutExpired:
+            code, stderr = None, f"Stopped after {timeout()} s (memory.timeout)."
+        except OSError as e:
+            code, stderr = None, f"Could not read the image: {e}"
+        seconds = round(time.monotonic() - clock)
+        finished = datetime.now(timezone.utc).isoformat()
+        out.seek(0)
+        if code != 0:
+            error = explain_failure(_head(out) + "\n" + stderr) if code is not None else stderr
+            case_db.upsert_collection(flow_id, state="ERROR", error=error[:4000], finished_at=finished)
+            case_db.log_query("analyze_memory", f"{plugin_name} {json.dumps(options)} -> error", 0, source)
+            return {**summary, "state": "ERROR", "error": error, "seconds": seconds}
+        limit = case_config.max_rows
+        # Some scans report the same record many times (svcscan finds each service list from
+        # several headers): keep one copy of identical rows.
+        kept, returned, beyond = {}, 0, 0
+        try:
+            stream = _rows(json_items(out))
+            for row in (spec.post(stream, options) if spec.post else stream):
+                returned += 1
+                key = json.dumps(row, sort_keys=True, default=str)
+                if key in kept:
+                    continue
+                if len(kept) < limit:
+                    kept[key] = row
+                else:
+                    beyond += 1
+        except ValueError:
+            out.seek(0)
+            error = f"Volatility's output was not JSON: {explain_failure(_head(out) + chr(10) + stderr)}"
+            case_db.upsert_collection(flow_id, state="ERROR", error=error[:4000], finished_at=finished)
+            return {**summary, "state": "ERROR", "error": error, "seconds": seconds}
+    rows = list(kept.values())
+    new = case_db.ingest_artifact_results(rows, source, hostname=os.path.basename(case_config.memory_image),
                                           client_id=client)
     case_db.upsert_collection(flow_id, state="FINISHED", finished_at=finished, rows_ingested=new, ingested=1)
-    case_db.log_query("analyze_memory", f"{plugin_name} {json.dumps(options)}", len(kept), source)
-    summary.update(state="FINISHED", rows_read=len(kept), new_rows_ingested=new, seconds=seconds)
-    if len(returned) != len(rows):
-        summary["duplicates_dropped"] = len(returned) - len(rows)
-    if len(rows) > limit:
-        summary["note"] = (f"Volatility returned {len(rows)} distinct rows; only the first {limit} were stored "
-                           f"(collection.max_rows). Narrow it with pid or contains.")
+    case_db.log_query("analyze_memory", f"{plugin_name} {json.dumps(options)}", len(rows), source)
+    summary.update(state="FINISHED", rows_read=len(rows), new_rows_ingested=new, seconds=seconds)
+    if returned - beyond != len(rows):
+        summary["duplicates_dropped"] = returned - beyond - len(rows)
+    if beyond:
+        summary["note"] = (f"Volatility returned more than {limit} distinct rows ({returned} rows in all); only the "
+                           f"first {limit} were stored (collection.max_rows). Narrow it with pid or contains.")
     elif not rows:
         summary["note"] = "No rows (nothing matched, or nothing of this kind in this image)."
         if short == "strings":
@@ -774,10 +788,76 @@ def search_image(path: str, text, max_hits: int = MAX_STRING_HITS) -> tuple:
     return sorted(grouped.values(), key=lambda r: int(r["Offset"], 16)), hits >= max_hits
 
 
-def _run_process(cmd: list) -> tuple:
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout(), env=_env(),
-                         encoding="utf-8", errors="replace")
-    return out.returncode, out.stdout, out.stderr
+def _run_process(cmd: list, out) -> tuple:
+    """Runs Volatility with its output written to `out` (a binary file), not kept in memory.
+    Returns (exit code, the end of what it wrote to stderr)."""
+    with tempfile.TemporaryFile() as err:
+        proc = subprocess.run(cmd, stdout=out, stderr=err, timeout=timeout(), env=_env())
+        return proc.returncode, _tail(err)
+
+
+def _head(f, size: int = 65536) -> str:
+    """The start of a binary file (from where it is) as text."""
+    return f.read(size).decode("utf-8", errors="replace")
+
+
+def _tail(f, size: int = 65536) -> str:
+    """The end of a binary file as text."""
+    f.seek(0, os.SEEK_END)
+    f.seek(max(0, f.tell() - size))
+    return _head(f, size)
+
+
+_BETWEEN_ITEMS = re.compile(r"[\s,]*")
+
+
+def json_items(f, chunk: int = 1 << 20):
+    """
+    The items of the JSON array in binary file `f` (a single object counts as one item), parsed as they
+    are read, so a large output never sits in memory whole. Raises ValueError if it is not JSON.
+    """
+    decoder = json.JSONDecoder()
+    decode = codecs.getincrementaldecoder("utf-8")(errors="replace").decode
+    buf, pos, eof = "", 0, False
+
+    def fill():
+        nonlocal buf, pos, eof
+        data = f.read(chunk)
+        eof = not data
+        buf, pos = buf[pos:] + decode(data, final=eof), 0
+
+    while True:                                   # the first character tells an array from one object
+        pos = len(buf) - len(buf.lstrip())
+        if pos < len(buf) or eof:
+            break
+        fill()
+    if pos == len(buf):
+        return                                    # no output: no rows
+    if buf[pos] != "[":
+        while not eof:
+            fill()
+        value = json.loads(buf[pos:])
+        yield from (value if isinstance(value, list) else [value])
+        return
+    pos += 1
+    while True:
+        pos = _BETWEEN_ITEMS.match(buf, pos).end()
+        if pos == len(buf):
+            if eof:
+                raise ValueError("The JSON array is not closed.")
+            fill()
+            continue
+        if buf[pos] == "]":
+            return
+        try:
+            item, end = decoder.raw_decode(buf, pos)
+        except ValueError:
+            if eof:
+                raise
+            fill()                                # the item goes on in the next chunk
+            continue
+        yield item
+        pos = end
 
 
 def triage_plan(config=None) -> list:
@@ -876,7 +956,10 @@ def check(image: str = None) -> int:
             print(f"[!] {e}")
             return 1
         print(f"\nRunning windows.info on {image} (can take a few minutes the first time)...")
-        code, stdout, stderr = _run_process(build_command(path, "windows.info.Info", {}))
+        with tempfile.TemporaryFile() as out:
+            code, stderr = _run_process(build_command(path, "windows.info.Info", {}), out)
+            out.seek(0)
+            stdout = _head(out, 1 << 20)
         if code == 0:
             rows = {r.get("Variable"): r.get("Value") for r in json.loads(stdout.strip() or "[]")}
             print(f"OK: Windows {rows.get('NtMajorVersion')}.{rows.get('NtMinorVersion')} build "

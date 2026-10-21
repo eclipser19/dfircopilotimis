@@ -32,12 +32,14 @@ class FakeVolatility:
         self.commands = []
         self.fail = fail or {}
 
-    def __call__(self, cmd):
+    def __call__(self, cmd, out):
         self.commands.append(cmd)
         plugin = cmd[cmd.index("-f") + 2]
         if plugin in self.fail:
-            return 1, self.fail[plugin], "Volatility 3 Framework 2.28.2\nUnable to validate the plugin requirements"
-        return 0, "\n" + json.dumps(OUTPUT.get(plugin, []), indent=2), "Volatility 3 Framework 2.28.2\n"
+            out.write(self.fail[plugin].encode())
+            return 1, "Volatility 3 Framework 2.28.2\nUnable to validate the plugin requirements"
+        out.write(("\n" + json.dumps(OUTPUT.get(plugin, []), indent=2)).encode())
+        return 0, "Volatility 3 Framework 2.28.2\n"
 
 
 @pytest.fixture
@@ -545,3 +547,14 @@ def test_memsearch_plugin_finds_text_per_process_across_pieces(monkeypatch):
         (860, "MicrosoftEdge.", "UTF-16", "Visited: Administrator@http://", "194.61.24.102/", 1)]
     ascii_hit = next(r for r in rows if r[4] == "ASCII")
     assert int(ascii_hit[8]) == 50 + len(wide) + 30 + len("GET http://")     # where it was first found
+
+
+def test_output_is_read_as_it_comes_and_capped(case, mem, monkeypatch):
+    import io
+    monkeypatch.setattr(case_config, "data", dict(case_config.data, collection={"max_rows": 1}))
+    summary = memory.run("windows.pslist")
+    assert summary["rows_read"] == 1 and "more than 1 distinct rows (2 rows in all)" in summary["note"]
+    text = json.dumps(PSTREE + PSLIST, indent=1).encode()
+    assert list(memory.json_items(io.BytesIO(text), chunk=5)) == PSTREE + PSLIST
+    with pytest.raises(ValueError):
+        list(memory.json_items(io.BytesIO(text[:-3]), chunk=5))

@@ -1,16 +1,16 @@
 import json
 import os
 import re
+import time
 
 import streamlit as st
-from langchain_core.messages import HumanMessage, SystemMessage
 
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 from copilot import (approvals, auth, cases, citations, collection, commands, config_check, conversation, dossier,
-                     feedback, knowledge, lessons, memory, outputs, report, session)
+                     feedback, jobs, knowledge, lessons, memory, outputs, report, session)
 from copilot import llm as llm_config
-from copilot.agent import TokenUsage, run_turn, status_line
+from copilot.agent import TokenUsage
 from copilot.case_config import case_config
 from copilot.database import case_db
 from copilot.prompts import build_system_prompt
@@ -82,48 +82,40 @@ MIME = {"html": "text/html", "md": "text/markdown", "csv": "text/csv", "json": "
 # ==========================================
 # Session state
 # ==========================================
+FOLLOW_EVERY = 0.3      # seconds between two looks at a running job's progress
 if "usage" not in st.session_state:
     st.session_state.usage = TokenUsage()
-    st.session_state.pending = []       # agent requests awaiting approval (each tied to its case)
-    st.session_state.next_request = 1
     st.session_state.triage_dismissed = False
 
 
 def open_case_chat(note: str = ""):
-    """Shows the active case's saved conversation (or a new one) and gives the agent its memory back."""
-    case_id = cases.current_id()
-    messages, history = conversation.load(case_id, build_system_prompt(case_config), user=USER)
-    st.session_state.case_id = case_id
-    st.session_state.messages = messages      # [{role, content, log: [str], files: [output rows]}]
-    st.session_state.chat_history = history
+    """Follows the active case's conversation (saved in its database), with a note about the switch."""
+    st.session_state.case_id = cases.current_id()
     st.session_state.triage_dismissed = False
     if note:
-        st.session_state.messages.append({"role": "assistant", "content": note})
+        conversation.append(st.session_state.case_id, {"role": "assistant", "content": note}, user=USER)
 
 
-def persist():
-    """Saves this session's conversation to the case it belongs to."""
-    if "case_id" in st.session_state:
-        conversation.save(st.session_state.case_id, st.session_state.messages, st.session_state.chat_history,
-                          user=USER)
+def load_chat():
+    """The conversation as saved: background jobs add to it, so every run reads it. chat_history is what the
+    agent's next turn starts from (fresh system prompt, the investigator's waiting notes)."""
+    st.session_state.messages, st.session_state.chat_history = conversation.load(
+        cases.current_id(), build_system_prompt(case_config), user=USER)
 
 
-def queue_request(request: dict):
-    """Agent requests wait for the investigator's Approve/Deny in the sidebar (per case)."""
-    request["id"] = st.session_state.next_request
-    st.session_state.next_request += 1
-    st.session_state.pending.append(request)
-    return "queued"
+def tell_agent(text: str):
+    """Something the investigator did that the agent should know, given to it at its next turn."""
+    conversation.note_for_agent(cases.current_id(), text, user=USER)
 
 
 def pending_here() -> list:
-    return [r for r in st.session_state.pending if r.get("case_id") == cases.current_id()]
+    """This investigator's agent requests waiting in the active case (kept in its database)."""
+    return approvals.pending(USER)
 
 
 def after_possible_switch():
     """Rerun when the active case or its settings changed (the top of the script does the rest)."""
-    if cases.consume_settings_change():
-        st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
+    cases.consume_settings_change()
     if cases.consume_switch() or st.session_state.case_id != cases.current_id():
         st.rerun()
 
@@ -235,8 +227,7 @@ def import_cb(case_id: str):
     what = f"{counts['records']:,} new records" + (f", {counts['findings']} findings" if with_findings else "") + \
         (", its dossier" if counts.get("dossier") else "")
     st.session_state.cs_message = f"✅ Imported from `{source}`: {what}."
-    st.session_state.chat_history.append(HumanMessage(
-        content=f"[Investigator] Imported from case {source} into this case: {what}."))
+    tell_agent(f"[Investigator] Imported from case {source} into this case: {what}.")
 
 
 def save_sharing_cb(case_id: str):
@@ -278,7 +269,6 @@ def save_settings_cb(case_id: str):
         st.session_state.cs_message = f"❌ {e}"
         return
     cases.consume_settings_change()
-    st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
     st.session_state.cs_message = "✅ Saved. The agent now works with the new settings."
 
 
@@ -314,7 +304,6 @@ def account_box():
         c1, c2 = st.columns([3, 2])
         c1.caption(f"👤 Signed in as **{USER}**" + (" (admin)" if auth.is_admin(USER) else ""))
         if c2.button("Sign out"):
-            persist()
             st.session_state.clear()      # drops this browser's case session (and its connection)
             st.rerun()
     else:
@@ -579,8 +568,8 @@ def triage_editor():
             st.caption(st.session_state.tri_message)
 
 
-# The hook is process-wide, but queue_request stores each request in the session that made it.
-approvals.ASK = queue_request
+# Agent requests wait in the case database for the investigator whose conversation asked.
+approvals.ASK = approvals.queue
 
 
 # ==========================================
@@ -640,7 +629,8 @@ def feedback_cb(index: int):
     except feedback.FeedbackError as e:
         st.session_state.fb_message = f"❌ {e}"
         return
-    msg["rated"] = {"by": USER or "", "comment": entry["comment"], "id": entry["feedback_id"]}
+    conversation.update_message(cases.current_id(), index, user=USER,
+                                rated={"by": USER or "", "comment": entry["comment"], "id": entry["feedback_id"]})
     st.session_state.fb_open = None
     extra = ""
     if st.session_state.get(f"fb_lesson_{index}"):
@@ -677,177 +667,72 @@ def feedback_row(msg: dict, index: int):
         st.caption(st.session_state.fb_message)
 
 
-def status_emitter(status, log: list, notices: list):
-    """run_turn's progress events, shown in a status box and kept as the message's steps."""
-    def emit(kind, payload):
-        if kind == "tool":
-            log.append(f"⚙️ {payload}")
-            status.write(f"⚙️ `{payload}`")
-        elif kind == "collection":
-            log.append(f"   {payload}")
-            status.text(payload)
-        elif kind == "notice":
-            notices.append(payload)
-            status.warning(payload)
-        elif kind == "usage":
-            log.append(payload)
-    return emit
-
-
-def run_investigation(extra: str = "") -> bool:
-    """The investigation turn (copilot/dossier.py), in a conversation of its own; the dossier it writes
-    goes into every later system prompt and is shown in the chat. False: it couldn't run."""
-    if "llm_with_tools" not in st.session_state:
-        st.error("Enter the API key in the sidebar first.")
-        return False
-    log, notices = [], []
-    with st.chat_message("assistant"):
-        status = st.status("Investigating the whole case: one longer turn that writes the case dossier...",
-                           expanded=True)
-        try:
-            entry = dossier.investigate(st.session_state.llm_with_tools, st.session_state.finalizer,
-                                        st.session_state.usage, status_emitter(status, log, notices), extra)
-        except dossier.DossierError as e:
-            status.update(label="No dossier written", state="error", expanded=False)
-            st.session_state.messages.append({"role": "assistant", "log": log, "content": "\n\n".join(
-                f"⚠️ {n}" for n in [*notices, str(e)])})
-            return True
-        status.update(label="Case dossier written", state="complete", expanded=False)
-    st.session_state.messages.append({"role": "assistant", "log": log, "answer": True, "kind": "dossier",
-                                      "question": "Investigate the whole case (the case dossier)", "content":
-                                      f"🗂️ **Case dossier** — every question now starts from it "
-                                      f"({entry['steps']} steps, {entry['tokens']:,} tokens)\n\n{entry['text']}"})
-    refresh_dossier()
-    return True
-
-
-def refresh_dossier():
-    """Puts the latest dossier and the case's notes into this conversation's system prompt (also when another
-    member wrote them)."""
-    seen = (cases.current_id(), dossier.latest().get("dossier_id"), feedback.stamp())
-    if st.session_state.get("dossier_seen") != seen:
-        st.session_state.dossier_seen = seen
-        st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
-
-
-def agent_turn(text: str, show_user: bool = True) -> bool:
-    """Runs one agent turn; new files the agent produced are attached to its message. False: it couldn't run."""
-    if "llm_with_tools" not in st.session_state:
-        st.error("Enter the API key in the sidebar first.")
-        return False
-    if show_user:
-        st.session_state.messages.append({"role": "user", "content": text})
-        with st.chat_message("user"):
-            st.markdown(citations.answer_markdown(text))
-    # Questions typed by the investigator get the matching playbooks attached (automatic prompts don't).
-    st.session_state.chat_history.append(HumanMessage(content=knowledge.with_playbooks(text) if show_user else text))
-    before = outputs.last_output_id()
-    log, notices = [], []
-
-    with st.chat_message("assistant"):
-        status = st.status("Investigating...", expanded=True)
-        emit = status_emitter(status, log, notices)
-        answer = run_turn(st.session_state.llm_with_tools, st.session_state.chat_history, case_config.max_steps,
-                          st.session_state.usage, case_config.max_tokens_per_turn,
-                          st.session_state.finalizer, emit)
-        status.update(label="Done", state="complete", expanded=False)
-        content = answer or "\n\n".join(f"⚠️ {n}" for n in notices) or "No answer."
-        # Links to local paths can't work in a browser; files come as download buttons instead.
-        content = re.sub(r"\[([^\]]+)\]\((?!https?://)[^)]*\)", r"\1", content)
-        files = outputs.produced_since(before)
-        st.markdown(citations.answer_markdown(content))
-        cited_box(content)
-        for entry in files:
-            download_button(entry, key=f"dl-new-{entry['output_id']}")
-        st.caption(st.session_state.usage.summary())
-    st.session_state.messages.append({"role": "assistant", "content": content, "log": log, "files": files,
-                                      "answer": bool(answer), "question": text if show_user else ""})
-    return True
-
-
-def _disk_triage(plan: list = None) -> list:
-    """The disk triage collections (picked in the sidebar, else the case's), no LLM."""
-    lines, summaries = [], []
-    with st.chat_message("assistant"):
-        status = st.status("Running triage collection...", expanded=True)
-        for step in plan or case_config.collection_plan:
-            artifact, params = step["artifact"], step["parameters"]
-            status.write(f"Collecting `{artifact}`...")
-            try:
-                summary = collection.collect(artifact, params)
-            except collection.CollectionError as e:
-                summary = {"artifact": artifact, "state": "NOT_STARTED", "error": str(e)}
-            summaries.append(summary)
-            lines.append(status_line(summary))
-            status.text(lines[-1])
-        status.update(label="Triage collection finished", state="complete", expanded=False)
-    st.session_state.messages.append({"role": "assistant",
-                                      "content": "**Triage collection**\n\n```\n" + "\n".join(lines) + "\n```"})
-    return summaries
-
-
-def _memory_triage(plugins: list = None) -> list:
-    """The memory triage plugins (picked in the sidebar, else the case's), no LLM."""
-    lines = []
-    with st.chat_message("assistant"):
-        status = st.status("Running memory triage (each plugin can take minutes)...", expanded=True)
-
-        def progress(plugin):
-            status.write(f"Running `{plugin}`...")
-
-        summaries = memory.triage(progress=progress, plugins=plugins)
-        for summary in summaries:
-            lines.append(status_line(summary))
-            status.text(lines[-1])
-        status.update(label="Memory triage finished", state="complete", expanded=False)
-    st.session_state.messages.append({"role": "assistant",
-                                      "content": "**Memory triage**\n\n```\n" + "\n".join(lines) + "\n```"})
-    return summaries
-
-
-def run_triage(investigate: bool, plan: list = None, plugins: list = None, disk: bool = True):
-    """
-    The triage, no LLM: the disk collections, and the memory plugins when given. Then, if chosen, one
-    investigation over everything that came back; without it the sidebar shows the new data.
-    """
-    disk_results = _disk_triage(plan) if disk else []
-    memory_results = _memory_triage(plugins) if plugins else []
-    summaries = disk_results + memory_results
-    usable = [s for s in disk_results if s.get("state") != "NOT_STARTED"] + \
-        [s for s in memory_results if s.get("state") == "FINISHED"]
-    if not (investigate and usable):
-        st.rerun()  # refresh sidebar stats
-    return run_investigation(dossier.triage_note(summaries))
-
-
-def resolve_request(request: dict, approved: bool):
-    """Runs (or declines) a queued agent request and tells the agent what happened."""
-    st.session_state.pending = [r for r in st.session_state.pending if r["id"] != request["id"]]
-    label = approvals.describe(request)
-    if not approved:
-        approvals.resolve(request, False, actor=USER)
-        st.session_state.chat_history.append(HumanMessage(content=f"[Investigator] Declined: {label}."))
-        st.session_state.messages.append({"role": "assistant", "content": f"❌ Declined — {citations.md_literal(label)}",
-                                          "literal": True})
-        return
-    with st.chat_message("assistant"):
-        with st.spinner(f"{label}..."):
-            try:
-                result = approvals.resolve(request, True, actor=USER)
-            except (approvals.ApprovalError, collection.CollectionError, cases.CaseError) as e:
-                result = f"Failed: {e}"
-    if isinstance(result, dict):        # a code block shows the status line as it is; it can't be closed early
-        shown = "```\n" + status_line(result).replace("```", "'''") + "\n```"
+def show_event(status, event: dict):
+    """One step of a job's progress in its status box."""
+    if event["kind"] == "tool":
+        status.write(f"⚙️ `{event['text']}`")
+    elif event["kind"] == "collection":
+        status.text(event["text"])
+    elif event["kind"] == "notice":
+        status.warning(event["text"])
     else:
-        shown = citations.md_literal(result)
-    st.session_state.chat_history.append(HumanMessage(
-        content=f"[Investigator] Approved: {label}. Result: {json.dumps(result, default=str)}"))
-    st.session_state.messages.append({"role": "assistant", "literal": True,
-                                      "content": f"✅ Approved — {citations.md_literal(label)}\n\n{shown}" +
-                                                 ("" if st.session_state.get("auto_continue", True) else
-                                                  "\n\nAsk the copilot to continue when ready.")})
-    if cases.consume_settings_change():
-        st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
+        status.write(event["text"])
+
+
+def start(kind: str, payload: dict = None, retry: str = None) -> dict:
+    """
+    Starts background work for this investigator (copilot/jobs.py) and returns the job ({} if it could not
+    start; the reason is shown). It runs in the server: leaving or reloading the page doesn't stop it.
+    """
+    payload = dict(payload or {})
+    if retry:
+        kind = jobs.get(retry).get("kind", "")
+    model = st.session_state.get("llm_with_tools")
+    if model is None and kind in ("ask", "investigate"):
+        st.error("Enter the API key in the sidebar first.")
+        return {}
+    if kind == "triage" and payload.get("investigate") and model is None:
+        payload["investigate"] = False
+        st.info("The investigation needs the model: enter the API key, then run it from 🚩 Findings & dossier.")
+    try:
+        args = (st.session_state.get("llm_with_tools"), st.session_state.get("finalizer"), st.session_state.usage)
+        job_id = jobs.retry(retry, *args) if retry else jobs.submit(kind, payload, *args)
+    except jobs.JobError as e:
+        st.error(str(e))
+        return {}
+    return jobs.get(job_id)
+
+
+def follow(job: dict, question: str = ""):
+    """
+    Shows a job's progress until it ends, then reruns: the chat, header and tabs show what it added. The job
+    goes on in the server if this page is closed or reloaded; the next page follows it from where it is.
+    """
+    if not job:
+        return
+    if question:
+        with st.chat_message("user"):
+            st.markdown(citations.answer_markdown(question))
+    shown = 0
+    with st.chat_message("assistant"):
+        status = st.status(job["label"], expanded=True)
+        while True:
+            for event in jobs.events(job["job_id"], after=shown):
+                shown = event["seq"]
+                show_event(status, event)
+            job = jobs.get(job["job_id"])
+            if job["state"] not in jobs.ACTIVE:
+                break
+            time.sleep(FOLLOW_EVERY)
+        if job["state"] == "done":
+            status.update(label="Done", state="complete", expanded=False)
+        else:
+            status.update(label=f"Stopped: {job.get('error') or job['state']}", state="error", expanded=False)
+    moved = (job.get("result") or {}).get("switch_to")
+    if moved and moved != cases.current_id():
+        cases.switch(moved)
+    after_possible_switch()
+    st.rerun()
 
 
 # ==========================================
@@ -875,23 +760,22 @@ if not st.session_state.dfir.has_case:
         new_case_form()
     st.stop()
 
-# Save the conversation to its own case, then follow the active case if it changed
-# (sidebar, /case, the agent, the New case form).
+# Follow the active case if it changed (sidebar, /case, the agent, the New case form). Conversations are
+# saved as they change, so there is nothing to save here.
 if "case_id" not in st.session_state:
     open_case_chat(st.session_state.pop("case_note", "").strip())
-else:
-    persist()
-    if st.session_state.case_id != cases.current_id():
-        previous = st.session_state.case_id
-        restored = bool(conversation.load(cases.current_id(), "", user=USER)[0])
-        open_case_chat((f"📁 **Back in case `{cases.current_id()}` — {case_config.case_name}.** Conversation restored."
-                        if restored else
-                        f"📁 **Now in case `{cases.current_id()}` — {case_config.case_name}.** New conversation.")
-                       + f" (`{previous}` was saved.)" + st.session_state.pop("case_note", ""))
+elif st.session_state.case_id != cases.current_id():
+    previous = st.session_state.case_id
+    restored = bool(conversation.messages(cases.current_id(), user=USER))
+    open_case_chat((f"📁 **Back in case `{cases.current_id()}` — {case_config.case_name}.** Conversation restored."
+                    if restored else
+                    f"📁 **Now in case `{cases.current_id()}` — {case_config.case_name}.** New conversation.")
+                   + f" (`{previous}` was saved.)" + st.session_state.pop("case_note", ""))
 cases.consume_switch()
-if cases.consume_settings_change():
-    st.session_state.chat_history[0] = SystemMessage(content=build_system_prompt(case_config))
-refresh_dossier()
+cases.consume_settings_change()
+jobs.recover()            # work a stopped server was doing is marked interrupted (it can be continued)
+load_chat()
+running = jobs.active(USER)
 
 # ==========================================
 # Main-area views (one per tab)
@@ -972,8 +856,7 @@ def confirm_cb(finding_id: str):
     except feedback.FeedbackError as e:
         st.session_state.note_message = f"❌ {e}"
         return
-    st.session_state.chat_history.append(HumanMessage(
-        content=f"[Investigator] Confirmed finding {found['finding_id']} ('{found['title']}') after checking its records."))
+    tell_agent(f"[Investigator] Confirmed finding {found['finding_id']} ('{found['title']}') after checking its records.")
 
 
 def findings_view(stats: dict, findings: list, notes: dict):
@@ -1042,8 +925,7 @@ def findings_view(stats: dict, findings: list, notes: dict):
         reason = st.text_input("Reason (e.g. the contradicting evidence)", key="retract_reason")
         if st.button("Retract", disabled=not reason.strip()):
             case_db.retract_finding(labels[choice], reason.strip() + (f" (retracted by {USER})" if USER else ""))
-            st.session_state.chat_history.append(HumanMessage(
-                content=f"[Investigator] Retracted finding '{choice}': {reason.strip()}"))
+            tell_agent(f"[Investigator] Retracted finding '{choice}': {reason.strip()}")
             st.rerun()
     return action
 
@@ -1107,7 +989,7 @@ def report_view():
     chosen = st.multiselect("Formats", ["html", "md"], default=case_config.report_formats, key="report_formats",
                             help="Formats cost no extra LLM tokens.")
     st.session_state.dfir.report_formats = chosen or None
-    if st.button("📝 Write the report", key="write_report", disabled="llm_with_tools" not in st.session_state,
+    if st.button("📝 Write the report", key="write_report", disabled="llm_with_tools" not in st.session_state or bool(running),
                  on_click=to_chat,
                  help="Asks the agent for the narrative and builds the report. It appears in 💬 Chat as a download."):
         action = ("ask", "Write the report for this case.")
@@ -1252,11 +1134,12 @@ with st.sidebar:
             if req["kind"] == "lesson":
                 st.caption("⚠️ Lessons apply to every case on this server. Approve only if it is general and true.")
             c1, c2 = st.columns(2)
-            if c1.button("Approve", key=f"approve-{req['id']}", on_click=to_chat):
+            if c1.button("Approve", key=f"approve-{req['id']}", on_click=to_chat, disabled=bool(running)):
                 action = ("approve", req)
-            if c2.button("Deny", key=f"deny-{req['id']}", on_click=to_chat):
+            if c2.button("Deny", key=f"deny-{req['id']}", on_click=to_chat, disabled=bool(running)):
                 action = ("deny", req)
-        if len(pending_here()) > 1 and st.button("✅ Approve all", key="approve-all", type="primary", on_click=to_chat):
+        if len(pending_here()) > 1 and st.button("✅ Approve all", key="approve-all", type="primary", on_click=to_chat,
+                                                 disabled=bool(running)):
             action = ("approve_all", None)
         st.checkbox("Continue the agent once all are decided", value=True, key="auto_continue",
                     help="Otherwise ask the copilot to continue yourself.")
@@ -1284,8 +1167,10 @@ with report_tab:
 with case_tab:
     case_view(case_rows, current)
 
-# Typed anywhere (the box stays at the bottom of every tab); answered in the Chat tab.
-prompt = st.chat_input("Ask the copilot to investigate... (/help for commands)", on_submit=to_chat)
+# Typed anywhere (the box stays at the bottom of every tab); answered in the Chat tab. While this
+# investigator's job runs, the box waits: their conversation has one writer at a time.
+prompt = st.chat_input("Ask the copilot to investigate... (/help for commands)", on_submit=to_chat,
+                       disabled=bool(running))
 
 with chat_tab:
     for i, msg in enumerate(st.session_state.messages):
@@ -1294,6 +1179,24 @@ with chat_tab:
         st.caption("Ask about this case in your own words: how they got in, what ran, what was taken, what a "
                    "record means. " + ("Answers start from the case dossier and" if notes else "Answers start from")
                    + " the leads computed from the data, and cite the records they rest on.")
+
+    # Work this page started, or another page of the same investigator, or this page before a reload: follow it.
+    if running:
+        follow(running)
+
+    # Work a stopped server was doing: continue it (from the saved conversation) or let it go.
+    stopped = jobs.problem(USER)
+    if stopped and action is None and not prompt:
+        with st.container(border=True):
+            st.markdown(f"**⚠️ {jobs.NAMES.get(stopped['kind'], 'Some work')} did not finish:** the server stopped "
+                        f"while it ran.")
+            c1, c2 = st.columns([2, 3])
+            if c1.button("↻ Continue", type="primary", key="job_retry"):
+                action = ("retry", stopped["job_id"])
+            if c2.button("Dismiss", key="job_dismiss"):
+                jobs.dismiss(stopped["job_id"])
+                st.rerun()
+            st.caption("It goes on from the saved conversation; collections it had started are reused, not run again.")
 
     # First visit to an empty case: offer the triage collection (the CLI asks the same question).
     if (not case_db.get_collections() and not st.session_state.triage_dismissed and action is None and not prompt
@@ -1337,51 +1240,36 @@ with chat_tab:
                 st.session_state.dossier_dismissed = cases.current_id()
                 st.rerun()
 
+    # Everything below runs as a job (copilot/jobs.py) that this page follows; follow() reruns the page.
     if action:
         kind, arg = action
         if kind == "triage":
             st.session_state.triage_dismissed = True
-            if run_triage(*arg):
-                after_possible_switch()
-                st.rerun()      # the header and tabs show the new data, approvals, findings and token use
+            investigate, plan, plugins, disk = (*arg, None, True)[:4] if len(arg) == 2 else arg   # panel: disk only
+            follow(start("triage", {"investigate": investigate, "plan": plan, "plugins": plugins, "disk": disk}))
         elif kind == "memory_triage":
             st.session_state.triage_dismissed = True
-            if run_triage(arg[0], None, arg[1], disk=False):
-                after_possible_switch()
-                st.rerun()
+            follow(start("triage", {"investigate": arg[0], "plugins": arg[1], "disk": False}))
         elif kind == "investigate":
-            if run_investigation():
-                after_possible_switch()
-                st.rerun()
+            follow(start("investigate"))
         elif kind == "ask":
-            if agent_turn(arg):
-                after_possible_switch()
-                st.rerun()
+            follow(start("ask", {"text": arg}), question=arg)
+        elif kind == "retry":
+            follow(start("", retry=arg))
         elif kind in ("approve", "deny", "approve_all"):
-            for request in (pending_here() if kind == "approve_all" else [arg]):
-                resolve_request(request, approved=(kind != "deny"))
             # Once nothing waits any more, the agent goes on with the results (no "continue" needed).
-            if (st.session_state.get("auto_continue", True) and not pending_here()
-                    and st.session_state.case_id == cases.current_id() and "llm_with_tools" in st.session_state):
-                agent_turn("[Investigator] Every pending request has been decided (see the results above). Continue "
-                           "the investigation with them and answer the open question.", show_user=False)
-            st.rerun()
+            decisions = [[r["id"], kind != "deny"] for r in (pending_here() if kind == "approve_all" else [arg])]
+            follow(start("decide", {"decisions": decisions, "auto_continue": st.session_state.get("auto_continue", True)}))
 
     if prompt:
         investigate = prompt.strip().lower() == commands.INVESTIGATE      # uses the LLM: not a free command
         reply = None if investigate else commands.handle(prompt)
         if investigate:
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            if run_investigation():
-                after_possible_switch()
-                st.rerun()
+            follow(start("investigate", {"command": prompt}), question=prompt)
         elif reply is not None:
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            st.session_state.messages.append({"role": "assistant", "content": reply})
+            conversation.append(st.session_state.case_id, {"role": "user", "content": prompt},
+                                {"role": "assistant", "content": reply}, user=USER)
             after_possible_switch()
             st.rerun()
-        elif agent_turn(prompt):
-            after_possible_switch()
-            st.rerun()      # the header and tabs show the agent's approval requests, findings and token use
-
-persist()  # runs that end normally save here; runs ending in st.rerun() are saved at the top of the next run
+        else:
+            follow(start("ask", {"text": prompt}), question=prompt)

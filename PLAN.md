@@ -154,11 +154,20 @@ a change to the agent, to check nothing broke.
    - Timestomping candidates ($SI vs $FN, zero fractions).
    - Persistence that differs from the operating system's own.
    - Each lead keeps showing its records and join keys, and never presents presence as execution.
-6. **Durable investigations.**
-   - Jobs, approvals and progress are stored in the case, not the browser session: a refresh or
-     restart loses nothing, and retries don't repeat side effects.
-   - Volatility output is streamed and capped instead of buffered whole.
-   - The orchestration moves out of the Streamlit page into shared services.
+6. ~~**Durable investigations.**~~ Done:
+   - Questions, the investigation, the triage and decided approvals run as jobs in a thread pool of
+     the server (`copilot/jobs.py`), not in the page: a reload, a closed tab or another computer
+     loses nothing, and the page follows the running job again. Jobs, their progress, the waiting
+     approvals and the conversation (saved after every agent step) are in the case database.
+   - After a crash or hard kill, interrupted jobs are offered for **Continue**: a question resumes
+     from its saved history; collections are reused when the same one is running or usable, approvals
+     are claimed once, so retries repeat no side effect. A normal stop lets running jobs finish.
+   - Volatility output goes to a temp file and is parsed item by item, capped at `max_rows`.
+   - Checked live (real Streamlit, a slow fake model): reload during a question, and a hard kill then
+     **Continue**.
+   - Not covered: jobs run in the Streamlit server process (one machine); several app processes behind
+     a load balancer would need a separate worker reading the same `jobs` table. The CLI still runs
+     turns in its own process (its conversation is saved after each exchange).
 7. ~~**File activity in triage.**~~ Done and measured (CorporateSecrets 82.1%, DC found `secret.zip`): the triage lists every file in the users'
    Desktop, Documents, Downloads, Pictures, Videos, Music and OneDrive folders
    (`Windows.Search.FileFinder`), types each one up to 50 MB by its first bytes
