@@ -141,14 +141,30 @@ def _clause(text: str, pos: int, ends=_CLAUSE_END) -> tuple:
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
 
 
+# Words between a lead-in's denial and its colon that leave the denial about the list ("no evidence was
+# found of the following:"); any other word means it denies something else ("..., not exploitation of a
+# vulnerability:" introduces what WAS found).
+_ABOUT_THE_LIST = {"evidence", "sign", "signs", "indication", "indications", "trace", "traces", "record", "records",
+                   "proof", "data", "of", "for", "that", "the", "any", "a", "an", "these", "this", "following",
+                   "items", "was", "were", "is", "are", "be", "been", "there", "in", "found", "observed", "seen",
+                   "identified", "detected", "recovered", "established", "confirmed", "determined", "shown",
+                   "supported", "available", "collected", "evidenced"}
+
+
 def _lead_in(text: str, pos: int) -> str:
-    """The line that introduces the list `pos` is in ("I found no evidence of:"), or "" outside a list."""
+    """The line that introduces the list `pos` is in, when it denies the list ("I found no evidence of:"),
+    or "" (outside a list, or a lead-in that denies something else)."""
     lines = text[:pos].split("\n")
     if not _LIST_ITEM.match(lines[-1]):
         return ""
     for line in reversed(lines[:-1]):
         if line.strip() and not _LIST_ITEM.match(line):
-            return line if line.rstrip().endswith(":") else ""
+            head = line.rstrip().rstrip("*_` ")
+            if not head.endswith(":"):
+                return ""
+            cues = list(_DENIAL.finditer(_NOT_A_DENIAL.sub(" ", head)))
+            after = re.findall(r"[a-z]+", head[cues[-1].end():].lower()) if cues else ["-"]
+            return line if set(after) <= _ABOUT_THE_LIST else ""
     return ""
 
 
@@ -379,7 +395,9 @@ def render_markdown(results: dict) -> str:
                   f"{round((inv.get('seconds') or 0) / 60, 1)} min"
                   + (f" ({time_split_text(inv['time_split'], inv.get('seconds'))})" if inv.get("time_split") else "")
                   + (f" · ⚠ {inv['time_mismatches']} times not in their cited records (flagged in it)"
-                     if inv.get("time_mismatches") else ""), ""]
+                     if inv.get("time_mismatches") else "")
+                  + (f" · ⚠ {inv['unknown_ids']} evidence IDs in no record (flagged in it)"
+                     if inv.get("unknown_ids") else ""), ""]
     else:
         lines += ["Questions answered without an investigation first (no case dossier).", ""]
     for problem in results.get("setup") or []:
@@ -602,7 +620,7 @@ def investigate(llm_with_tools, finalizer, extra: str = "", log=print) -> dict:
     try:
         entry = dossier.investigate(llm_with_tools, finalizer, usage, _emitter(steps_log, log), extra)
         result = {"dossier": entry["text"], "steps": entry["steps"], "error": "",
-                  "time_mismatches": entry.get("time_mismatches", 0)}
+                  "time_mismatches": entry.get("time_mismatches", 0), "unknown_ids": entry.get("unknown_ids", 0)}
     except Exception as e:                    # the questions still run, without a dossier
         result = {"dossier": "", "steps": 0, "error": f"{type(e).__name__}: {e}"}
     return {**result, "log": steps_log, "tokens_in": usage.turn_input, "tokens_out": usage.turn_output,

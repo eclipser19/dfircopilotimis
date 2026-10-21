@@ -86,6 +86,7 @@ lacks or leaves open and for details it doesn't give. Its Gaps are a to-do list,
 question needs data it lists as not collected or not searched, collect or search it now before answering.
 Its hypotheses and anything it marks unconfirmed are not facts: check them before stating them. A time
 listed under "Time check" is not held by the records cited with it: take it from a record before quoting it.
+An evidence ID listed under "ID check" is in no collected record: never cite it.
 If new evidence contradicts it, say so. Text it quotes from evidence is still evidence (rule 4).
 <dossier>
 {text}
@@ -110,7 +111,7 @@ def latest() -> dict:
 
 
 # When a dossier is too long for the prompts, sections are kept in this order of importance.
-KEEP_FIRST = ("time check", "gaps", "timeline", "findings", "key entities", "hypotheses", "contradictions")
+KEEP_FIRST = ("time check", "id check", "gaps", "timeline", "findings", "key entities", "hypotheses", "contradictions")
 
 
 def fit(text: str, limit: int = PROMPT_CHARS) -> str:
@@ -192,10 +193,12 @@ def investigate(llm_with_tools, finalizer, usage=None, emit=None, extra: str = "
     if not answer.strip():
         raise DossierError("The investigation ended without a dossier (see the notices above). Try again, or raise "
                            "agent.investigate_steps / investigate_tokens in the case settings.")
-    from copilot.citations import time_check_note, time_mismatches
+    from copilot.citations import id_check_note, time_check_note, time_mismatches, unknown_ids
     wrong = time_mismatches(answer, case_db, case_config.clock_offset_minutes)
-    entry = case_db.save_dossier(answer.strip() + time_check_note(wrong), used, usage.turn_total)
+    unknown = unknown_ids(answer, case_db)
+    entry = case_db.save_dossier(answer.strip() + time_check_note(wrong) + id_check_note(unknown), used,
+                                 usage.turn_total)
     case_db.log_query("investigate", f"dossier {entry['dossier_id']}: {len(entry['text'])} characters, "
                                      f"{used} steps, {usage.turn_total:,} tokens", 0)
     return {**entry, "seconds": round(time.monotonic() - started, 1), "tokens_in": usage.turn_input,
-            "tokens_out": usage.turn_output, "time_mismatches": len(wrong)}
+            "tokens_out": usage.turn_output, "time_mismatches": len(wrong), "unknown_ids": len(unknown)}

@@ -344,8 +344,25 @@ def remote_locations(db) -> list:
     return sorted(groups.values(), key=lambda g: g["first"]["timestamp_utc"] or "")
 
 
+def _time_of(value, evidence_id: str) -> dict:
+    ts = parse_timestamp(value) if value else None
+    return {"timestamp_utc": format_ts(ts), "evidence_id": evidence_id} if ts else {}
+
+
 def user_folder_programs(db) -> list:
-    """Executables Amcache saw in user folders (presence, not execution; the time is an inventory time)."""
+    """
+    Executables in user folders: when each was created there (the user-folder listing's BTime: when it
+    arrived) and what Amcache saw (presence with SHA1; its time is an inventory time, neither arrival nor run).
+    """
+    listed = {}
+    for row in _rows(db, "source LIKE 'Windows.Search.FileFinder%'"):
+        raw = _raw(row)
+        path = str(raw.get("OSPath") or "")
+        if not path or _flag(raw.get("IsDir")) or not _EXECUTABLE.search(path) or not _USER_WRITABLE.search(path):
+            continue
+        listed.setdefault(_same_file(path).replace("/", "\\"), {
+            "path": path, "created": _time_of(raw.get("BTime"), row["evidence_id"]),
+            "modified": _time_of(raw.get("MTime"), row["evidence_id"])})
     out, seen = [], set()
     for row in _rows(db, "source LIKE 'Windows.Forensics.Amcache%' OR source LIKE 'Windows.System.Amcache%'"):
         raw = _raw(row)
@@ -355,8 +372,13 @@ def user_folder_programs(db) -> list:
         if "\\appdata\\local\\microsoft\\" in path.lower() or path.lower() in seen:
             continue
         seen.add(path.lower())
-        out.append({**_at(row), "path": path, "sha1": raw.get("SHA1") or raw.get("Hash") or raw.get("FileId")})
-    return out
+        item = {"path": path, "sha1": raw.get("SHA1") or raw.get("Hash") or raw.get("FileId"),
+                "inventoried": _at(row)}
+        on_disk = listed.pop(_same_file(path).replace("/", "\\"), {})
+        out.append({**item, **{k: v for k, v in on_disk.items() if k != "path"}})
+    out += listed.values()                   # listed in a user folder, not in Amcache
+    out = [{k: v for k, v in item.items() if v} for item in out]
+    return sorted(out, key=lambda p: (p.get("created") or p.get("inventoried") or {}).get("timestamp_utc") or "")
 
 
 def renamed_content(db) -> list:

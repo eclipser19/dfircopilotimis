@@ -97,3 +97,15 @@ def test_a_long_dossier_keeps_its_gaps_and_leaves_out_whole_sections():
     assert "## Gaps\n- web logs not collected" in fitted and "## Intrusion timeline" in fitted
     assert "## Hypotheses" not in fitted and fitted.endswith("[... left out for length: Hypotheses]")
     assert dossier.fit("short", 4000) == "short"
+
+
+def test_evidence_ids_no_record_has_are_flagged_in_the_stored_dossier(case):
+    case.ingest_artifact_results([{"EventTime": "2020-09-19T03:36:23Z", "Message": "rdp client to 10.42.85.115"}],
+                                 "S", "H", "C.1")
+    eid = case.query_timeline()["events"][0]["evidence_id"]
+    llm = ScriptedLLM(AIMessage(content=f"## Timeline\n- RDP out (`{eid}`, `cb6f5cb1c071d7d6`)\n## Gaps\n- none"))
+    entry = dossier.investigate(llm, llm, emit=lambda *a: None)
+    assert entry["unknown_ids"] == 1
+    assert "## ID check (automatic, no model)" in entry["text"] and "`cb6f5cb1c071d7d6`" in entry["text"].split("ID check")[1]
+    assert eid not in entry["text"].split("ID check")[1]
+    assert "\"ID check\" is in no collected record" in build_system_prompt(case_config)

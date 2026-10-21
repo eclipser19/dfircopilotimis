@@ -249,3 +249,19 @@ def test_credentials_used_for_other_hosts_and_shortcuts_to_them_are_leads(case):
         "Internet folder (FTP or WebDAV location)"] and remote["198.51.100.7"]["examples"][0].endswith("198.51.100.7.lnk")
     summary = json.loads(tools.case_summary.invoke({}))["leads"]
     assert summary["credentials_used_for_other_hosts"] and summary["remote_locations_opened"]
+
+
+def test_programs_in_user_folders_carry_when_they_arrived(case):
+    case.ingest_artifact_results([
+        {"FullPath": "c:\\users\\svc\\desktop\\payload.exe", "SHA1": "ab" * 20, "Timestamp": "2024-02-07T21:00:10Z"},
+    ], "Windows.Forensics.Amcache/InventoryApplicationFile", client_id="C.1")
+    case.ingest_artifact_results([
+        {"OSPath": "\\\\.\\C:\\Users\\svc\\Desktop\\payload.exe", "IsDir": False, "Size": 10,
+         "BTime": "2024-02-06T20:13:40Z", "MTime": "2024-02-06T20:13:41Z"},
+        {"OSPath": "C:\\Users\\svc\\Downloads\\tool.exe", "IsDir": False, "BTime": "2024-02-05T23:14:00Z"},
+        {"OSPath": "C:\\Users\\svc\\Desktop\\notes.txt", "IsDir": False, "BTime": "2024-02-05T23:00:00Z"},
+    ], "Windows.Search.FileFinder", client_id="C.1")
+    tool, payload = leads.user_folder_programs(case)                     # in order of arrival
+    assert tool["path"].endswith("tool.exe") and "inventoried" not in tool          # listed only
+    assert payload["created"]["timestamp_utc"].startswith("2024-02-06T20:13:40")     # arrival, not Amcache's time
+    assert payload["inventoried"]["timestamp_utc"].startswith("2024-02-07T21:00:10") and payload["sha1"]

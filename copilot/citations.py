@@ -191,6 +191,24 @@ def time_mismatches(text: str, db, offset_minutes: int = 0, tolerance: int = 2) 
     return out
 
 
+def unknown_ids(text: str, db) -> list:
+    """Evidence IDs a text cites that no collected record has (a model that garbled or made one up)."""
+    ids = list(dict.fromkeys(EVIDENCE_RE.findall(text or "")))
+    if not ids:
+        return []
+    known = {r[0] for r in db.conn.execute(
+        f"SELECT evidence_id FROM records WHERE evidence_id IN ({','.join('?' * len(ids))})", ids)}
+    return [i for i in ids if i not in known]
+
+
+def id_check_note(ids: list) -> str:
+    """The unknown IDs as a section to append to the text they were found in ("" when there are none)."""
+    if not ids:
+        return ""
+    return ("\n\n## ID check (automatic, no model)\nNo collected record has these evidence IDs: never cite them; "
+            "find the record the statement rests on again: " + ", ".join(f"`{i}`" for i in ids[:30]))
+
+
 def time_check_note(mismatches: list) -> str:
     """The mismatches as a section to append to the text they were found in ("" when there are none)."""
     if not mismatches:
