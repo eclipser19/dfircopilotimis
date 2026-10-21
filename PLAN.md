@@ -142,8 +142,9 @@ a change to the agent, to check nothing broke.
    investigation turn per phase group.
 4. **Measure properly.**
    - Two runs per benchmark after each change, recorded in BENCHMARKS.md.
-   - Each run saves what it ran with: commit and uncommitted changes and the data source (done),
-     case and server settings, knowledge and lesson versions, model settings, normalizer version.
+   - ~~Each run saves what it ran with~~ done: commit and local changes, data source, and (`f3e31c8`)
+     a hash per knowledge file, the lessons file's hash, the normalizer version, the case file's hash,
+     the model and the step, token, row and wait limits, in the scorecard header.
    - ~~Negated claims~~ done (`2fe699f`): a fact named only to deny or doubt it doesn't count.
    - Scoring also checks dates (not only times of day) and whether cited records support the
      sentence. Forbidden claims and
@@ -188,9 +189,11 @@ a change to the agent, to check nothing broke.
    of the USN filter (Windows updates create thousands). The DC kept missing `secret.zip` (only in the
    USN journal); CorporateSecrets' secret document and its archive without an extension were in user
    folders no triage listed.
-8. **Speed.** Per-step timings in the run log (to tell slow model calls from slow Velociraptor);
-   collect triage artifacts in parallel; a shorter system prompt and fewer tools once the leads
-   carry more of the work.
+8. **Speed.** ~~Per-step timings~~ done (`f3e31c8`): the scorecard says how much time went to the
+   model, collections, memory analysis and other tools, per question and in all, and how long the
+   triage took. Next, from those numbers: collect triage artifacts in parallel (each already waits at
+   most `collection_wait_seconds` before the next starts, so only measurements show whether more
+   overlap helps); a shorter system prompt and fewer tools once the leads carry more of the work.
 9. **Prompt rewrite** once the tools are stable: fewer, shorter rules.
 10. **Release.**
     - A person reviews findings before they reach a report.

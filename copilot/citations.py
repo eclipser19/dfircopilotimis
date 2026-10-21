@@ -139,6 +139,7 @@ _T = r"(\d{2}:\d{2}:\d{2})(?:\.\d+)?"
 _UTC_TIMES = re.compile(_T + r"(?:\s*(?:[–—-]|to)\s*" + _T + r")?\s*UTC")
 _ISO_UTC = re.compile(r"(?<![\d:])" + _T + r"Z(?![0-9A-Za-z])")        # 2024-02-05T23:28:30Z, 20:46:53.2285Z
 _RECORDED_TIMES = re.compile(r"recorded\s+" + _T + r"(?:\s*(?:[–—-]|to)\s*" + _T + r")?")
+_IN_FIELDS = re.compile(r"(?<![\d:])((?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d)")
 
 
 def _seconds(hms: str) -> int:
@@ -151,7 +152,8 @@ def time_mismatches(text: str, db, offset_minutes: int = 0, tolerance: int = 2) 
     Times in a text that none of the records cited next to them holds (no LLM): a model that shifted
     a time by hand, or copied the wrong one, shows up here. Per line, every time given as recorded
     (or, without a clock offset, as UTC; with one, a UTC time without its recorded twin is shifted
-    back) must be within `tolerance` seconds of a timestamp of one of the line's cited records.
+    back) must be within `tolerance` seconds of a timestamp of one of the line's cited records, or of a
+    time written in one of their fields (a task's trigger, a key's last write: the record holds it).
     Lines citing nothing, or only records without timestamps, are not checked.
     Returns [{"line", "time", "cited": {evidence_id: [recorded times]}}].
     """
@@ -178,6 +180,9 @@ def time_mismatches(text: str, db, offset_minutes: int = 0, tolerance: int = 2) 
         if not cited:
             continue
         held = {_seconds(t) for times in cited.values() for t in times}
+        for evidence_id in cited:
+            raw = db.conn.execute("SELECT raw_data FROM records WHERE evidence_id = ?", (evidence_id,)).fetchone()
+            held.update(_seconds(t) for t in _IN_FIELDS.findall(str(raw[0] if raw else "")))
         for t in dict.fromkeys(recorded):
             s = _seconds(t)
             if not any(min(abs(s - h), 86400 - abs(s - h)) <= tolerance for h in held):

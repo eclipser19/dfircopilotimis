@@ -92,3 +92,15 @@ def test_the_agent_answer_comes_back_with_repaired_ids(case):
     history = [SystemMessage(content="s"), HumanMessage(content="q")]
     answer = run_turn(LLM(), history, 5, emit=lambda *a: None)
     assert answer == f"The service was installed (`{real}`)." and history[-1].content == answer
+
+
+def test_a_time_written_in_the_cited_record_is_not_flagged(case):
+    case.ingest_artifact_results([{"EventTime": "2024-02-06T21:49:21Z", "EventID": 4698, "Channel": "Security",
+                                   "EventData": {"TaskName": "\\backup",
+                                                 "TaskContent": "<StartBoundary>2024-02-09T21:46:24</StartBoundary>"}}],
+                                 "Windows.EventLogs.EvtxHunter", client_id=CLIENT)
+    eid = case.query_timeline()["events"][0]["evidence_id"]
+    held = f"- The task was registered at 21:49:21 UTC and set to run at 21:46:24 UTC on 9 February (`{eid}`)."
+    assert citations.time_mismatches(held, case) == []                      # its timestamp and its trigger
+    shifted = f"- The task was registered at 22:49:21 UTC (`{eid}`)."
+    assert [m["time"] for m in citations.time_mismatches(shifted, case)] == ["22:49:21"]
