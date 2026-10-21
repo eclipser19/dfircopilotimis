@@ -15,6 +15,8 @@
 - {id: 4702, channel: Security, meaning: Scheduled task updated}
 - {id: 4720, channel: Security, meaning: User account created}
 - {id: 4724, channel: Security, meaning: Password reset attempted}
+- {id: 4725, channel: Security, meaning: User account disabled}
+- {id: 4726, channel: Security, meaning: User account deleted}
 - {id: 4728, channel: Security, meaning: Member added to a security-enabled global group}
 - {id: 4732, channel: Security, meaning: Member added to a security-enabled local group, details: e.g. local Administrators.}
 - {id: 4756, channel: Security, meaning: Member added to a security-enabled universal group}

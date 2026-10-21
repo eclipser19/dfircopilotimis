@@ -73,7 +73,11 @@ def test_times_the_model_shifted_are_flagged_in_the_stored_dossier(case):
     entry = dossier.investigate(llm, llm, emit=lambda *a: None)
     assert entry["time_mismatches"] == 1
     assert "## Time check (automatic, no model)" in entry["text"] and "recorded 04:36:23 is not a time" in entry["text"]
-    assert "A time\nlisted under \"Time check\" is wrong" in build_system_prompt(case_config)
+    assert "A time\nlisted under \"Time check\" is not held" in build_system_prompt(case_config)
+
+    llm = ScriptedLLM(AIMessage(content=f"## Timeline\n- **2020-09-19T02:36:23Z** RDP out (`{eid}`)\n"
+                                        f"- **2020-09-19T02:37:00.25Z** RDP out (`{eid}`)\n## Gaps\n- none"))
+    assert dossier.investigate(llm, llm, emit=lambda *a: None)["time_mismatches"] == 1   # ISO times are UTC too
 
 
 def test_the_checklists_the_case_needs_come_with_the_investigation(case, monkeypatch):

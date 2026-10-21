@@ -37,7 +37,8 @@ TRIAGE_WAIT_MINUTES = 60     # how long a run waits for triage collections still
 TRIAGE_POLL_SECONDS = 30
 RUN_PREFIX = "bench-"
 CONTEXT_CHARS = 400          # how far from a fact's words its time may be
-_TIME_RE = re.compile(r"(?<![\d:])([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?(?![\d:])")
+# A time may end a label ("**5 February 23:28:30:** ..."), but not be part of a longer one ("00:12:34:56").
+_TIME_RE = re.compile(r"(?<![\d:])([01]?\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?(?!\d|:\d)")
 _RECORDED_LABELS = ("recorded", "host time", "host clock", "local time")
 
 

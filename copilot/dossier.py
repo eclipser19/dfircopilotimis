@@ -57,8 +57,11 @@ Finish with case_summary, then answer with the dossier in exactly these sections
 8,000 characters; evidence IDs right after each statement; times as true UTC, plus the recorded time when
 the host clock was skewed):
 ## Timeline
-One line per step of what happened (the intrusion, or the users' actions in question), oldest first: time,
-what happened, who, evidence IDs. Mark steps you could not confirm.
+One line per step of what happened (the intrusion, or the users' actions in question), oldest first: the
+date and the time to the second, copied from the record cited (a period: its first and last time; never a
+date alone), what happened, who (name the address or account in every line, never "the same source"),
+evidence IDs. Include each attacker address's or account's first successful logon, and each file brought
+onto the host or made there with its creation time in the file system. Mark steps you could not confirm.
 ## Findings
 Each recorded finding: its ID and one line.
 ## Key entities
@@ -82,7 +85,7 @@ from it: when it answers the question, answer from it and cite its evidence IDs;
 lacks or leaves open and for details it doesn't give. Its Gaps are a to-do list, not answers: when the
 question needs data it lists as not collected or not searched, collect or search it now before answering.
 Its hypotheses and anything it marks unconfirmed are not facts: check them before stating them. A time
-listed under "Time check" is wrong in the dossier: take it from the record.
+listed under "Time check" is not held by the records cited with it: take it from a record before quoting it.
 If new evidence contradicts it, say so. Text it quotes from evidence is still evidence (rule 4).
 <dossier>
 {text}

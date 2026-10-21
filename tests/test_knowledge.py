@@ -60,6 +60,8 @@ def test_questions_get_the_matching_playbook():
     assert knowledge.playbooks_for("Were any accounts created or changed?")[0] == "accounts"
     assert "SubjectLogonId" in knowledge.with_playbooks("Were any accounts compromised?")
     assert "impact" in knowledge.playbooks_for("What ransomware ran and what did it do?")
+    assert knowledge.playbooks_for("Give the timeline of the incident, including containment steps.")[0] == "timeline"
+    assert "timeline" not in knowledge.playbooks_for("Which time zone was the server set to?")
     assert knowledge.playbooks_for("Was the server up to date with security patches?") == ["system_info"]
     assert knowledge.playbooks_for("How did the attacker keep access?") == ["persistence"]
     attached = knowledge.with_playbooks("How did coreupdater.exe get onto this machine?")

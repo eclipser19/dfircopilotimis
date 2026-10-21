@@ -57,6 +57,10 @@ def test_times_are_scored_as_corrected_utc_and_recorded_ones_are_not_mistakes(tm
     far = "coreupdater.exe was downloaded. " + "x" * 600 + " Something else happened at 02:24:06 UTC."
     assert not benchmark.score_answer(far, spec["questions"][1], spec)["facts"][0]["time_ok"]   # too far away
 
+    timeline = "- **5 February 02:24:06:** coreupdater.exe was downloaded."  # a time as a list item's label
+    assert benchmark.score_answer(timeline, spec["questions"][1], spec)["facts"][0]["time_ok"]
+    assert [t[3] for t in benchmark.answer_times("MAC 00:12:34:56:78:9a, at 7:05")] == ["7:05"]
+
 
 def test_citations_and_forbidden_claims(case, tmp_path):
     spec = benchmark.load_spec(_spec(tmp_path))

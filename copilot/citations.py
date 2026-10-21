@@ -137,6 +137,7 @@ def as_text(found: dict, width: int = 110) -> str:
 # ---------------------------------------------------------------- time check
 _T = r"(\d{2}:\d{2}:\d{2})(?:\.\d+)?"
 _UTC_TIMES = re.compile(_T + r"(?:\s*(?:[–—-]|to)\s*" + _T + r")?\s*UTC")
+_ISO_UTC = re.compile(r"(?<![\d:])" + _T + r"Z(?![0-9A-Za-z])")        # 2024-02-05T23:28:30Z, 20:46:53.2285Z
 _RECORDED_TIMES = re.compile(r"recorded\s+" + _T + r"(?:\s*(?:[–—-]|to)\s*" + _T + r")?")
 
 
@@ -162,6 +163,7 @@ def time_mismatches(text: str, db, offset_minutes: int = 0, tolerance: int = 2) 
         recorded = [t for m in _RECORDED_TIMES.finditer(line) for t in m.groups() if t]
         if not recorded:
             utc = [t for m in _UTC_TIMES.finditer(line) for t in m.groups() if t]
+            utc += [m.group(1) for m in _ISO_UTC.finditer(line)]
             recorded = [f"{(_seconds(t) + offset_minutes * 60) % 86400 // 3600:02d}:"
                         f"{(_seconds(t) + offset_minutes * 60) % 3600 // 60:02d}:"
                         f"{(_seconds(t) + offset_minutes * 60) % 60:02d}" for t in utc]

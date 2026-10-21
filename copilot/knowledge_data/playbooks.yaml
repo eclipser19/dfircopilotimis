@@ -47,6 +47,7 @@ execution:
   triggers: ['\bran\b', 'execut', 'launch', 'what (was )?run', 'started by', '\bcommands?\b']
   check:
     - 'What ran inside a session: session_activity lists 4688 processes carrying the session''s logon ID, and Prefetch, BAM and UserAssist run times in its window. Prefetch, BAM and UserAssist are execution evidence; Amcache and ShimCache only show a file was present.'
+    - 'For each tool, two times, each from its record: when it arrived (its file created: USN, MFT, the archive it was extracted from; an installer shows as its files and services, 7045, appearing) and when it ran (Prefetch, BAM, UserAssist, 4688). A time in the dossier tells where to look; quote the record''s.'
     - 'Typed commands in memory: consoles / cmdscan read conhost.exe (Windows 7+). On older Windows (no conhost.exe in pslist) they return nothing. Either way, list the command lines in one call: analyze_memory strings with words = the utilities you would expect (localgroup, net user, net+user, netsh, sc create, schtasks, wmic, powershell, certutil, whoami...; web-injected commands are URL-encoded, so single words or both forms); then windows.memsearch with a command found, to see which process held it.'
     - 'Commands sent through a web application: GET parameters are in the access log; POST bodies (injected commands, web shell forms) only in memory - windows.memsearch on the web server process and its parent/control process with words of likely commands, or strings. Search memory before writing that a command cannot be determined.'
     - 'The effects of a command are evidence of it when its text is lost: accounts created (Windows.Forensics.SAM), group changes (4732), firewall or remote-access settings, new services or tasks.'
@@ -168,6 +169,17 @@ anti_forensics:
     - 'Timestomping: first list the files the attacker touched after the intrusion start (USN, LNK in their session), then check each of them; Windows itself changes registry hives and logs, so BASIC_INFO_CHANGE on those is routine. USN BASIC_INFO_CHANGE on a file with no data change at the same moment = its timestamps (or attributes) were set by a program. Then compare that file''s MFT $SI (0x10) and $FN (0x30) times (Windows.NTFS.MFT, FileRegex on its name; SI_Lt_FN, USecZeros): $SI older than $FN, $SI times with zero fractions of a second (USecZeros) that differ from $FN, or times that do not fit its USN history, show the change. Check the files the attacker touched, not a sample; files dropped by malware (notes, payloads) too.'
     - Deletions in the USN journal; secure-delete tools (sdelete, cipher /w) in Prefetch.
     - Disabled logging or Defender (Defender 5001).
+
+timeline:
+  question: What happened, in order, and when?
+  triggers: ['\btimeline\b', 'chronolog', 'sequence of (events|actions)', 'in (what|which) order', 'containment']
+  check:
+    - 'Start from the dossier''s Timeline and case_summary (logon sources, sessions_to_check, account changes, tasks, services, timestamps_set_by_hand); before answering, look up the time of every step that lacks one (query_timeline, get_event_detail).'
+    - 'One line per step, oldest first, each starting with its date and time to the second, copied from the record it cites (true UTC, plus the recorded time when the clock is skewed). A period gives its first and last time, each from its record. A date alone, "later that day" or a count without times is not a step.'
+    - 'Steps the data usually has: each attacker address''s or account''s first and last successful logon (logon_summary first_success / last_success), accounts created or added to groups, each tool or payload brought onto the host (its creation time in the file system: USN or MFT; Amcache is an inventory time), executions, persistence created, archives made or deleted, notes dropped, logs cleared, the last attacker activity.'
+    - 'Name the actor in every line (address, account, logon ID), never "the same source": a line is often quoted on its own.'
+    - 'Containment and response: accounts disabled (4725) or deleted (4726), passwords reset (4724), shutdowns (1074, 6006), firewall, service or task changes after the attack. Say what was searched when none are found.'
+    - 'For each period the question names (before, on, after a date), say which collected sources cover it; a period without records is a gap in the collection, not proof that nothing happened.'
 
 timeline_basics:
   question: How to read times correctly?
