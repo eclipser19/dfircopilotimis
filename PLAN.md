@@ -52,8 +52,8 @@ evidence dump for building keys. Four benchmarks (`szechuan-dc`, `injector`, `ou
 
 - **Large images.** On the OU server (~270,000 logon events) runs without a dossier took 45-110
   minutes and scored around 50%, each question re-investigating from scratch (300-500k tokens).
-  With the dossier and the leads two runs scored 80.0% and 78.7% in 25-37 minutes (*entry* 5/6,
-  *ransomware* 5/5); their times are weaker (15-17/26: steps given by date or range only), and both
+  With the dossier and the leads three runs scored 78.7-80.0% in 18-37 minutes (*entry* 5/6,
+  *ransomware* 5/5); their times are weaker (15-17/26: the right step dated by another event), and all
   missed the patch level's KB numbers, the explicit-credential logons and one remote address. The
   timeline playbook (`26a6528`) targets the times; two leads (credentials used for other hosts,
   shortcuts to other hosts) and the Windows Update events for the KB numbers (`3e218eb`) target the
@@ -166,7 +166,7 @@ a change to the agent, to check nothing broke.
    - Autostart entries that point into user folders or through scripting tools (with the services and
      tasks leads: persistence that differs from the operating system's own).
    - Measured: DC 95.7% strictly (20261021-094310; 100% as run), the timestomp found again after two
-     misses; OU 80.0% and 78.7% (20261021-111449, -123334; ~50% before).
+     misses; OU 80.0%, 78.7% and 80.0% (20261021-111449, -123334, -134744; ~50% before).
 6. ~~**Durable investigations.**~~ Done:
    - Questions, the investigation, the triage and decided approvals run as jobs in a thread pool of
      the server (`copilot/jobs.py`), not in the page: a reload, a closed tab or another computer
