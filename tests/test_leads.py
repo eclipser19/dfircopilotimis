@@ -119,3 +119,97 @@ def test_web_searches_are_decoded_from_history_urls_per_user_and_browser(case):
     assert out["web_searches"][0]["engine"] == "Google" and out["web_searches"][0]["evidence_id"]
     [video] = out["youtube_videos_opened"]
     assert (video["title"], video["video"], video["user"]) == ("How To Hack", "abc123", "jim")
+
+
+def _intrusion(case):
+    """An RDP intrusion, as the triage and the code's own checks would collect it."""
+    events = [
+        _logon(4624, "2020-09-19T01:00:00Z", "Administrator", "10.42.85.115", "DESKTOP-1", 10, "0x10"),   # the admin
+        _logon(4624, "2020-09-19T02:21:48Z", "Administrator", "194.61.24.102", "kali", 10, "0x510986"),
+        _logon(4624, "2020-09-19T02:21:49Z", "Administrator", "194.61.24.102", "kali", 10, "5310900"),  # its twin
+        {"EventTime": "2020-09-19T02:23:10Z", "EventID": 4688, "Channel": "Security",
+         "EventData": {"NewProcessName": "C:\\Windows\\System32\\cmd.exe", "CommandLine": "cmd /c whoami",
+                       "SubjectUserName": "Administrator", "SubjectLogonId": "5310854"}},
+        {"EventTime": "2020-09-19T02:27:49Z", "EventID": 7045, "Channel": "System",
+         "EventData": {"ServiceName": "coreupdater", "ImagePath": "C:\\Windows\\System32\\coreupdater.exe"}},
+        {"EventTime": "2020-09-19T02:57:40Z", "EventID": 4634, "Channel": "Security",
+         "EventData": {"TargetUserName": "Administrator", "TargetLogonId": "0x510986", "LogonType": 10}},
+    ]
+    case.ingest_artifact_results(events, "Windows.EventLogs.EvtxHunter", client_id="C.1")
+    case.ingest_artifact_results([{"event_time": "2020-09-19T02:24:50Z", "file_name": "COREUPDATER.EXE",
+                                   "prefetch_ctime": "2020-09-01T00:00:00Z",
+                                   "source": "C:\\Windows\\Prefetch\\COREUPDATER.EXE-1.pf", "prefetch_count": 1}],
+                                 "Windows.Timeline.Prefetch", client_id="C.1")
+    case.ingest_artifact_results([
+        {"Timestamp": "2020-09-19T02:32:39Z", "Filename": "Secret.zip", "OSPath": "C:\\FileShare\\Secret.zip",
+         "Reason": ["FILE_CREATE"]},
+        {"Timestamp": "2020-09-19T02:38:00Z", "Filename": "Beth_Secret.txt",
+         "OSPath": "C:\\FileShare\\Secret\\Beth_Secret.txt", "Reason": ["BASIC_INFO_CHANGE"]},
+        {"Timestamp": "2020-09-19T02:40:00Z", "Filename": "SRUDB.dat", "OSPath": "C:\\Windows\\System32\\sru\\SRUDB.dat",
+         "Reason": ["BASIC_INFO_CHANGE"]}], "Windows.Forensics.Usn", client_id="C.1")
+    case.ingest_artifact_results([{"SourceFile": {"OSPath": "C:\\Users\\Administrator\\AppData\\Roaming\\Microsoft\\"
+                                                            "Windows\\Recent\\Szechuan Sauce.lnk",
+                                                  "Mtime": "2020-09-19T02:32:21Z"},
+                                   "LinkTarget": {"LinkTarget": "C:\\FileShare\\Secret\\Szechuan Sauce.txt"}}],
+                                 "Windows.Forensics.Lnk", client_id="C.1")
+    case.ingest_artifact_results([
+        {"OSPath": "\\\\.\\C:\\FileShare\\Secret\\Beth_Secret.txt", "FileName": "Beth_Secret.txt",
+         "Created0x10": "2020-08-01T00:00:00Z", "Created0x30": "2020-09-18T21:39:04.5Z",
+         "LastRecordChange0x10": "2020-09-19T02:38:00.25Z", "SI_Lt_FN": True, "USecZeros": True, "IsDir": False},
+        {"OSPath": "\\\\.\\C:\\Windows\\System32\\x.dll", "FileName": "x.dll", "SI_Lt_FN": True,
+         "Created0x10": "2020-08-01T00:00:00Z"}], "Windows.NTFS.MFT", client_id="C.1")
+
+
+def test_sessions_tie_what_happened_to_the_logon_that_did_it(case):
+    _intrusion(case)
+    found = {s["ip"]: s for s in leads.sessions(case)}
+    rdp = found["194.61.24.102"]
+    assert set(rdp["logon_ids"]) == {"5310854", "5310900"} and rdp["logon_types"] == ["RDP"]   # one session
+    assert rdp["scope"] == "external" and rdp["logoff"]["timestamp_utc"].startswith("2020-09-19T02:57:40")
+    assert [i["what"][:4] for i in rdp["by_logon_id"]] == ["4688"]                 # proven by its logon ID
+    window = rdp["same_time_window"]
+    assert any("coreupdater" in i["what"] for i in window["persistence"])            # the service, by time
+    assert [i["time_field"] for i in window["programs_run"]] == ["event_time"]      # a run, not the .pf's times
+    assert {i["what"].split(";")[-1].strip() for i in window["files"] if "Secret.zip" in i["what"]}
+    admin = found["10.42.85.115"]
+    assert admin["by_logon_id"] == [] and admin["logoff"].startswith("none recorded")
+    shown = leads.leads(case)["sessions_to_check"]
+    assert shown[0]["ip"] == "10.42.85.115" and shown[1]["ip"] == "194.61.24.102"   # oldest first
+    assert shown[1]["by_logon_id"]["count"] == 1 and "same_time_window" in shown[1]
+    full = json.loads(tools.session_activity.invoke({"logon_id": "0x510986"}))
+    assert [s["ip"] for s in full] == ["194.61.24.102"]
+
+
+def test_hand_set_timestamps_and_odd_autostarts_are_leads(case):
+    _intrusion(case)
+    [top] = leads.timestamp_changes(case)                       # the MFT and USN records of one file
+    assert top["path"].endswith("\\FileShare\\Secret\\Beth_Secret.txt")
+    assert top["signs"] == ["$SI earlier than $FN", "whole-second $SI times",
+                            "USN BASIC_INFO_CHANGE without a data change"] and top["usn_evidence_id"]
+    assert top["timestamp_utc"].startswith("2020-09-19T02:38:00")                    # when the entry changed
+    case.ingest_artifact_results([
+        {"Name": "updater", "OSPath": "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\updater",
+         "Details": "C:\\Users\\Public\\upd.exe -s", "Enabled": "enabled"},
+        {"Name": "OneDrive", "OSPath": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\OneDrive",
+         "Details": "\"C:\\Users\\bob\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe\" /background"},
+        {"Name": "SecurityHealth", "OSPath": "HKLM\\...\\Run\\SecurityHealth",
+         "Details": "C:\\Windows\\System32\\SecurityHealthSystray.exe"},
+        {"Name": "helper", "OSPath": "HKLM\\...\\Run\\helper",
+         "Details": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -w hidden -enc AAA"},
+    ], "Windows.Sys.StartupItems", client_id="C.1")
+    assert {a["name"]: a["look"] for a in leads.autostart(case)} == {"updater": "user-writable path",
+                                                                     "helper": "scripting/admin tool"}
+
+
+def test_the_code_reads_the_mft_records_of_the_files_the_sessions_touched(case, monkeypatch):
+    from copilot import checks, collection
+    from conftest import FakeVQL
+    _intrusion(case)
+    assert checks.touched_files(case) == ["Szechuan Sauce.txt", "Secret.zip", "Beth_Secret.txt"]   # in time order
+    vql = FakeVQL(artifact_params=["FileRegex", "DateAfter", "DateBefore"])
+    monkeypatch.setattr(collection, "get_vql", lambda: vql)
+    monkeypatch.setattr(collection, "time", __import__("types").SimpleNamespace(monotonic=lambda: 0, sleep=lambda s: None))
+    note = checks.before_investigation()
+    sent = json.loads(next(env["DfirSpec"] for q, env in vql.calls if "collect_client" in q))["Windows.NTFS.MFT"]
+    assert sent["FileRegex"] == "(?i)^(Szechuan Sauce\\.txt|Secret\\.zip|Beth_Secret\\.txt)$"
+    assert sent["DateAfter"] == "" and "timestamps_set_by_hand" in note

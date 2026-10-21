@@ -146,14 +146,19 @@ a change to the agent, to check nothing broke.
      the same image with `--from-case <that run's case>` (done: only its triage is copied).
    - ~~Run CorporateSecrets once, blind.~~ Done: 60.7% (BENCHMARKS.md). Its misses led to generic fixes,
      so no blind benchmark is left: an unbiased number now needs a new image.
-5. **More leads in code.** Done: files whose content is not their name, web searches and YouTube
-   videos (with the CorporateSecrets fixes). Still to do:
-   - What each attacker session did: files written, tasks and services created, programs run
-     between the logon and its logoff (join on logon ID and time).
-   - Executions from Prefetch, 4688 and BAM in those windows.
-   - Timestomping candidates ($SI vs $FN, zero fractions).
-   - Persistence that differs from the operating system's own.
-   - Each lead keeps showing its records and join keys, and never presents presence as execution.
+5. ~~**More leads in code.**~~ Done, not yet measured:
+   - Files whose content is not their name, web searches and YouTube videos (with the CorporateSecrets
+     fixes).
+   - What each session did, from logon to logoff: events carrying its logon ID (4688 processes, tasks,
+     account changes) as proof; programs run (Prefetch, BAM, UserAssist run times; Amcache never
+     counts), persistence and files in its time window, labelled as time only (`sessions_to_check`,
+     `session_activity`).
+   - Timestamps set by hand: MFT SI_Lt_FN / USecZeros and USN BASIC_INFO_CHANGE without a data change.
+     Before each investigation the code itself reads the MFT records of the files the sessions to check
+     touched (`copilot/checks.py`): the DC's timestomp no longer depends on the model picking the file.
+   - Autostart entries that point into user folders or through scripting tools (with the services and
+     tasks leads: persistence that differs from the operating system's own).
+   - Next run to watch: the DC's *anti_forensics* question (the timestomp was missed in the last two runs).
 6. ~~**Durable investigations.**~~ Done:
    - Questions, the investigation, the triage and decided approvals run as jobs in a thread pool of
      the server (`copilot/jobs.py`), not in the page: a reload, a closed tab or another computer

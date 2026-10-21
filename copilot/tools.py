@@ -426,6 +426,38 @@ def case_summary() -> str:
 
 
 @tool
+def session_activity(account: Optional[str] = None, ip: Optional[str] = None, logon_id: Optional[str] = None) -> str:
+    """
+    Interactive sessions (console, RDP, unlock) in full: logon and logoff, events that carry the session's
+    logon ID (processes, tasks, account changes: proof it was this session), and programs run, persistence
+    and files with a time in its window (time only, not proof of who). case_summary shows the few to check.
+    Args:
+        account: Only this account (substring).
+        ip: Only logons from this address.
+        logon_id: Only the session with this logon ID (hex or decimal).
+    """
+    from copilot import leads
+
+    def keep(s):
+        return ((not account or account.lower() in s["user"].lower()) and (not ip or s["ip"] == ip)
+                and (not logon_id or leads._key(logon_id) in s["logon_ids"]))
+    found = leads.sessions(case_db, everything=True, keep=keep)
+    case_db.log_query("session_activity", f"account={account} ip={ip} logon_id={logon_id}", len(found))
+    if not found:
+        return ("No interactive logon (4624 type 2, 7, 10 or 11) matches. Logons must be collected first "
+                "(Windows.EventLogs.RDPAuth, or EvtxHunter with 4624/4634/4647/4688).")
+    for s in found:
+        s.pop("_rank", None)
+        for kind, items in s["same_time_window"].items():
+            if len(items) > 30:
+                s["same_time_window"][kind] = items[:30] + [f"... {len(items) - 30} more (query_timeline the window)"]
+        if len(s["by_logon_id"]) > 40:
+            s["by_logon_id"] = s["by_logon_id"][:40] + [f"... {len(s['by_logon_id']) - 40} more"]
+    return _dump(found[:10] + ([f"... {len(found) - 10} more sessions: narrow by account, ip or logon_id"]
+                               if len(found) > 10 else []))
+
+
+@tool
 def logon_summary(ip: Optional[str] = None, account: Optional[str] = None,
                   start_time: Optional[str] = None, end_time: Optional[str] = None) -> str:
     """
@@ -970,7 +1002,7 @@ tools = [
     search_clients, collect_artifact, check_collection, list_collections,
     list_artifacts, describe_artifact, analyze_memory, list_memory_plugins,
     activity_histogram, context_window, query_timeline, search_iocs, pivot_entity, get_event_detail,
-    case_summary, logon_summary, record_finding, retract_finding, dfir_guide, find_data_location, propose_lesson,
+    case_summary, logon_summary, session_activity, record_finding, retract_finding, dfir_guide, find_data_location, propose_lesson,
     generate_report, export_case, export_results, export_evidence,
     list_cases, switch_case, create_case, update_case,
 ]

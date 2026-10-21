@@ -46,6 +46,7 @@ execution:
   question: What ran?
   triggers: ['\bran\b', 'execut', 'launch', 'what (was )?run', 'started by', '\bcommands?\b']
   check:
+    - 'What ran inside a session: session_activity lists 4688 processes carrying the session''s logon ID, and Prefetch, BAM and UserAssist run times in its window. Prefetch, BAM and UserAssist are execution evidence; Amcache and ShimCache only show a file was present.'
     - 'Typed commands in memory: consoles / cmdscan read conhost.exe (Windows 7+). On older Windows (no conhost.exe in pslist) they return nothing. Either way, list the command lines in one call: analyze_memory strings with words = the utilities you would expect (localgroup, net user, net+user, netsh, sc create, schtasks, wmic, powershell, certutil, whoami...; web-injected commands are URL-encoded, so single words or both forms); then windows.memsearch with a command found, to see which process held it.'
     - 'Commands sent through a web application: GET parameters are in the access log; POST bodies (injected commands, web shell forms) only in memory - windows.memsearch on the web server process and its parent/control process with words of likely commands, or strings. Search memory before writing that a command cannot be determined.'
     - 'The effects of a command are evidence of it when its text is lost: accounts created (Windows.Forensics.SAM), group changes (4732), firewall or remote-access settings, new services or tasks.'
@@ -80,6 +81,7 @@ persistence:
   question: How does it survive reboot or logon?
   triggers: ['persist', 'surviv', 'reboot', 'autostart', 'run key', 'scheduled task', '\bservices?\b', '(keep|stay)s? running', 'starts? (again|automatically)', 'keep(s|ing)? (their |its )?access', 'maintain(ed)? access', 'foothold']
   check:
+    - 'Start from case_summary: autostart_entries_to_check (Run keys and Startup folders pointing into user folders or through scripting tools), services_installed and scheduled_tasks_to_check list what differs from what Windows and installed programs set up; sessions_to_check shows persistence created inside each session''s window.'
     - Run/RunOnce keys and Startup folders (StartupItems).
     - 'Services: System 7045 / Security 4697, SYSTEM hive Services key.'
     - 'Scheduled tasks: Tasks folder, Security 4698, TaskScheduler/Operational 106.'
@@ -120,6 +122,7 @@ sessions:
   question: When did someone log on or off, and did they come back?
   triggers: ['log(ged)? ?(on|in|off|out)\b', 'logoff', 'logon', 'session', 'came back', 'come back', 'return(ed)?\b', '\bagain\b', 'reconnect', 'disconnect', 'restart', 'reboot', 'shut ?down']
   check:
+    - 'case_summary sessions_to_check and session_activity (by account, ip or logon_id) already pair each interactive session''s logon and logoff and list what happened in it: events carrying its logon ID (proof) and programs run, persistence and files in its time window (time only). Start from them.'
     - 'A session is one Logon ID (TargetLogonId): 4624 (logon; LogonType 10 RDP, 2 console, 7 unlock/reconnect, 3 network) -> 4647 (user chose log off) -> 4634 (session ended). Pair them by Logon ID, not by time.'
     - 'RDP (LocalSessionManager): 21 logon, 22 shell start, 24 disconnect, 25 reconnect, 23 logoff; Security 4779 disconnect / 4778 reconnect. A disconnect is not a logoff: the session and its programs (e.g. a backdoor) keep running until 23/4647.'
     - 'Restarts: System 1074 (who asked for the restart and with which program), 6006 clean stop, 6008 unexpected shutdown, 6005 log service start = boot. A restart ends every session; logons after it are new sessions.'
@@ -160,6 +163,7 @@ anti_forensics:
   question: Did the attacker cover tracks?
   triggers: ['clear(ed)? (the )?logs?', 'timestomp', 'anti.?forensic', '\bwip(e|ed)\b', 'cover(ed)? (their |its )?tracks', 'delet(e|ed) (the )?(logs?|evidence)']
   check:
+    - 'Start from case_summary timestamps_set_by_hand: files whose $SI times look set by hand ($SI earlier than $FN, whole seconds, a USN BASIC_INFO_CHANGE without a data change). Before an investigation the code reads the MFT records of the files touched in the sessions to check; a file not listed was checked only if its MFT record was collected: for another file, collect Windows.NTFS.MFT with FileRegex on its name.'
     - Log clearing (Security 1102, System 104), gaps in event logs.
     - 'Timestomping: first list the files the attacker touched after the intrusion start (USN, LNK in their session), then check each of them; Windows itself changes registry hives and logs, so BASIC_INFO_CHANGE on those is routine. USN BASIC_INFO_CHANGE on a file with no data change at the same moment = its timestamps (or attributes) were set by a program. Then compare that file''s MFT $SI (0x10) and $FN (0x30) times (Windows.NTFS.MFT, FileRegex on its name; SI_Lt_FN, USecZeros): $SI older than $FN, $SI times with zero fractions of a second (USecZeros) that differ from $FN, or times that do not fit its USN history, show the change. Check the files the attacker touched, not a sample; files dropped by malware (notes, payloads) too.'
     - Deletions in the USN journal; secure-delete tools (sdelete, cipher /w) in Prefetch.

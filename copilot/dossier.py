@@ -178,8 +178,10 @@ def investigate(llm_with_tools, finalizer, usage=None, emit=None, extra: str = "
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
     from copilot.agent import TokenUsage, _print_event, run_turn
     from copilot.prompts import build_system_prompt
+    from copilot import checks
     usage = usage or TokenUsage()
     steps, tokens = budget()
+    extra = checks.before_investigation(emit or _print_event) + extra      # the code's own checks come first
     history = [SystemMessage(content=build_system_prompt(case_config)), HumanMessage(content=prompt(extra))]
     started = time.monotonic()
     answer = run_turn(llm_with_tools, history, steps, usage, tokens, finalizer, emit or _print_event)

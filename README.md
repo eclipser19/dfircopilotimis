@@ -313,8 +313,15 @@ address (failures, successes, accounts, logon types, workstation names, and gues
 account and group changes, services installed, scheduled tasks with stored passwords or commands in
 user folders, log clearing and Defender events, downloads by origin, programs in user folders, files
 whose content is not what their name says (an archive without an extension, a program named like a
-picture), and the words users searched for (decoded from the search pages in their browser history, so
-odd spellings show as typed) with the YouTube videos they opened.
+picture), the words users searched for (decoded from the search pages in their browser history, so
+odd spellings show as typed) with the YouTube videos they opened, autostart entries that point into
+user folders or run a scripting tool, files whose timestamps look set by hand, and the interactive
+sessions worth a look (outside addresses first): each from logon to logoff, with what carries its
+logon ID (processes, tasks, account changes: proof it was this session) and what has a time inside
+it (programs run, persistence, files touched: time only, said as such). `session_activity` gives
+every session in full. Before an investigation the copilot itself reads the MFT records of the files
+those sessions touched, so a file whose timestamps were changed shows up whichever file the model
+would have thought to check.
 `logon_summary` gives every logon source on request. This replaces dozens of searches through
 hundreds of thousands of logon events, and keeps the answers to different questions consistent.
 

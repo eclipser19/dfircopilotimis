@@ -163,8 +163,14 @@ DESCRIPTION_TEMPLATES = [
                                              "[, referrer {ReferrerUrl}][, ZoneId {ZoneId}]"),
     # File types from the first bytes (YaraRule "@file_types": FileType_<type>, what it is in Meta).
     ("Generic.Detection.Yara.Glob*", "{OSPath} matched YARA rule {Rule}[ ({Meta.what})][, {Size} bytes]"),
+    # Execution evidence: the row's time is a run time (Prefetch: one of the last 8 runs; BAM: the last run).
+    ("Windows.Timeline.Prefetch*", "{file_name} ran (Prefetch)[, run count {prefetch_count}][, {source}]"),
+    ("Windows.Forensics.Bam*", "[{User} ]last ran {Binary} (BAM)"),
+    ("Windows.Sys.StartupItems*", "autostart [{Name}: ]{Details}[ ({Enabled})][ from {OSPath}]"),
+    ("Windows.NTFS.MFT*", "{OSPath}[ ({FileSize} bytes)][; $SI created {Created0x10}][, $FN created {Created0x30}]"
+                          "[; SI_Lt_FN={SI_Lt_FN}][, USecZeros={USecZeros}][, InUse={InUse}]"),
 ]
-NORMALIZER_VERSION = 6
+NORMALIZER_VERSION = 7
 _FIELD_RE = re.compile(r"\{([^{}]+)\}")
 
 # Fields that make the best one-line description, in order of preference.

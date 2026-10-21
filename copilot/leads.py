@@ -2,18 +2,23 @@
 Leads computed from the collected data without the LLM: who logged on from where (failures and
 successes per source address), account and group changes, new services and scheduled tasks, log
 clearing, Defender events, downloads, programs in user folders, files whose content is not what
-their name says, and what users searched for or watched on the web. Every item carries the evidence IDs to cite. They are starting points for the agent to confirm, not findings.
+their name says, what users searched for or watched on the web, the interactive sessions and what
+happened in each, autostart entries that point into user folders, and files whose timestamps look
+set by hand. Every item carries the evidence IDs to cite. They are starting points for the agent to confirm, not findings.
 
 Reading 100,000 logon records one search at a time cost the agent most of its budget and it still
 named the wrong source; grouping them here takes a second.
 """
+import fnmatch
 import ipaddress
 import json
 import re
 from collections import Counter
+from datetime import timedelta
 from urllib.parse import parse_qs, urlsplit
 
 from copilot import file_types
+from copilot.normalize import format_ts, parse_timestamp
 
 # Fields the normalizer puts at the start of an event's description (normalize.event_fields).
 _FIELD_RE = re.compile(r"(?:^|; )(LogonType|user|domain|ip|workstation|logon_id|by|by_logon_id|server|group|"
@@ -369,6 +374,252 @@ def web_server(db) -> list:
     return out
 
 
+# ---------------------------------------------------------------- sessions and what happened in them
+INTERACTIVE = {"2": "console", "7": "unlock or reconnect", "10": "RDP", "11": "cached console"}
+LOGOFF_EVENTS = ("4634", "4647")
+# Events that name the session they ran in (SubjectLogonId): tied to a session by its logon ID.
+IN_SESSION_EVENTS = {"4688": "process created", "4698": "task created", "4702": "task changed",
+                     "4697": "service installed", "5140": "share accessed", "1102": "Security log cleared",
+                     **ACCOUNT_EVENTS}
+FOLLOW_HOURS = 8           # a session without a recorded logoff is followed this long, or to its user's next logon
+SAME_SESSION_SECONDS = 5   # RDP and admin logons write two 4624s (a second, elevated token): one session
+# Records found by time alone (SQL LIKE on the source), and for programs, the fields that are run times.
+WINDOW_SOURCES = {
+    "programs_run": ("%Prefetch%", "Windows.Forensics.Bam%", "Windows.Registry.UserAssist%"),
+    "persistence": ("Windows.System.TaskScheduler%", "Windows.Sys.StartupItems%"),
+    "files": ("Windows.Forensics.Usn%", "Windows.Forensics.Lnk%", "Windows.Forensics.RecycleBin%",
+              "Windows.Analysis.EvidenceOfDownload%", "Windows.Search.FileFinder%", "Windows.NTFS.MFT%",
+              "Generic.Detection.Yara.Glob%"),
+}
+RUN_TIME_FIELDS = {"event_time", "bam_time", "lastexecution", "lastexecutionts"}
+PERSISTENCE_EVENTS = ("7045",)
+_SCOPE_RANK = {"external": 0, "no address recorded": 0, "unknown": 1, "internal": 2, "local": 3}
+
+
+def _key(value) -> str:
+    """Logon IDs are logged in hex (0x5108c6) or decimal (5310854) depending on the source: one form."""
+    text = str(value or "").strip().lower()
+    try:
+        return str(int(text, 16) if text.startswith("0x") else int(text))
+    except ValueError:
+        return text
+
+
+def _when(text: str):
+    return parse_timestamp(text) if text else None
+
+
+def _logons(db) -> list:
+    """Interactive logons (4624 of the types in INTERACTIVE), the two of one RDP or admin logon merged."""
+    found, seen = [], set()
+    for row in _rows(db, "event_id = '4624'"):
+        f = _fields(row["description"])
+        if f.get("LogonType") not in INTERACTIVE:
+            continue
+        user, ip = f.get("user") or "?", f.get("ip") or ""
+        ip = "" if ip in ("-", "::", "0.0.0.0", "::1", "127.0.0.1") else ip
+        if (row["first_seen"], user, ip, f.get("logon_id")) in seen:
+            continue                      # the same event collected by two artifacts
+        seen.add((row["first_seen"], user, ip, f.get("logon_id")))
+        start = _when(row["first_seen"])
+        twin = next((s for s in reversed(found[-20:]) if s["user"] == user and s["ip"] == ip
+                     and abs((start - s["_start"]).total_seconds()) <= SAME_SESSION_SECONDS), None)
+        if twin:
+            twin["logon_ids"].add(_key(f.get("logon_id")))
+            twin["logon_types"].add(INTERACTIVE[f["LogonType"]])
+            continue
+        found.append({"user": user, "ip": ip or "(local)", "scope": _scope(ip) if ip else "local",
+                      "logon_types": {INTERACTIVE[f["LogonType"]]}, "logon_ids": {_key(f.get("logon_id"))} - {""},
+                      "logon": _at(row), "_start": start})
+    return found
+
+
+def _ends(db, found: list):
+    """Each session's end: its logoff (4634/4647 of one of its logon IDs), else its user's next logon or
+    FOLLOW_HOURS later."""
+    logoffs = {}
+    for row in _rows(db, f"event_id IN {LOGOFF_EVENTS}"):
+        k = _key(_fields(row["description"]).get("logon_id"))
+        if k:
+            logoffs.setdefault(k, []).append(row)
+    for i, s in enumerate(found):
+        ends = [r for k in s["logon_ids"] for r in logoffs.get(k, []) if _when(r["first_seen"]) >= s["_start"]]
+        if ends:
+            last = max(ends, key=lambda r: r["first_seen"])
+            s["logoff"], s["_end"] = _at(last), _when(last["first_seen"])
+            continue
+        later = [o["_start"] for o in found[i + 1:] if o["user"] == s["user"]]
+        s["_end"] = min(later + [s["_start"] + timedelta(hours=FOLLOW_HOURS)])
+        s["logoff"] = f"none recorded: followed until {format_ts(s['_end'])}"
+
+
+def _item(row, text: str = None, field: str = None) -> dict:
+    item = {"timestamp_utc": row["timestamp_utc"] if "timestamp_utc" in row.keys() else row["first_seen"],
+            "evidence_id": row["evidence_id"], "what": (text or row["description"] or "")[:160]}
+    if field:
+        item["time_field"] = field
+    return item
+
+
+def _in_window(db, start: str, end: str) -> dict:
+    """Programs run, persistence and files with a time in [start, end], one entry per record."""
+    out = {kind: [] for kind in WINDOW_SOURCES}
+    likes = [(kind, pattern) for kind, patterns in WINDOW_SOURCES.items() for pattern in patterns]
+    where = " OR ".join("r.source LIKE ?" for _ in likes)
+    rows = db.conn.execute(
+        f"SELECT t.timestamp_utc, t.timestamp_desc, r.evidence_id, r.source, r.event_id, r.description "
+        f"FROM timeline t JOIN records r ON r.evidence_id = t.evidence_id "
+        f"WHERE t.timestamp_utc >= ? AND t.timestamp_utc <= ? AND ({where} OR r.event_id IN {PERSISTENCE_EVENTS + ('',)}) "
+        f"ORDER BY t.timestamp_utc", [start, end, *[p for _, p in likes]]).fetchall()
+    seen = set()
+    for row in rows:
+        if row["evidence_id"] in seen:
+            continue
+        kind = "persistence" if row["event_id"] in PERSISTENCE_EVENTS else next(
+            (k for k, p in likes if fnmatch.fnmatchcase(row["source"], p.replace("%", "*"))), None)
+        if kind is None:
+            continue
+        field = str(row["timestamp_desc"] or "")
+        if kind == "programs_run" and field.split(".")[-1].lower() not in RUN_TIME_FIELDS:
+            continue                      # a Prefetch file's own times are not run times
+        seen.add(row["evidence_id"])
+        out[kind].append(_item(row, field=field))
+    return out
+
+
+def sessions(db, everything: bool = False, keep=None, limit: int = 30) -> list:
+    """
+    Interactive sessions (console, RDP, unlock) and what happened in each, oldest first. `by_logon_id`:
+    events that name the session's logon ID (proof it was this session). `same_time_window`: programs run,
+    persistence and files with a time between the logon and the logoff, which only says when, not who.
+    Sessions from outside addresses come first; local sessions only when there are no others, unless
+    `everything`. `keep(session)` filters before the (costlier) window queries, which run for the `limit`
+    most telling sessions: outside addresses, then the most events with their logon ID.
+    """
+    found = _logons(db)
+    if not found:
+        return []
+    _ends(db, found)
+    by_id = {}
+    marks = ",".join("?" * len(IN_SESSION_EVENTS))
+    for row in _rows(db, f"event_id IN ({marks})", list(IN_SESSION_EVENTS)):
+        k = _key(_fields(row["description"]).get("by_logon_id"))
+        if k:
+            by_id.setdefault(k, []).append(row)
+    remote = [s for s in found if s["scope"] != "local"]
+    chosen = [s for s in (found if everything or not remote else remote) if keep is None or keep(s)]
+    for s in chosen:
+        s["_joined"] = sorted({r["evidence_id"]: r for k in s["logon_ids"] for r in by_id.get(k, [])}.values(),
+                              key=lambda r: r["first_seen"])
+    chosen = sorted(chosen, key=lambda s: (_SCOPE_RANK.get(s["scope"], 1), -len(s["_joined"])))[:limit]
+    out = []
+    for s in sorted(chosen, key=lambda s: s["logon"]["timestamp_utc"]):
+        start, end = s["logon"]["timestamp_utc"], format_ts(s["_end"])
+        joined = s["_joined"]
+        item = {k: v for k, v in s.items() if not k.startswith("_")}
+        item["logon_types"], item["logon_ids"] = sorted(s["logon_types"]), sorted(s["logon_ids"])
+        item["by_logon_id"] = [_item(r, f"{r['event_id']} {IN_SESSION_EVENTS.get(r['event_id'], '')}: "
+                                        f"{r['description']}") for r in joined]
+        item["same_time_window"] = _in_window(db, start, end)
+        item["_rank"] = (_SCOPE_RANK.get(s["scope"], 1), -(len(joined) + sum(map(len, item["same_time_window"].values()))))
+        out.append(item)
+    return out
+
+
+def _compact(session: dict, examples: int = 3) -> dict:
+    """A session as case_summary shows it: counts and the first few of each kind."""
+    short = {k: v for k, v in session.items() if k not in ("by_logon_id", "same_time_window", "_rank")}
+    if session["by_logon_id"]:
+        short["by_logon_id"] = {"count": len(session["by_logon_id"]), "first": session["by_logon_id"][:examples]}
+    window = {kind: {"count": len(items), "first": items[:examples]}
+              for kind, items in session["same_time_window"].items() if items}
+    if window:
+        short["same_time_window"] = window
+    return short
+
+
+def sessions_to_check(db, limit: int = 4) -> list:
+    """The sessions most worth a look (outside addresses, most activity), oldest first, compact."""
+    ranked = sorted(sessions(db), key=lambda s: s["_rank"])[:limit]
+    return [_compact(s) for s in sorted(ranked, key=lambda s: s["logon"]["timestamp_utc"])]
+
+
+# ---------------------------------------------------------------- autostart entries
+_OS_AUTOSTART = re.compile(r"(?i)^\"?[a-z]:\\(windows|program files( \(x86\))?)\\")
+
+
+def autostart(db) -> list:
+    """Run keys and Startup folder entries (Windows.Sys.StartupItems) that start something from a user-writable
+    folder or through a scripting or admin tool: what the operating system and installed programs don't do."""
+    out = []
+    for row in _rows(db, "source LIKE 'Windows.Sys.StartupItems%'"):
+        raw = _raw(row)
+        command = str(raw.get("Details") or "")
+        target = command if isinstance(raw.get("Details"), str) else ""
+        where = str(raw.get("OSPath") or "")
+        reasons = [why for pattern, why in ((_USER_WRITABLE, "user-writable path"), (_LOLBINS, "scripting/admin tool"))
+                   if pattern.search(target) or (pattern is _USER_WRITABLE and "\\startup\\" in where.lower())]
+        if not reasons or (_OS_AUTOSTART.search(target) and not _LOLBINS.search(target)):
+            continue
+        if "\\appdata\\local\\microsoft\\" in target.lower() and not _LOLBINS.search(target):
+            continue                      # per-user Microsoft programs (OneDrive, Teams) install there
+        out.append({**_at(row), "name": raw.get("Name"), "starts": target[:300] or where[:300], "entry": where[:300],
+                    "enabled": raw.get("Enabled"), "look": ", ".join(reasons)})
+    return out
+
+
+# ---------------------------------------------------------------- timestamps set by hand
+_OS_FILES = re.compile(r"(?i)^(\\\\[.?]\\)?[a-z]:\\(windows|\$extend|system volume information|"
+                       r"programdata\\microsoft\\windows defender)\\")
+
+
+def _flag(value) -> bool:
+    return value is True or str(value).lower() == "true"
+
+
+def _same_file(path: str) -> str:
+    """One key for a path as the MFT (\\\\.\\C:\\...) and the USN journal (C:\\...) write it."""
+    return re.sub(r"^\\\\[.?]\\", "", path).lower()
+
+
+def timestamp_changes(db) -> list:
+    """
+    Files whose $STANDARD_INFORMATION times (which programs can set) look set by hand, from collected MFT
+    records: earlier than the $FILE_NAME times (SI_Lt_FN) and/or whole seconds (USecZeros); and USN records
+    of a timestamp or attribute change (BASIC_INFO_CHANGE) without a data change. Operating-system folders
+    are left out. Candidates: a moved file can show SI_Lt_FN and a file extracted from an archive USecZeros;
+    both together, or with a matching USN change, are the strong ones.
+    """
+    found = {}
+    for row in _rows(db, "source LIKE 'Windows.NTFS.MFT%'"):
+        raw = _raw(row)
+        path = str(raw.get("OSPath") or raw.get("FullPath") or "")
+        if not path or _flag(raw.get("IsDir")) or _OS_FILES.search(path):
+            continue
+        signs = [name for name, key in (("$SI earlier than $FN", "SI_Lt_FN"), ("whole-second $SI times", "USecZeros"))
+                 if _flag(raw.get(key))]
+        if not signs:
+            continue
+        changed = raw.get("LastRecordChange0x10")
+        when = format_ts(parse_timestamp(changed)) if changed and parse_timestamp(changed) else row["first_seen"]
+        found.setdefault(_same_file(path), {"timestamp_utc": when, "time_field": "LastRecordChange0x10 (entry changed)",
+                                        "evidence_id": row["evidence_id"], "path": path, "signs": signs,
+                                        "si_created": raw.get("Created0x10"), "fn_created": raw.get("Created0x30"),
+                                        "si_modified": raw.get("LastModified0x10"),
+                                        "fn_modified": raw.get("LastModified0x30")})
+    for row in _rows(db, "source LIKE 'Windows.Forensics.Usn%'"):
+        raw = _raw(row)
+        reason = " ".join(raw.get("Reason") or []) if isinstance(raw.get("Reason"), list) else str(raw.get("Reason") or "")
+        path = str(raw.get("OSPath") or raw.get("FullPath") or raw.get("Filename") or "")
+        if "BASIC_INFO_CHANGE" not in reason or "DATA_" in reason or not path or _OS_FILES.search(path):
+            continue
+        item = found.setdefault(_same_file(path), {**_at(row), "path": path, "signs": []})
+        if "USN BASIC_INFO_CHANGE without a data change" not in item["signs"]:
+            item["signs"].append("USN BASIC_INFO_CHANGE without a data change")
+            item.setdefault("usn_evidence_id", row["evidence_id"])
+    return sorted(found.values(), key=lambda i: (-len(i["signs"]), i["timestamp_utc"] or ""))
+
+
 # Leads per database state: case_summary opens every question, and the data rarely changed since.
 _CACHE = {}
 
@@ -401,6 +652,9 @@ def _compute(db, sources_limit: int) -> dict:
            "files_whose_content_is_not_their_name": capped(renamed_content(db)),
            "web_searches": capped(web["searches"], WEB_LIMIT),
            "youtube_videos_opened": capped(web["videos"], WEB_LIMIT),
+           "sessions_to_check": sessions_to_check(db),
+           "autostart_entries_to_check": capped(autostart(db)),
+           "timestamps_set_by_hand": capped(timestamp_changes(db), 10),
            "web_server_signs": web_server(db)}
     out = {k: v for k, v in out.items() if v}
     out["about"] = ("Computed from the collected data without the model: starting points to confirm with the cited "
