@@ -12,7 +12,8 @@ key. Re-score saved runs with `python -m copilot.benchmark score benchmark_resul
 **Strict from `2fe699f`:** a fact named only to deny or doubt it ("injection is undetermined", a list
 under "No evidence of:") no longer counts. Every saved run was re-scored then; four changed (DC
 105830 and 094310, Injector 100143, OU 085524), each on a claim the answer had denied, and their
-rows show the score as run in brackets.
+rows show the score as run in brackets. From `26a6528` a time that ends a label ("**5 February
+23:28:30:** ...") is read as a time; only OU 111449 changed (76.0% as run, 80.0%).
 
 ## The benchmarks
 
@@ -81,7 +82,7 @@ Scores on the **current key (49 facts)**; the score each run got on the key of i
 | 20261015-123740 | 52.0% (65.5% on 40 facts) | 29/49 | 10/26 | 26.5 | Blind run the key was built from. 2 forbidden claims: it pinned the administrator's own RDP logon on the guessing address, and called Edge's `cookie_exporter.exe` attacker tooling. It read Amcache times as run times |
 | 20261016-085524 | 40.0% (41.3% as run on this key, 46.6% on 40) | 22/49 | 8/26 | 110.1 | After "correlate before claiming" (`52663f2`). No forbidden claims on that key, but it hedged where the record summaries hid the logon's source IP and the task's arguments. The event-log triage was still running when the questions started. Fixed: summaries (`a7bceca`), runs wait for triage. Strictly, one fact less: Domain Admins was listed under "no evidence of" |
 | 20261016-111125 | 50.7% (50.0% on 45) | 27/49 | 11/26 | 45.1 | Found the successful guessing, the RDP as Administrator, the password spreadsheet and a remote folder. Each question re-investigated everything (300-500k tokens), and the answers disagreed (one called the administrator's home address the attacker). Led to the leads in `case_summary` (`9a5a2fc`) |
-| 20261021-111449 | **76.0%** | 43/49 | 14/26 | 24.6 | `b711a93` + local changes, from 111125's triage plus the new triage entries (SAM 8 rows, user-folder listing 679, file-type scan 299, USN filtered to archives 267). First OU run with the investigation first (dossier 12,000 characters, 7 steps, 487k tokens, 2.0 min), the leads (sessions, hand-set timestamps, autostarts) and the code's MFT check. The questions that need a few events out of hundreds of thousands gained most: *entry* 5/6 (was 1/6), *ransomware* 5/5 (1/5), *accounts* 5/5 (3/5), *identifiers* 7/8 (3/8), *timeline* 9/9 facts (6/9). Missed: the patch level's KB numbers (it gave the build and said later updates were absent), the RDP as Administrator and then the new `admin` from 185.229.66.183, Nmap/Npcap's install and the explicit-credential (4648) logons to two desktops in *tools* (3/5, was 4/5), the `account_password.xlsx` shortcut in *data*, and 185.239.106.67. Times are the weak part (14/26): the *timeline* answer left several steps without their time (4/9). 0 forbidden claims, 0 uncorrected times, 0 invalid IDs; the same score strictly. 1.98M tokens in, 24.6 min (45-110 before) |
+| 20261021-111449 | **80.0%** (76.0% as run) | 43/49 | 17/26 | 24.6 | `b711a93` + local changes, from 111125's triage plus the new triage entries (SAM 8 rows, user-folder listing 679, file-type scan 299, USN filtered to archives 267). First OU run with the investigation first (dossier 12,000 characters, 7 steps, 487k tokens, 2.0 min), the leads (sessions, hand-set timestamps, autostarts) and the code's MFT check. The questions that need a few events out of hundreds of thousands gained most: *entry* 5/6 (was 1/6), *ransomware* 5/5 (1/5), *accounts* 5/5 (3/5), *identifiers* 7/8 (3/8), *timeline* 9/9 facts (6/9). Missed: the patch level's KB numbers (it gave the build and said later updates were absent), the RDP as Administrator and then the new `admin` from 185.229.66.183, Nmap/Npcap's install and the explicit-credential (4648) logons to two desktops in *tools* (3/5, was 4/5), the `account_password.xlsx` shortcut in *data*, and 185.239.106.67. Times are the weak part (17/26; 14/26 as run, when the scorer missed three times written as labels, "**5 February 23:28:30:**"): the *timeline* answer gave one attacker address's logons as "6–9 February" with no time and `rename.exe` by its Amcache date, and *tools* left out when the tools arrived although the dossier had it. Fixed next (`26a6528`): a timeline playbook and dossier wording (every step with its time from its record, each source's first logon, each tool's arrival). 0 forbidden claims, 0 uncorrected times, 0 invalid IDs; the same score strictly. 1.98M tokens in, 24.6 min (45-110 before) |
 
 ## What the numbers say so far
 
@@ -110,7 +111,7 @@ Scores on the **current key (49 facts)**; the score each run got on the key of i
 - On a large server image (OU, ~270,000 logon events) the agent stayed near 50% without a dossier,
   losing most on the entry and ransomware questions, where it has to pick the right few events out
   of hundreds of thousands. With the dossier and the leads in `case_summary` (logons per source
-  address, sessions, account changes, tasks...) it scored 76.0% (111449) in 25 minutes instead of
-  45-110: *entry* 5/6 and *ransomware* 5/5. One run; times (14/26) are now the weaker part there.
+  address, sessions, account changes, tasks...) it scored 80.0% (111449) in 25 minutes instead of
+  45-110: *entry* 5/6 and *ransomware* 5/5. One run; times (17/26) are now the weaker part there.
 - Scores are strict from `2fe699f` (a fact named only to deny it doesn't count). Before that, a
   "100%" could hide a hedge: the DC's 100% (094310) was 95.7% strictly.
