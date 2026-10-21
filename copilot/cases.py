@@ -680,7 +680,8 @@ def consume_settings_change() -> bool:
     return changed
 
 
-def copy_data(source_id: str, target_id: str, findings: bool = False, triage: list = None) -> dict:
+def copy_data(source_id: str, target_id: str, findings: bool = False, triage: list = None,
+              triage_steps: list = None) -> dict:
     """
     Copies collected data (records, timeline, search index, collections) from one case to
     another on the same evidence; the source may be one shared with the user. findings=True also
@@ -691,6 +692,8 @@ def copy_data(source_id: str, target_id: str, findings: bool = False, triage: li
     triage (artifact / collection names): copy only the source's triage, i.e. what was collected
     before its first other collection (a benchmark run reusing an earlier run's data must not get
     what that run's agent collected). counts["triage"] lists the triage collections copied.
+    triage_steps (the source's collection plan): a triage artifact collected again with its plan's
+    parameters, after they changed, is triage too.
     """
     import sqlite3
     from copilot.database import CaseDatabase
@@ -716,7 +719,7 @@ def copy_data(source_id: str, target_id: str, findings: bool = False, triage: li
         # Every row (all of them, or the triage's: what was ingested before the first other collection).
         records, params, flows = "SELECT evidence_id FROM src.records", [], None
         if triage is not None:
-            cutoff, flows = _triage_part(target.conn, triage)
+            cutoff, flows = _triage_part(target.conn, triage, triage_steps)
             if cutoff:
                 records, params = records + " WHERE ingested_at < ?", [cutoff]
             counts["triage"] = flows
@@ -751,17 +754,23 @@ def copy_data(source_id: str, target_id: str, findings: bool = False, triage: li
     return counts
 
 
-def _triage_part(conn, triage: list) -> tuple:
+def _triage_part(conn, triage: list, steps: list = None) -> tuple:
     """
     (cutoff, flow IDs) of the attached source's triage: its collections in order, each triage artifact
-    once, up to the first other collection, whose start (cutoff) ends the triage (None: nothing else
-    was collected). Before an agent collects, only the triage puts records into a case.
+    once (and again with its step's parameters, when they changed after the first: `steps`), up to the
+    first other collection, whose start (cutoff) ends the triage (None: nothing else was collected).
+    Before an agent collects, only the triage puts records into a case.
     """
+    from copilot.collection import covers
     remaining, flows = set(triage), []
-    for flow_id, artifact, requested in conn.execute(
-            "SELECT flow_id, artifact, requested_at FROM src.collections ORDER BY requested_at, rowid"):
+    redone = {s["artifact"]: s["parameters"] for s in steps or [] if s.get("parameters")}
+    for flow_id, artifact, parameters, requested in conn.execute(
+            "SELECT flow_id, artifact, parameters, requested_at FROM src.collections ORDER BY requested_at, rowid"):
         if artifact in remaining:
             remaining.discard(artifact)
+            flows.append(flow_id)
+            continue
+        if artifact in redone and covers(parameters, redone.pop(artifact)):
             flows.append(flow_id)
             continue
         return requested, flows

@@ -535,8 +535,8 @@ too.
 memory triage). `--from-case <an earlier run of the same image>` starts from that run's triage
 instead: only what was collected before its agent's first own collection is copied (so the run is
 comparable, not helped by what the last agent found; `--all-data` copies everything), the client and
-memory image come with it, and triage artifacts it lacks (e.g. added to the case file since) are
-collected. A copy takes seconds. The run also checks the model (and asks for its key) before
+memory image come with it, and triage artifacts it lacks (e.g. added to the case file since) or
+collected with other parameters (e.g. an event ID added since) are collected. A copy takes seconds. The run also checks the model (and asks for its key) before
 anything else, records the commit it ran on, and flags times in answers that none of their cited
 records holds. Per question it records the answer,
 tool calls, steps, tokens and time, and scores each expected fact:

@@ -206,6 +206,28 @@ def test_reusing_an_earlier_run_takes_its_triage_only_and_collects_what_it_lacks
     assert second["code"].get("commit")                                     # which code produced the run
 
 
+def test_a_triage_entry_whose_parameters_changed_is_collected_again_and_kept_as_triage(bench_dirs, monkeypatch):
+    from copilot.database import case_db
+    vql = FakeVQL(unique_flows=True)
+    monkeypatch.setattr(collection, "get_vql", lambda: vql)
+    quiet = {"out_dir": str(bench_dirs / "results"), "log": lambda *a: None, "investigate_first": False}
+    model = lambda: (ScriptedLLM(AIMessage(content="a"), AIMessage(content="b")), None, "s")
+
+    def spec(ids):
+        return _spec(bench_dirs, case={"case": {"name": "Mini"}, "velociraptor": {"client_id": ""}, "collect": [
+            {"artifact": "Windows.EventLogs.EvtxHunter", "parameters": {"IdRegex": ids}}]})
+    first = benchmark.run(_spec(bench_dirs, case={"case": {"name": "Mini"}, "velociraptor": {"client_id": CLIENT},
+                                                  "collect": [{"artifact": "Windows.EventLogs.EvtxHunter",
+                                                               "parameters": {"IdRegex": "^(4624)$"}}]}),
+                          model=model(), **quiet)
+    second = benchmark.run(spec("^(4624|4732)$"), from_case=first["run_id"], model=model(), **quiet)
+    assert any(line.startswith("Windows.EventLogs.EvtxHunter -> ") for line in second["triage"])   # an ID added
+    third = benchmark.run(spec("^(4624|4732)$"), from_case=second["run_id"], model=model(), **quiet)
+    assert len(third["triage"]) == 1                                       # both copied, nothing collected
+    assert [json.loads(c["parameters"])["IdRegex"] for c in case_db.get_collections()] == ["^(4624)$",
+                                                                                           "^(4624|4732)$"]
+
+
 def test_a_broken_model_stops_the_run_before_anything_is_collected(bench_dirs, monkeypatch):
     class Broken:
         def invoke(self, messages):
@@ -294,6 +316,11 @@ def test_a_claim_named_only_to_deny_or_doubt_it_is_not_found():
     assert benchmark.match_fact("Valid credentials were used; no software vulnerability was exploited.", no_exploit)[0]
     assert benchmark.match_fact("The 02:52:46 event was not the end of activity\u2014the attacker came back later.",
                                 {"id": "x", "what": "x", "any": [["came back"]]})[0]
+    group = {"id": "g", "what": "x", "any": [["4728"]]}         # a bare item of an inline list: its sentence counts
+    assert benchmark.match_fact("Searches for group events\u20144732, 4728, and 4756\u2014returned no records.", group)[2]
+    assert benchmark.match_fact("Group changes: 4732, 4728 and 4756 at 23:02.", group)[0]
+    guest = {"id": "u", "what": "x", "all": ["guest"]}            # a heading item described by its line is not a list
+    assert benchmark.match_fact("- **Guest** \u2014 built-in account, disabled, password not required.", guest)[0]
 
 
 @pytest.mark.parametrize("name", ["szechuan-dc", "corporatesecrets", "injector", "ou-server2022"])

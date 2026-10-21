@@ -88,6 +88,26 @@ def encode_params(params: dict) -> dict:
     return encoded
 
 
+def covers(stored: str, params: dict) -> bool:
+    """A collection's stored parameters (JSON) include every one of `params`: it was made with them (the
+    code adds others, such as the time window; a list for a csv parameter is stored as CSV text)."""
+    try:
+        have = json.loads(stored or "{}")
+        if not isinstance(have, dict):
+            return False
+        for name, value in (params or {}).items():
+            got = have.get(name)
+            if got == encode_params({name: value})[name]:
+                continue
+            as_csv = csv_parameters({name: value}, [{"name": name, "type": "csv",
+                                                     "default": str(got or "").split("\n")[0]}])[name]
+            if not isinstance(got, str) or as_csv != got:
+                return False
+        return True
+    except (ValueError, CollectionError):
+        return False
+
+
 def _target_client() -> str:
     error = case_config.client_id_error
     if error:

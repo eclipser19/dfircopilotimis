@@ -249,6 +249,15 @@ def test_a_disabled_function_the_artifact_does_without_is_not_blamed(case):
                                  vql=FakeVQL(rows={}, reported_rows=0, flow_logs=logs), sleep=lambda s: None)
     assert "running system" not in summary.get("note", "") and "0 rows" in summary["note"]
 
+def test_a_collection_covers_the_parameters_it_was_made_with():
+    globs = ["C:/Users/*/Desktop/**", "C:/Users/*/Documents/**"]
+    stored = json.dumps({"SearchFilesGlobTable": "Glob\nC:/Users/*/Desktop/**\nC:/Users/*/Documents/**\n",
+                         "SizeMax": "500", "DateAfter": "2024-02-01"})       # csv text, and the window added
+    assert collection.covers(stored, {"SearchFilesGlobTable": globs, "SizeMax": 500})
+    assert not collection.covers(stored, {"SearchFilesGlobTable": globs[:1]})
+    assert not collection.covers(json.dumps({"IdRegex": "^(4624)$"}), {"IdRegex": "^(4624|4732)$"})
+
+
 def test_the_same_collection_again_reuses_its_flow_without_asking(case, monkeypatch):
     vql = FakeVQL(unique_flows=True)
     first = collection.collect("Generic.Client.Info", vql=vql, sleep=lambda s: None)

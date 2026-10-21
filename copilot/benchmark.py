@@ -126,10 +126,15 @@ _CLAUSE_END = re.compile(r"\.(?=[\s*`_)\]]|$)|[;!?|\n\u2014]|, |: | \u2013 | - |
                          r"\b(?:but|however|although|though|whereas|while)\b", re.I)
 
 
-def _clause(text: str, pos: int) -> tuple:
-    """(start, end) of the clause around `pos`."""
-    start = max((m.end() for m in _CLAUSE_END.finditer(text, 0, pos)), default=0)
-    end = _CLAUSE_END.search(text, pos)
+_SENTENCE_END = re.compile(r"\.(?=[\s*`_)\]]|$)|[;!?|\n]")
+# What else a bare item of an inline list ("events 4732, 4728, and 4756 returned no records") holds.
+_BARE = {"and", "or", "the", "a", "an", "also"}
+
+
+def _clause(text: str, pos: int, ends=_CLAUSE_END) -> tuple:
+    """(start, end) of the clause around `pos` (of the sentence, with `ends=_SENTENCE_END`)."""
+    start = max((m.end() for m in ends.finditer(text, 0, pos)), default=0)
+    end = ends.search(text, pos)
     return start, end.start() if end else len(text)
 
 
@@ -152,7 +157,13 @@ def denied(text: str, span: tuple) -> bool:
     does ("I found no evidence of:"). The matched words themselves don't count ("no software vulnerability"
     is what a fact may look for)."""
     start, end = _clause(text, span[0])
-    clause = text[start:span[0]] + " " + text[span[1]:max(end, span[1])] + " " + _lead_in(text, span[0])
+    rest = text[start:span[0]] + " " + text[span[1]:max(end, span[1])]
+    in_list = text[max(0, start - 2):start] == ", " or text[end:end + 2] == ", "
+    if in_list and set(re.findall(r"[a-z]+", rest.lower())) <= _BARE:   # a bare item of an inline list: its
+        # sentence says what it is ("- **Guest** - built-in, password not required" is a heading, not a list)
+        start, end = _clause(text, span[0], _SENTENCE_END)
+        rest = text[start:span[0]] + " " + text[span[1]:max(end, span[1])]
+    clause = rest + " " + _lead_in(text, span[0])
     return bool(_DENIAL.search(_NOT_A_DENIAL.sub(" ", clause)))
 
 
@@ -599,11 +610,12 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
     investigate_first: the investigation turn writes the case dossier before the questions (as the app does
     after triage); off, each question starts from the data alone (the runs before the dossier existed).
     from_case: start from that case's triage data instead of collecting it (any earlier run of the same
-    image will do; what its agent collected later is left out, unless all_data). Triage artifacts it lacks
-    are collected.
+    image will do; what its agent collected later is left out, unless all_data). Triage artifacts it lacks,
+    or collected with other parameters than the triage has now, are collected.
     """
     from copilot import cases, conversation, memory
     from copilot.agent import auto_collect, status_line
+    from copilot.collection import covers
     from copilot.case_config import CaseConfig, case_config
     from copilot.database import case_db
     spec = load_spec(spec_path)
@@ -628,16 +640,21 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
     if from_case:
         # The earlier run's own triage list: an artifact added to the triage since may be one its agent
         # collected with its own filters, which is not triage data.
-        source_triage = triage_sources(CaseConfig(cases._case_file(from_case)))
-        counts = cases.copy_data(from_case, run_id, triage=None if all_data else source_triage)
+        source_config = CaseConfig(cases._case_file(from_case))
+        counts = cases.copy_data(from_case, run_id, triage=None if all_data else triage_sources(source_config),
+                                 triage_steps=source_config.collection_plan)
         copied = counts.pop("triage", None)
         triage.append(f"Data copied from case {from_case}" + ("" if all_data else " (its triage only)") + f": {counts}")
         log(f"[*] {triage[-1]}")
         if copied is not None and not skip_triage:
-            have = {c["artifact"] for c in case_db.get_collections()}
-            missing = [step for step in case_config.collection_plan if step["artifact"] not in have]
+            collected = case_db.get_collections()
+            have = {c["artifact"] for c in collected}
+            # Missing, or collected with other parameters than the triage has now (an event ID added since).
+            missing = [step for step in case_config.collection_plan
+                       if not any(c["artifact"] == step["artifact"] and covers(c.get("parameters"), step["parameters"])
+                                  for c in collected)]
             if missing:
-                log(f"[*] Collecting the triage artifacts case {from_case} lacks: "
+                log(f"[*] Collecting the triage artifacts case {from_case} lacks or collected with other parameters: "
                     f"{', '.join(step['artifact'] for step in missing)}")
                 triage += [status_line(s) for s in finish_triage(auto_collect(case_config, steps=missing),
                                                                   triage_wait, log)]
