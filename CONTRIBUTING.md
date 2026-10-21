@@ -114,7 +114,7 @@ the runs that matter in [BENCHMARKS.md](BENCHMARKS.md).
 
 Check the **Setup** line and the **Triage** section at the bottom first. A run whose triage
 failed or was still running is not comparable with other runs. Then compare facts per question,
-not just the total. Runs vary a lot (the same code scored 95.7% and 73.9% on the DC), so judge
+not just the total. Runs vary a lot (the same code scored 95.7% and 65.2% on the DC), so judge
 a change on two runs or more. Read the answers of the questions that dropped: the scorecard
 shows each answer, its cited evidence and the tools it called.
 

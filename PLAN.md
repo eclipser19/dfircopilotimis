@@ -50,14 +50,15 @@ evidence dump for building keys. Four benchmarks (`szechuan-dc`, `injector`, `ou
 
 ## Known weaknesses
 
-- **Large images.** On the OU server (~270,000 logon events) runs take 45-110 minutes and score
-  around 50%. Each question used 300-500k tokens re-investigating from scratch. The entry and
-  ransomware questions are the weakest. The leads in `case_summary` are the first answer to this;
-  not yet measured.
+- **Large images.** On the OU server (~270,000 logon events) runs without a dossier took 45-110
+  minutes and scored around 50%, each question re-investigating from scratch (300-500k tokens).
+  With the dossier and the leads one run scored 76.0% in 25 minutes (*entry* 5/6, *ransomware*
+  5/5); its times are weaker (14/26), and the patch level's KB numbers, the explicit-credential
+  logons and some tool installs were missed. One run so far.
 - **Consistency.** Questions in one run share only the findings, so two answers can disagree
   (one run called the administrator's home address the attacker in one answer and had the real
   chain in another).
-- **Variance.** The same code scored 95.7% and 73.9% on the DC. One run proves little.
+- **Variance.** The same code scored 95.7% and 65.2% on the DC. One run proves little.
 - **Only one model measured** (`gpt-5.6-luna`). Local models work but were never benchmarked.
 - **Memory** measured on two images only (DC, Injector).
 - **A new kind of case:** CorporateSecrets (insider, never tuned on) scored 60.7% blind. Its misses
@@ -89,7 +90,8 @@ Still open from the review: steps 6 and 8 below (step 2 is done).
 
 The copilot investigates a disk and memory image end to end, writes a case dossier, answers questions
 from it with cited records, and builds the report; several investigators share one server with
-per-case and per-evidence access. Benchmarks: DC 83-100% (100% with the session leads and the MFT check), Injector 71%, OU ~50% (before the dossier);
+per-case and per-evidence access. Benchmarks (strict scoring): DC 83-96% (95.7% with the session leads and the MFT check), Injector 71%, OU 76.0%
+(~50% before the dossier and the leads);
 on CorporateSecrets 60.7% blind (the honest estimate for a new kind of case), 82.1% after generic fixes
 for its misses.
 From here, improvement comes from use, not from tuning on the benchmarks: analysts correct answers,
@@ -139,8 +141,9 @@ a change to the agent, to check nothing broke.
    - Two runs per benchmark after each change, recorded in BENCHMARKS.md.
    - Each run saves what it ran with: commit and uncommitted changes and the data source (done),
      case and server settings, knowledge and lesson versions, model settings, normalizer version.
-   - Scoring also checks dates (not only times of day), negated claims ("X did not happen"
-     matching X's words) and whether cited records support the sentence. Forbidden claims and
+   - ~~Negated claims~~ done (`2fe699f`): a fact named only to deny or doubt it doesn't count.
+   - Scoring also checks dates (not only times of day) and whether cited records support the
+     sentence. Forbidden claims and
      invalid citations count as failures, not only as side notes.
    - To compare agent or prompt changes without Velociraptor time, start from an earlier run of
      the same image with `--from-case <that run's case>` (done: only its triage is copied).
@@ -158,9 +161,8 @@ a change to the agent, to check nothing broke.
      touched (`copilot/checks.py`): the DC's timestomp no longer depends on the model picking the file.
    - Autostart entries that point into user folders or through scripting tools (with the services and
      tasks leads: persistence that differs from the operating system's own).
-   - Measured: DC 100.0% (20261021-094310), the timestomp found again after two misses.
-   - Open, from that run: the scorer credited a fact the answer hedged (negation more than 40 characters
-     before the matched words). Step 4's negation check would make the score strict.
+   - Measured: DC 95.7% strictly (20261021-094310; 100% as run), the timestomp found again after two
+     misses; OU 76.0% (20261021-111449; ~50% before).
 6. ~~**Durable investigations.**~~ Done:
    - Questions, the investigation, the triage and decided approvals run as jobs in a thread pool of
      the server (`copilot/jobs.py`), not in the page: a reload, a closed tab or another computer
