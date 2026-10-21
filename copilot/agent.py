@@ -1,6 +1,7 @@
 import getpass
 import json
 import re
+import time
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage, AIMessage
 from copilot.tools import tools, tool_map
 
@@ -332,9 +333,15 @@ class TokenUsage:
         self.session_input = self.session_output = 0
         self.turn_input = self.turn_output = 0
         self.estimated = False
+        self.turn_seconds = {}        # where this turn's time went: model, collections, memory, tools
 
     def start_turn(self):
         self.turn_input = self.turn_output = 0
+        self.turn_seconds = {}
+
+    def spent(self, kind: str, since: float):
+        """Adds the time since `since` (time.monotonic()) to this turn's `kind`."""
+        self.turn_seconds[kind] = self.turn_seconds.get(kind, 0.0) + time.monotonic() - since
 
     def add(self, response, prompt_chars: int = 0):
         meta = getattr(response, "usage_metadata", None) or {}
@@ -354,9 +361,11 @@ class TokenUsage:
         return self.turn_input + self.turn_output
 
     def summary(self) -> str:
+        spent = ", ".join(f"{kind} {seconds:.0f} s" for kind, seconds in self.turn_seconds.items() if seconds >= 1)
         return (f"[tokens] this turn: {self.turn_input:,} in / {self.turn_output:,} out"
                 f" | session: {self.session_input + self.session_output:,}"
-                + (" (estimated: the model doesn't report usage)" if self.estimated else ""))
+                + (" (estimated: the model doesn't report usage)" if self.estimated else "")
+                + (f" | time: {spent}" if spent else ""))
 
 
 def _prompt_chars(history) -> int:
@@ -365,6 +374,8 @@ def _prompt_chars(history) -> int:
 
 
 WRAP_UP_AT = 0.8  # share of the token budget after which the agent must answer
+# Tools whose time is mostly another program's (Velociraptor, Volatility), counted apart from the model's.
+TIME_KINDS = {"collect_artifact": "collections", "check_collection": "collections", "analyze_memory": "memory"}
 WRAP_UP_PROMPT = (
     "[Copilot] The {what} for this question is used up. Do not call any tools. "
     "Answer now with what you have: findings so far (with evidence IDs and UTC times), "
@@ -376,6 +387,7 @@ def _wrap_up(llm_with_tools, finalizer, chat_history, usage, what: str) -> str:
     """Makes the model answer without tools (the finalizer), so a turn never ends with nothing."""
     chat_history.append(HumanMessage(content=WRAP_UP_PROMPT.format(what=what)))
     trim_chat_history(chat_history)
+    started = time.monotonic()
     try:
         response = finalizer.invoke(chat_history)
     except Exception:
@@ -386,6 +398,7 @@ def _wrap_up(llm_with_tools, finalizer, chat_history, usage, what: str) -> str:
         response = AIMessage(content=answer_text(response))
     else:
         usage.add(response, _prompt_chars(chat_history))
+    usage.spent("model", started)
     chat_history.append(response)
     return answer_text(response) or "(The model returned no text.)"
 
@@ -445,7 +458,9 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
             trim_chat_history(chat_history)
             emit("step", step_count)
 
+            started = time.monotonic()
             response = llm_with_tools.invoke(chat_history)
+            usage.spent("model", started)
             usage.add(response, _prompt_chars(chat_history))
             chat_history.append(response)
 
@@ -456,11 +471,13 @@ def run_turn(llm_with_tools, chat_history, max_steps, usage: TokenUsage = None, 
 
             for tool_call in response.tool_calls:
                 emit("tool", tool_call["name"])
+                started = time.monotonic()
                 try:
                     tool_fn = tool_map[tool_call["name"]]
                     tool_output = tool_fn.invoke(tool_call["args"])
                 except Exception as e:
                     tool_output = f"Tool execution failed: {e}"
+                usage.spent(TIME_KINDS.get(tool_call["name"], "tools"), started)
                 if tool_call["name"] in ("collect_artifact", "check_collection"):
                     try:
                         emit("collection", status_line(json.loads(tool_output)))

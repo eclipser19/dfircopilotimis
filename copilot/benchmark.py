@@ -285,9 +285,12 @@ def totals(questions: list, investigation: dict = None) -> dict:
     t = {"facts_found": 0, "facts_total": 0, "times_ok": 0, "times_total": 0, "uncorrected_times": 0,
          "invalid_ids": 0, "forbidden": 0, "unscored_found": 0, "unscored_total": 0, "errors": 0,
          "tokens_in": 0, "tokens_out": 0, "steps": 0, "tool_calls": 0, "seconds": 0, "questions": 0,
-         "investigated": bool(investigation and investigation.get("dossier"))}
+         "investigated": bool(investigation and investigation.get("dossier")), "time_split": {}}
     for key in ("tokens_in", "tokens_out", "steps", "tool_calls", "seconds"):
         t[key] += (investigation or {}).get(key) or 0
+    for part in [investigation or {}] + [q for q in questions if not q.get("skipped")]:
+        for kind, seconds in (part.get("time_split") or {}).items():
+            t["time_split"][kind] = round(t["time_split"].get(kind, 0) + seconds, 1)
     for q in questions:
         if q.get("skipped"):
             continue
@@ -321,6 +324,20 @@ def _mark(ok) -> str:
     return "✓" if ok else "✗"
 
 
+TIME_ORDER = ("model", "collections", "memory", "tools")
+
+
+def time_split_text(split: dict, seconds: float) -> str:
+    """"model 12.0 min · collections 20.1 min · other 0.4 min": where a run's (or a question's) time went;
+    other is what no model or tool call took (triage waits, the code's own checks)."""
+    if not split:
+        return ""
+    parts = [f"{kind} {round(split[kind] / 60, 1)} min" for kind in sorted(split, key=lambda k: (
+        TIME_ORDER.index(k) if k in TIME_ORDER else len(TIME_ORDER), k)) if split[kind] >= 3]
+    other = (seconds or 0) - sum(split.values())
+    return " · ".join(parts + ([f"other {round(other / 60, 1)} min"] if other >= 30 else []))
+
+
 def render_markdown(results: dict) -> str:
     t = results["totals"]
     lines = [
@@ -331,6 +348,15 @@ def render_markdown(results: dict) -> str:
            if (results.get("code") or {}).get("commit") else "")
         + (f" · data from `{results['from_case']}`" if results.get("from_case") else ""),
         "",
+    ]
+    settings = results.get("settings") or {}
+    if settings:
+        lines += [f"Knowledge `{settings.get('knowledge_digest')}` · lessons `{settings.get('lessons')}` · normalizer "
+                  f"{settings.get('normalizer')} · case file `{settings.get('case_file') or '?'}` · limits "
+                  + ", ".join(f"{k} {v:,}" for k, v in (settings.get("limits") or {}).items())
+                  + (f" · triage {round(results['triage_seconds'] / 60, 1)} min" if "triage_seconds" in results else ""),
+                  ""]
+    lines += [
         (f"**Score {t['score_percent']}%** — facts {t['facts_found']}/{t['facts_total']}, "
          f"times {t['times_ok']}/{t['times_total']} · " if t["facts_total"] else
          "**No answer key yet** — answers saved; score them once the key has facts "
@@ -343,12 +369,15 @@ def render_markdown(results: dict) -> str:
         + (" (investigation included)" if results.get("investigation") else ""),
         "",
     ]
+    if t.get("time_split"):
+        lines += [f"Where the time went: {time_split_text(t['time_split'], t['seconds'])}", ""]
     inv = results.get("investigation")
     if inv:
         lines += [f"**Investigation first:** " + (f"dossier of {len(inv['dossier']):,} characters" if inv.get("dossier")
                                                     else f"no dossier ({inv.get('error') or 'no answer'})") +
                   f" · {inv.get('steps', 0)} steps · {inv.get('tokens_in', 0):,} tokens in · "
                   f"{round((inv.get('seconds') or 0) / 60, 1)} min"
+                  + (f" ({time_split_text(inv['time_split'], inv.get('seconds'))})" if inv.get("time_split") else "")
                   + (f" · ⚠ {inv['time_mismatches']} times not in their cited records (flagged in it)"
                      if inv.get("time_mismatches") else ""), ""]
     else:
@@ -356,12 +385,12 @@ def render_markdown(results: dict) -> str:
     for problem in results.get("setup") or []:
         lines += [f"⚠ **Setup:** {problem}", ""]
     lines += [
-        "| Question | Facts | Times | Invalid IDs | Steps | Tokens in | Min |",
-        "|---|---|---|---|---|---|---|",
+        "| Question | Facts | Times | Invalid IDs | Steps | Tokens in | Min | Of which collections |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for q in results["questions"]:
         if q.get("skipped"):
-            lines.append(f"| {q['id']} | skipped: {q['skipped']} | | | | | |")
+            lines.append(f"| {q['id']} | skipped: {q['skipped']} | | | | | | |")
             continue
         facts = [f for f in q["score"]["facts"] if f["scored"]]
         timed = [f for f in facts if "time_expected" in f]
@@ -369,7 +398,8 @@ def render_markdown(results: dict) -> str:
         bad = len(cites.get("evidence_invalid", [])) + len(cites.get("findings_invalid", []))
         lines.append(f"| {q['id']} | {sum(f['found'] for f in facts)}/{len(facts)} | "
                      f"{sum(bool(f.get('time_ok')) for f in timed)}/{len(timed)} | {bad} | {q.get('steps', 0)} | "
-                     f"{q.get('tokens_in', 0):,} | {round((q.get('seconds') or 0) / 60, 1)} |")
+                     f"{q.get('tokens_in', 0):,} | {round((q.get('seconds') or 0) / 60, 1)} | "
+                     f"{round(((q.get('time_split') or {}).get('collections') or 0) / 60, 1)} |")
     for q in results["questions"]:
         if q.get("skipped"):
             continue
@@ -497,6 +527,41 @@ def code_version() -> dict:
     return {"commit": commit, "local_changes": bool(changed)} if commit else {}
 
 
+def _digest(path: str) -> str:
+    import hashlib
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()[:12]
+    except OSError:
+        return ""
+
+
+def run_settings(case_file: str = "") -> dict:
+    """
+    What a run's answers depend on besides the commit: the knowledge files (hashed, so a local edit
+    shows), the approved lessons, the normalizer version, the model and the case's limits. Two runs
+    are comparable when these match, or differ only where the change being measured is.
+    """
+    from copilot import dossier, lessons, llm, normalize
+    from copilot.case_config import case_config
+    folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge_data")
+    knowledge = {name: _digest(os.path.join(folder, name)) for name in sorted(os.listdir(folder))
+                 if name.endswith(".yaml")}
+    steps, tokens = dossier.budget()
+    return {"knowledge": knowledge, "knowledge_digest": _digest_of(knowledge),
+            "lessons": _digest(lessons.learned_file()) or "none", "normalizer": normalize.NORMALIZER_VERSION,
+            "case_file": _digest(case_file) if case_file else "",
+            "model": {"name": llm.model_name(), "temperature": 0, "local": llm.is_local()},
+            "limits": {"max_steps": case_config.max_steps, "max_tokens_per_turn": case_config.max_tokens_per_turn,
+                       "investigate_steps": steps, "investigate_tokens": tokens, "max_rows": case_config.max_rows,
+                       "collection_wait_seconds": case_config.collection_wait_seconds}}
+
+
+def _digest_of(values: dict) -> str:
+    import hashlib
+    return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()[:12]
+
+
 def _plugin_names(plugin: str) -> list:
     """A memory plugin's full names (its source is Memory.<name>); [] for one this version doesn't allow."""
     from copilot import memory
@@ -542,6 +607,7 @@ def investigate(llm_with_tools, finalizer, extra: str = "", log=print) -> dict:
         result = {"dossier": "", "steps": 0, "error": f"{type(e).__name__}: {e}"}
     return {**result, "log": steps_log, "tokens_in": usage.turn_input, "tokens_out": usage.turn_output,
             "tool_calls": sum(line.startswith("tool:") for line in steps_log),
+            "time_split": {k: round(v, 1) for k, v in usage.turn_seconds.items()},
             "seconds": round(time.monotonic() - started, 1)}
 
 
@@ -569,6 +635,7 @@ def ask(text: str, llm_with_tools, finalizer, log=print) -> dict:
     return {"answer": answer, "error": error, "tools": calls, "log": steps_log, "time_mismatches": wrong,
             "steps": sum(isinstance(m, AIMessage) for m in history),
             "tokens_in": usage.turn_input, "tokens_out": usage.turn_output, "tokens_estimated": usage.estimated,
+            "time_split": {k: round(v, 1) for k, v in usage.turn_seconds.items()},
             "seconds": round(time.monotonic() - started, 1)}
 
 
@@ -636,7 +703,7 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
     cases.consume_switch()
     log(f"[*] Benchmark {spec['name']}: case {run_id} (client {case_config.client_id}, "
         f"memory {case_config.memory_image or 'none'})")
-    triage, setup = [], []
+    triage, setup, triage_started = [], [], time.monotonic()
     if from_case:
         # The earlier run's own triage list: an artifact added to the triage since may be one its agent
         # collected with its own filters, which is not triage data.
@@ -685,7 +752,9 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
     results = {"name": spec["name"], "spec": spec["_path"], "run_id": run_id, "case_id": run_id,
                "client_id": case_config.client_id, "memory_image": case_config.memory_image,
                "model": model_name, "started": started.isoformat(), "triage": triage, "setup": setup,
-               "code": code_version(), "from_case": from_case or "", "questions": []}
+               "code": code_version(), "from_case": from_case or "", "questions": [],
+               "settings": run_settings(os.path.join(spec["_dir"], spec.get("case_file") or "")),
+               "triage_seconds": round(time.monotonic() - triage_started, 1)}
     chat = []
     asked = [q for q in spec["questions"] if not only or q["id"] in only]
     if investigate_first and asked:              # not for a triage-only run (--questions none)

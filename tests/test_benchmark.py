@@ -168,8 +168,15 @@ def test_the_investigation_runs_first_and_every_question_starts_from_its_dossier
     assert all("- 02:20:00 UTC brute force from 194.61.24.102" in p for p in prompts[2:]) and len(prompts) == 4
     t = results["totals"]
     assert t["investigated"] and t["steps"] == 4 and t["tool_calls"] == 1 and t["facts_found"] == 2
+    assert set(t["time_split"]) == {"model", "tools"} and "model" in results["questions"][0]["time_split"]
+    settings = results["settings"]                                         # what else the answers depend on
+    assert "playbooks.yaml" in settings["knowledge"] and settings["case_file"] and settings["lessons"] == "none"
+    assert settings["limits"]["max_steps"] and "triage_seconds" in results
+    assert benchmark.time_split_text({"collections": 600, "model": 120, "tools": 1}, 781) == \
+        "model 2.0 min · collections 10.0 min · other 1.0 min"          # under 3 s left out
     report = (bench_dirs / "results" / f"{results['run_id']}.md").read_text(encoding="utf-8")
     assert f"**Investigation first:** dossier of {len(inv['dossier'])} characters · 2 steps" in report
+    assert f"Knowledge `{settings['knowledge_digest']}` · lessons `none` · normalizer" in report
     assert "## Case dossier (investigation)" in report
     ui, _ = conversation.load(results["run_id"], "system")
     assert ui[0]["content"].startswith("**Case dossier**")
