@@ -47,6 +47,8 @@ class BenchmarkError(Exception):
 
 # ---------------------------------------------------------------- spec
 def load_spec(path: str) -> dict:
+    if not os.path.exists(path) and "\\" in path:      # a run saved on Windows, re-scored elsewhere
+        path = path.replace("\\", "/")
     with open(path, encoding="utf-8") as f:
         spec = yaml.safe_load(f) or {}
     spec["_path"] = path
@@ -105,25 +107,85 @@ def _positions(text: str, needle: str) -> list:
     return [m.start() for m in re.finditer(re.escape(needle.lower()), text.lower())]
 
 
+def _spans(text: str, needle: str = None, pattern: str = None) -> list:
+    if pattern is not None:
+        return [m.span() for m in re.finditer(pattern, text or "", re.I)]
+    return [(p, p + len(needle)) for p in _positions(text, needle)]
+
+
+# A fact named only to deny or doubt it ("this does not prove spoolsv.exe was injected", "whether it was
+# injected remains undetermined") is not found: its words must also stand in a clause that denies nothing.
+_DENIAL = re.compile(r"\b(?:not|no|never|neither|nor|cannot|can't|none|isn't|wasn't|weren't|aren't|"
+                     r"doesn't|didn't|don't|hasn't|haven't|undetermined|unconfirmed|unproven|unverified|unclear|"
+                     r"insufficient|inconclusive|ruled out)\b", re.I)
+_NOT_A_DENIAL = re.compile(r"\bnot (?:only|just|merely)\b|\bno longer\b|\bnone other\b", re.I)
+# Clause ends: a sentence end (not the dot inside 1.2.3.4 or file.exe; also before Markdown: "recipe.**"),
+# ; ! ? a table cell or line, ", ", ": ", a dash between words, and the conjunctions that start a new claim.
+_CLAUSE_END = re.compile(r"\.(?=[\s*`_)\]]|$)|[;!?|\n\u2014]|, |: | \u2013 | - |"
+                         r"\b(?:but|however|although|though|whereas|while)\b", re.I)
+
+
+def _clause(text: str, pos: int) -> tuple:
+    """(start, end) of the clause around `pos`."""
+    start = max((m.end() for m in _CLAUSE_END.finditer(text, 0, pos)), default=0)
+    end = _CLAUSE_END.search(text, pos)
+    return start, end.start() if end else len(text)
+
+
+_LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
+
+
+def _lead_in(text: str, pos: int) -> str:
+    """The line that introduces the list `pos` is in ("I found no evidence of:"), or "" outside a list."""
+    lines = text[:pos].split("\n")
+    if not _LIST_ITEM.match(lines[-1]):
+        return ""
+    for line in reversed(lines[:-1]):
+        if line.strip() and not _LIST_ITEM.match(line):
+            return line if line.rstrip().endswith(":") else ""
+    return ""
+
+
+def denied(text: str, span: tuple) -> bool:
+    """The clause around a match (start, end) denies or doubts it, or it is an item of a list whose lead-in
+    does ("I found no evidence of:"). The matched words themselves don't count ("no software vulnerability"
+    is what a fact may look for)."""
+    start, end = _clause(text, span[0])
+    clause = text[start:span[0]] + " " + text[span[1]:max(end, span[1])] + " " + _lead_in(text, span[0])
+    return bool(_DENIAL.search(_NOT_A_DENIAL.sub(" ", clause)))
+
+
 def match_fact(text: str, fact: dict) -> tuple:
     """
-    (found, positions of the words that matched). With `within: N`, every requirement must occur
+    (found, positions of the words that matched, denied). With `within: N`, every requirement must occur
     within N characters of the first one, so "downloaded ... from 1.2.3.4" counts but an IP named
-    for something else three paragraphs away does not.
+    for something else three paragraphs away does not. The claim words (the `any` groups; every
+    requirement if a fact has none) count only where no clause denies or doubts them ("does not prove",
+    "undetermined"); the names they are tied to (`all`, `regex`) count anywhere. `denied`: the claim was
+    there, but only denied.
     """
-    required = [_positions(text, needle) for needle in fact.get("all") or []]
-    required += [[p for needle in group for p in _positions(text, needle)] for group in fact.get("any") or []]
-    required += [[m.start() for m in re.finditer(pattern, text or "", re.I)] for pattern in fact.get("regex") or []]
-    if not required or not all(required):
-        return False, []
+    spans = [_spans(text, needle) for needle in fact.get("all") or []]
+    spans += [[s for needle in group for s in _spans(text, needle)] for group in fact.get("any") or []]
+    spans += [_spans(text, pattern=pattern) for pattern in fact.get("regex") or []]
+    if not spans or not all(spans):
+        return False, [], False
+    required = [[s[0] for s in where] for where in spans]
+    groups = len(fact.get("all") or []), len(fact.get("any") or [])
+    claims = set(range(groups[0], groups[0] + groups[1])) or set(range(len(spans)))
+    affirmed = [[s[0] for s in where if i not in claims or not denied(text, s)] for i, where in enumerate(spans)]
     window = fact.get("within")
     if not window:
-        return True, sorted({p for where in required for p in where})
-    for anchor in required[0]:
-        near = [[p for p in where if abs(p - anchor) <= window] for where in required[1:]]
-        if all(near):
-            return True, sorted({anchor, *(p for where in near for p in where)})
-    return False, []
+        if all(affirmed):
+            return True, sorted({p for where in affirmed for p in where}), False
+        return False, [], True
+    for anchors, others, said in ((affirmed[0], affirmed[1:], True), (required[0], required[1:], False)):
+        for anchor in anchors:
+            near = [[p for p in where if abs(p - anchor) <= window] for where in others]
+            if all(near):
+                if said:
+                    return True, sorted({anchor, *(p for where in near for p in where)}), False
+                return False, [], True            # the words are near each other, but only where denied
+    return False, [], False
 
 
 def _within(seconds: int, start: int, end: int, tolerance: int) -> bool:
@@ -131,9 +193,11 @@ def _within(seconds: int, start: int, end: int, tolerance: int) -> bool:
 
 
 def score_fact(text: str, fact: dict, spec: dict) -> dict:
-    found, hits = match_fact(text, fact)
+    found, hits, was_denied = match_fact(text, fact)
     result = {"id": fact["id"], "what": fact.get("what", ""), "found": found,
               "scored": fact.get("scored", True) is not False}
+    if was_denied:
+        result["denied"] = True
     if fact.get("note"):
         result["note"] = fact["note"]
     if not fact.get("time"):
@@ -301,7 +365,7 @@ def render_markdown(results: dict) -> str:
         if q.get("error"):
             lines.append(f"**Error:** {q['error']}")
         for f in q["score"]["facts"]:
-            line = f"- {_mark(f['found'])} {f['what']}"
+            line = f"- {_mark(f['found'])} {f['what']}" + (" · *named only to deny or doubt it*" if f.get("denied") else "")
             if "time_expected" in f:
                 line += f" · time {_mark(f.get('time_ok'))} (expected {f['time_expected']} UTC"
                 line += f", answer: {f['time_seen']})" if f.get("time_seen") else ")"

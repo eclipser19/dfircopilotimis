@@ -540,7 +540,9 @@ collected. A copy takes seconds. The run also checks the model (and asks for its
 anything else, records the commit it ran on, and flags times in answers that none of their cited
 records holds. Per question it records the answer,
 tool calls, steps, tokens and time, and scores each expected fact:
-- **found:** the answer has the fact's words (`all`, one of each `any` group, `regex`);
+- **found:** the answer has the fact's words (`all`, one of each `any` group, `regex`), and the
+  claim words are not in a clause that denies or doubts them ("no injection was found",
+  "undetermined");
 - **time:** a true-UTC time in the expected range near those words; a recorded (host clock)
   time given as UTC counts as an *uncorrected time*;
 - **citations:** evidence and finding IDs that don't exist in the case;

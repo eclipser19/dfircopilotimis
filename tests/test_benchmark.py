@@ -269,12 +269,40 @@ def test_within_ties_the_words_of_a_fact_together_and_cut_ids_are_invalid(tmp_pa
     assert cites["evidence_invalid"] == ["ba06dfce83ba6f8", "0123456789abcdef0"]
 
 
+def test_a_claim_named_only_to_deny_or_doubt_it_is_not_found():
+    injected = {"id": "inj", "what": "backdoor injected into spoolsv.exe", "any": [["spoolsv"], ["inject"]],
+                "within": 300}
+    hedged = ("spoolsv.exe held the C2 string. This does not prove that spoolsv.exe was injected, and whether "
+              "it reflects injected code remains undetermined.")
+    assert benchmark.match_fact(hedged, injected) == (False, [], True)
+    assert benchmark.match_fact(hedged + " Malfind shows spoolsv.exe was injected.", injected)[0]
+    # The names a claim is tied to count anywhere; the claim needs a clause that does not deny it.
+    back = {"id": "back", "what": "came back", "all": ["194.61.24.102"], "any": [["reconnect", "came back"]]}
+    text = ("The session was not yet over: the same source IP reconnected at 02:56:04.\n\n"
+            "No later return from 194.61.24.102 was found.")
+    assert benchmark.match_fact(text, back)[0]
+    assert not benchmark.match_fact("I found no RDP reconnect from 194.61.24.102.", back)[0]
+    # A list under a denying lead-in inherits it; a fact worded as a denial still matches its own words.
+    group = {"id": "grp", "what": "added to Domain Admins", "any": [["domain admins", "4728"]]}
+    assert not benchmark.match_fact("I found no evidence of:\n- Password reset (4724)\n- Group changes (4728)", group)[0]
+    assert benchmark.match_fact("Changes found:\n- admin added to Domain Admins (4728)", group)[0]
+    no_exploit = {"id": "nx", "what": "no exploit", "any": [["no software vulnerability"]]}
+    assert benchmark.match_fact("Valid credentials were used; no software vulnerability was exploited.", no_exploit)[0]
+    assert benchmark.match_fact("The 02:52:46 event was not the end of activity\u2014the attacker came back later.",
+                                {"id": "x", "what": "x", "any": [["came back"]]})[0]
+
+
 @pytest.mark.parametrize("name", ["szechuan-dc", "corporatesecrets", "injector", "ou-server2022"])
 def test_shipped_benchmarks_load_and_their_case_files_parse(name):
     root = os.path.join(os.path.dirname(__file__), "..", "cases", name)
     spec = benchmark.load_spec(os.path.join(root, "benchmark.yaml"))
     with open(os.path.join(root, spec["case_file"]), encoding="utf-8") as f:
         assert yaml.safe_load(f)["collect"]
+
+
+def test_a_run_saved_on_windows_finds_its_benchmark_anywhere(monkeypatch):
+    monkeypatch.chdir(os.path.join(os.path.dirname(__file__), ".."))
+    assert benchmark.load_spec("cases\\szechuan-dc\\benchmark.yaml")["name"]
 
 
 def test_corporatesecrets_key_scores_a_good_answer_and_not_a_vague_one():

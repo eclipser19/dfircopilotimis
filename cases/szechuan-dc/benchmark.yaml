@@ -8,7 +8,10 @@
 # true-UTC time in that range, near the words that matched; a recorded (host clock) time given as
 # UTC is counted as an uncorrected time. `within: N` makes the words count only when they occur
 # within N characters of each other. `scored: false` facts are reported, not counted.
-# Use words that appear only when the evidence was found: "brute" also matches "not brute-forced".
+# Claim words (the `any` groups, or every requirement when there are none) count only in a clause
+# that does not deny or doubt them ("no injection was found", "injection is undetermined"); a list
+# item counts as denied under a lead-in like "No evidence of:".
+# Use words that appear only when the evidence was found: "brute" also matches "brute force is likely".
 
 name: szechuan-dc
 case_file: case.yaml
@@ -106,7 +109,10 @@ questions:
         all: ["203.78.103.109"]
       - id: spoolsv
         what: The backdoor runs inside spoolsv.exe (migrated / injected)
-        any: [["spoolsv"], ["inject", "migrat", "malfind", "203.78.103.109", "meterpreter", "hollow"]]
+        # The claim itself, next to the process: the C2 address seen in spoolsv's memory (run 094310) is
+        # not it, and neither is the name three paragraphs away from "injection".
+        any: [["spoolsv"], ["inject", "migrat", "malfind", "meterpreter", "hollow"]]
+        within: 300
       - id: meterpreter
         what: Identified as Metasploit Meterpreter
         any: [["meterpreter", "metasploit"]]

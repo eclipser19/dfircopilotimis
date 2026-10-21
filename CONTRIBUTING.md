@@ -123,13 +123,19 @@ shows each answer, its cited evidence and the tools it called.
 The matching rules are in the header of `cases/szechuan-dc/benchmark.yaml`. In short:
 - `all` words, one word from each `any` group, and every `regex` must appear (case-insensitive).
 - `within: N` makes them count only within N characters of the first requirement, the anchor.
+- The claim words (the `any` groups, or every requirement when there are none) don't count in a
+  clause that denies or doubts them ("not", "no", "never", "undetermined", "unconfirmed",
+  "ruled out"...), or in a list under a lead-in like "No evidence of:". The scorecard marks such
+  a fact *named only to deny or doubt it*. Words in the fact itself ("no vulnerability") are not
+  cues.
 - `time` asks for a true-UTC time in that range near the words; a recorded (uncorrected) time is
   counted separately.
 - `scored: false` facts are reported only. `forbidden` patterns are claims that are wrong
   wherever they appear.
 
 Use words that appear only when the evidence was found. An IP address plus "failed" also
-matches "the success came from another address". "Deleted" also matches advice like "look for
+matches "the success came from another address", and the denial check sees only plain denials:
+"is likely" or "could be" still count. "Deleted" also matches advice like "look for
 deleted entries". After adding or changing a fact, re-score every saved run of that benchmark
 and read where each new fact matched. A fact that matches a run that never found it is a bad
 fact.
