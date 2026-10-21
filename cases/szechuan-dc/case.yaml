@@ -53,6 +53,20 @@ collect:
   - Windows.Analysis.EvidenceOfDownload  # Zone.Identifier: download URLs
   - Windows.Forensics.Lnk              # files and folders opened, per user
   - Windows.Forensics.RecycleBin       # deleted files with their original paths
+  - Windows.Forensics.SAM              # local accounts: created, last logon, logon count
+  # Files in the users' folders, each file's type from its first bytes (copilot/knowledge_data/file_types.yaml)
+  - artifact: Windows.Search.FileFinder
+    parameters:
+      SearchFilesGlobTable: [C:/Users/*/Desktop/**, C:/Users/*/Documents/**, C:/Users/*/Downloads/**,
+                             C:/Users/*/Pictures/**, C:/Users/*/Videos/**, C:/Users/*/Music/**, C:/Users/*/OneDrive/**]
+  - artifact: Generic.Detection.Yara.Glob
+    parameters:
+      PathGlob: C:/Users/*/{Desktop,Documents,Downloads,Pictures,Videos,Music,OneDrive}/**
+      YaraRule: "@file_types"
+      SizeMax: 50000000
+  - artifact: Windows.Forensics.Usn  # archives and disk images created, renamed or deleted
+    parameters:
+      FileNameRegex: '(?i)\.(zip|7z|rar|tar|gz|tgz|bz2|xz|iso|img|vhdx?)$'
 
 memory:
   image: citadeldc01.mem          # the DC's RAM capture, as named in memory.images_dir

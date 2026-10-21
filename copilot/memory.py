@@ -780,10 +780,10 @@ def _run_process(cmd: list) -> tuple:
     return out.returncode, out.stdout, out.stderr
 
 
-def triage_plan() -> list:
-    """The case's memory triage: memory.collect, else the defaults for memory.os."""
-    plan = case_config.memory_plan
-    return plan or TRIAGE.get(case_config.memory_os, TRIAGE["windows"])
+def triage_plan(config=None) -> list:
+    """A case's memory triage (the active case's by default): memory.collect, else the defaults for memory.os."""
+    config = config or case_config
+    return config.memory_plan or TRIAGE.get(config.memory_os, TRIAGE["windows"])
 
 
 def triage(progress=None, plugins: list = None) -> list:

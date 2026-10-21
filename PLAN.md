@@ -64,7 +64,9 @@ evidence dump for building keys. Four benchmarks (`szechuan-dc`, `injector`, `ou
   are generic gaps: files in user folders are never listed and no file's type is read from its
   content; small sources (browser history) are keyword-searched instead of read whole, so odd
   spellings slip through; logon counts and the last user come from events, never from the SAM or
-  Winlogon; the dossier keeps intrusion headings on an insider case.
+  Winlogon; the dossier keeps intrusion headings on an insider case. **Addressed in code since, not yet
+  measured:** the user-folder listing with file types and its lead, the web-searches lead, the
+  `account_usage` and `browsing` playbooks, SAM in the triage, a dossier for either kind of case.
 
 ## External review (Codex, 2026-10-20)
 
@@ -140,8 +142,10 @@ a change to the agent, to check nothing broke.
      invalid citations count as failures, not only as side notes.
    - To compare agent or prompt changes without Velociraptor time, start from an earlier run of
      the same image with `--from-case <that run's case>` (done: only its triage is copied).
-   - ~~Run CorporateSecrets once, blind.~~ Done: 60.7% (BENCHMARKS.md).
-5. **More leads in code.**
+   - ~~Run CorporateSecrets once, blind.~~ Done: 60.7% (BENCHMARKS.md). Its misses led to generic fixes,
+     so no blind benchmark is left: an unbiased number now needs a new image.
+5. **More leads in code.** Done: files whose content is not their name, web searches and YouTube
+   videos (with the CorporateSecrets fixes). Still to do:
    - What each attacker session did: files written, tasks and services created, programs run
      between the logon and its logoff (join on logon ID and time).
    - Executions from Prefetch, 4688 and BAM in those windows.
@@ -153,13 +157,14 @@ a change to the agent, to check nothing broke.
      restart loses nothing, and retries don't repeat side effects.
    - Volatility output is streamed and capped instead of buffered whole.
    - The orchestration moves out of the Streamlit page into shared services.
-7. **File activity in triage.** Archives, scripts and executables created in the incident window
-   are only in the USN journal and the MFT, which triage doesn't collect (too large unfiltered).
-   A filtered collection (incident window, those extensions) would let the data question see them.
-   The DC run keeps missing `secret.zip` for this reason. Logical images (AD1) have no USN journal:
-   there, a listing of the user folders (Documents, Desktop, Downloads, Pictures) with each file's
-   type read from its first bytes would have found CorporateSecrets' secret document and its
-   archive without an extension.
+7. ~~**File activity in triage.**~~ Done, not yet measured: the triage lists every file in the users'
+   Desktop, Documents, Downloads, Pictures, Videos, Music and OneDrive folders
+   (`Windows.Search.FileFinder`), types each one up to 50 MB by its first bytes
+   (`Generic.Detection.Yara.Glob` with `@file_types`, `knowledge_data/file_types.yaml`), and reads the
+   USN journal for archives and disk images in the incident window. Scripts and executables are left out
+   of the USN filter (Windows updates create thousands). The DC kept missing `secret.zip` (only in the
+   USN journal); CorporateSecrets' secret document and its archive without an extension were in user
+   folders no triage listed.
 8. **Speed.** Per-step timings in the run log (to tell slow model calls from slow Velociraptor);
    collect triage artifacts in parallel; a shorter system prompt and fewer tools once the leads
    carry more of the work.

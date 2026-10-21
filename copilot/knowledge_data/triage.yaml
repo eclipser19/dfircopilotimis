@@ -30,6 +30,8 @@ windows:
     why: ShimCache, executables seen by the system
   - artifact: Windows.Forensics.Bam
     why: Last execution per user (Background Activity Moderator)
+  - artifact: Windows.Forensics.SAM
+    why: Local accounts with creation time, last logon and logon count
   - artifact: Windows.Registry.UserAssist
     why: GUI programs each user ran, with counts
   - artifact: Windows.Registry.RecentDocs
@@ -44,8 +46,21 @@ windows:
     why: Per-application network and resource usage
   - artifact: Windows.Analysis.EvidenceOfDownload
     why: Downloaded files in Downloads and the Recycle Bin, with the source URL (Zone.Identifier)
+  - artifact: Windows.Search.FileFinder
+    why: Every file in the users' Desktop, Documents, Downloads, Pictures, Videos, Music and OneDrive folders
+    parameters:
+      SearchFilesGlobTable: [C:/Users/*/Desktop/**, C:/Users/*/Documents/**, C:/Users/*/Downloads/**,
+                             C:/Users/*/Pictures/**, C:/Users/*/Videos/**, C:/Users/*/Music/**, C:/Users/*/OneDrive/**]
+  - artifact: Generic.Detection.Yara.Glob
+    why: "Each file's type from its first bytes in those folders (finds archives or programs under another name; reads files up to 50 MB)"
+    parameters:
+      PathGlob: C:/Users/*/{Desktop,Documents,Downloads,Pictures,Videos,Music,OneDrive}/**
+      YaraRule: "@file_types"
+      SizeMax: 50000000
   - artifact: Windows.Forensics.Usn
-    why: File creations, renames and deletions (large; capped at the row limit)
+    why: Archives and disk images created, renamed or deleted, even when gone (clear FileNameRegex for the whole journal, which is very large)
+    parameters:
+      FileNameRegex: '(?i)\.(zip|7z|rar|tar|gz|tgz|bz2|xz|iso|img|vhdx?)$'
   - artifact: Windows.NTFS.MFT
     why: Every file with its MACB times (large; capped at the row limit)
 

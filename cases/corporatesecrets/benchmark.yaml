@@ -2,7 +2,7 @@
 # "Fruit Inc."). Read by copilot/benchmark.py only; the agent never sees this file. Matching rules:
 # see cases/szechuan-dc/benchmark.yaml. Human-readable answers, sources and setup: answer_key.md.
 #
-# Run blind once (20261020-141019, BENCHMARKS.md); still not tuned on. Only questions an investigator would
+# Run blind once (20261020-141019, BENCHMARKS.md); its misses led to generic fixes. Only questions an investigator would
 # ask and the copilot can reach (registry, browser history, Prefetch, LNK/RecentDocs, Recycle Bin,
 # file names) are here; the CTF's hash, carving and MFT-offset questions are left out.
 # Times are true UTC (no clock skew on this image); the scorer compares the time of day only.

@@ -158,6 +158,7 @@ you can extend without touching code:
 | `event_ids.yaml` | Windows event IDs per log channel, with notes | Report annotations and "Event IDs referenced"; `dfir_guide` |
 | `logon_types.yaml` | 4624 LogonType values | Report annotations |
 | `playbooks.yaml` | For each investigation question, which sources to check | `dfir_guide` |
+| `file_types.yaml` | File types recognised by their first bytes, with the extensions they normally have | The triage's content scan (`YaraRule: "@file_types"`, sent as YARA rules); the lead on files whose content is not what their name says |
 | `forensic_artifacts.yaml` | Where Windows and applications keep ~350 kinds of data (file globs, registry keys), converted from [ForensicArtifacts](https://github.com/ForensicArtifacts/artifacts) (Apache-2.0, `forensic_artifacts.LICENSE`) | `find_data_location`: returns ready `Windows.Search.FileFinder` / `Windows.Registry.NTUser` parameters |
 
 Patterns in `artifacts.yaml` are matched in order (first match wins), so put specific
@@ -298,7 +299,10 @@ Before the model reads anything, the data is summarised without it: the case sum
 question starts with lists leads with their evidence IDs. They cover logons grouped by source
 address (failures, successes, accounts, logon types, workstation names, and guessing that worked),
 account and group changes, services installed, scheduled tasks with stored passwords or commands in
-user folders, log clearing and Defender events, downloads by origin, and programs in user folders.
+user folders, log clearing and Defender events, downloads by origin, programs in user folders, files
+whose content is not what their name says (an archive without an extension, a program named like a
+picture), and the words users searched for (decoded from the search pages in their browser history, so
+odd spellings show as typed) with the YouTube videos they opened.
 `logon_summary` gives every logon source on request. This replaces dozens of searches through
 hundreds of thousands of logon events, and keeps the answers to different questions consistent.
 
@@ -530,7 +534,7 @@ are also the run case's chat, so you can open the run in the app. Benchmarks:
 - `cases/szechuan-dc/`: the Szechuan Sauce domain controller (disk + memory, intrusion). Its first
   runs were used to fix the knowledge, so it is no longer fully blind.
 - `cases/corporatesecrets/`: CyberDefenders "CorporateSecrets" (disk only, insider / HR case),
-  run blind once (60.7%) and never tuned on. It comes as an AD1 logical image: `answer_key.md` explains how to present it to
+  run blind once (60.7%); its misses led to generic fixes, so it is no longer blind. It comes as an AD1 logical image: `answer_key.md` explains how to present it to
   Velociraptor as a folder (`deaddisk --add_windows_directory`).
 - `cases/injector/`: CyberDefenders "Injector" (raw disk + memory, web server breached through
   its web application). Its runs led to the web-attack knowledge, so it is no longer fully blind.

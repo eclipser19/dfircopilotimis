@@ -5,9 +5,10 @@ CTF): a Windows 10 workstation (build 16299) of "Fruit Inc." shared by six accou
 a logical image (`.ad1`, about 700 MB). Not an intrusion: an insider / HR case (browser searches,
 documents, deleted files, a hidden Tor Browser).
 
-**Run blind once** (20261020-141019, 60.7%: BENCHMARKS.md), never tuned on. Keep it that way: do not
-add facts from this file (names, paths, searches) to prompts, tool descriptions or
-`copilot/knowledge_data/`, so later runs stay comparable with the blind one.
+**Run blind once** (20261020-141019, 60.7%: BENCHMARKS.md). Its misses then led to generic fixes
+(user-folder files and their types, web searches, account usage), so it is no longer blind. Still do
+not add facts from this file (names, paths, searches) to prompts, tool descriptions or
+`copilot/knowledge_data/`.
 
 Source of the answers: the public writeup
 `github.com/moe-naj/htb_writeups/blob/main/ccd_CorporateSecrets_writeup/ccd_CorporateSecrets.md`.

@@ -15,6 +15,7 @@ import re
 import time
 from datetime import datetime, timezone
 
+from copilot import file_types
 from copilot.case_config import case_config
 from copilot.database import case_db
 from copilot.vql_client import get_vql, VQLError
@@ -238,15 +239,17 @@ def schedule(artifact: str, params: dict = None, vql=None) -> str:
     client_id = _target_client()
     _check_artifact(artifact)
     encoded = encode_params(params)
-
-    env = {"DfirClientId": client_id, "DfirArtifact": artifact, "DfirSpec": json.dumps({artifact: encoded})}
+    # "@file_types" is sent as the YARA rules it names, and kept as the name in the case.
+    env = {"DfirClientId": client_id, "DfirArtifact": artifact,
+           "DfirSpec": json.dumps({artifact: encode_params(file_types.resolve(params))})}
     query = _schedule_query(with_limits=True)
     rows, log = _run(vql, query, env)
     if not rows and "max_rows" in log:
         # Older collect_client without row limits: our ingest cap still applies.
         query = _schedule_query(with_limits=False)
         rows, log = _run(vql, query, env)
-    case_db.log_query("collect_artifact", f"{query} -- env={json.dumps(env)}", len(rows), artifact)
+    logged = {**env, "DfirSpec": json.dumps({artifact: encoded})}
+    case_db.log_query("collect_artifact", f"{query} -- env={json.dumps(logged)}", len(rows), artifact)
 
     flow = (rows[0].get("flow") if rows else None) or {}
     flow_id = flow.get("flow_id")

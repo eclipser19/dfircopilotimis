@@ -1,11 +1,11 @@
 """
 Investigate once, then answer.
 
-One longer agent turn reads everything collected and writes the case dossier: the intrusion
-timeline, findings, key entities, hypotheses, contradictions and gaps. It is stored in the case
-database, and every later conversation carries it in its system prompt, so a question starts from
-it and only checks what it adds. Answers then agree with each other, and each costs a fraction of
-re-investigating the whole case.
+One longer agent turn reads everything collected and writes the case dossier: the timeline (of an
+intrusion, or of the users' actions in question), findings, key entities, hypotheses, contradictions
+and gaps. It is stored in the case database, and every later conversation carries it in its system
+prompt, so a question starts from it and only checks what it adds. Answers then agree with each
+other, and each costs a fraction of re-investigating the whole case.
 
 The investigation runs in its own conversation (not the investigator's chat), after the triage
 in the app and the CLI, from the app's Investigate button or /investigate, and before the
@@ -33,12 +33,16 @@ questions. Every later question starts from what you write now, so be complete a
 
 How to work:
 - Start with case_summary (leads and findings) and list_collections (what was collected, for which periods).
-- Go through the phases that apply, from the leads and the case description: initial access, accounts and
-  privileges, execution, persistence, lateral movement, defence evasion and anti-forensics, command and
-  control (memory, if the case has an image), data access and exfiltration, impact. dfir_guide has each
-  phase's checklist: initial_access, accounts, execution, persistence, lateral_movement, anti_forensics,
-  memory, collection_exfiltration, impact; web_attack when the host runs a web server (its access logs
-  are the main record of the attack: find and read them).
+- Decide from the case description and the leads what kind of case this is; it can be both.
+  An intrusion: go through initial access, accounts and privileges, execution, persistence, lateral
+  movement, defence evasion and anti-forensics, command and control (memory, if the case has an image),
+  data access and exfiltration, impact.
+  Misuse by the machine's own users (insider, HR, policy): who used the machine and when, what they
+  browsed and searched for, which files they opened, kept, packed, hid or deleted, what they installed
+  and ran, how data could have left (removable drives, cloud, mail, web uploads).
+  dfir_guide has each phase's checklist: initial_access, accounts, account_usage, execution, persistence,
+  lateral_movement, anti_forensics, memory, browsing, collection_exfiltration, impact; web_attack when the
+  host runs a web server (its access logs are the main record of the attack: find and read them).
 - Check EVERY phase with at least one search before you finish, also the ones the leads say nothing about
   (e.g. file access: shortcuts, jump lists, shellbags; anti-forensics: timestamps, deleted files, cleared
   logs). You have up to {steps} steps: do not stop after the leads.
@@ -52,12 +56,13 @@ How to work:
 Finish with case_summary, then answer with the dossier in exactly these sections (Markdown, at most about
 8,000 characters; evidence IDs right after each statement; times as true UTC, plus the recorded time when
 the host clock was skewed):
-## Intrusion timeline
-One line per step, oldest first: time, what happened, evidence IDs. Mark steps you could not confirm.
+## Timeline
+One line per step of what happened (the intrusion, or the users' actions in question), oldest first: time,
+what happened, who, evidence IDs. Mark steps you could not confirm.
 ## Findings
 Each recorded finding: its ID and one line.
 ## Key entities
-Attacker addresses, accounts, hosts, files, hashes, services and tasks, each with evidence IDs.
+The addresses, accounts, hosts, files, hashes, services and tasks that matter, each with evidence IDs.
 ## Hypotheses
 What is likely but unconfirmed, and which record would confirm or refute it.
 ## Contradictions
@@ -102,7 +107,7 @@ def latest() -> dict:
 
 
 # When a dossier is too long for the prompts, sections are kept in this order of importance.
-KEEP_FIRST = ("time check", "gaps", "intrusion timeline", "findings", "key entities", "hypotheses", "contradictions")
+KEEP_FIRST = ("time check", "gaps", "timeline", "findings", "key entities", "hypotheses", "contradictions")
 
 
 def fit(text: str, limit: int = PROMPT_CHARS) -> str:

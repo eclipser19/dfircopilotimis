@@ -17,7 +17,7 @@ key. Re-score saved runs with `python -m copilot.benchmark score benchmark_resul
 | `szechuan-dc` | DFIR Madness "Szechuan Sauce", domain controller (E01 + memory) | RDP brute force, malware download, service persistence, C2 in memory | 7 (13 facts) | Published solution. Used for tuning since its first runs: no longer blind |
 | `injector` | CyberDefenders "Injector" (raw disk + memory, Windows Server 2008) | Web application attacked (SQL injection, file inclusion, web shell), accounts added | 5 (19 facts) | Published writeups. Its runs led to the web-attack knowledge: no longer blind |
 | `ou-server2022` | Open University "Compromised Windows Server 2022 (simulation)" (E01, very large logs) | Password guessing, RDP, new domain admin, PsExec task pushing a payload, ransom note | 9 (49 facts) | No published solution: key built from verified records (see its `answer_key.md`). No longer blind |
-| `corporatesecrets` | CyberDefenders "CorporateSecrets" (AD1 logical image) | Insider data theft | 8 (22 facts) | **Run blind once** (20261020-141019), never tuned on: keep it that way, so later runs compare with the blind one |
+| `corporatesecrets` | CyberDefenders "CorporateSecrets" (AD1 logical image) | Insider data theft | 8 (22 facts) | Run blind once (20261020-141019, 60.7%). Its misses led to generic fixes (user-folder files and their types, web searches, account usage): no longer blind |
 
 `cases/szechuan/` (the same case's desktop) is the tuning case: it has an answer key but no
 benchmark file.

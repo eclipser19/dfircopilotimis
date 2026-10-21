@@ -430,13 +430,15 @@ def _plugin_names(plugin: str) -> list:
         return []
 
 
-def triage_sources() -> list:
-    """The active case's triage as collection names: its disk artifacts and its memory plugins' sources."""
+def triage_sources(config=None) -> list:
+    """A case's triage as collection names (the active case's by default): its disk artifacts and its
+    memory plugins' sources."""
     from copilot import memory
     from copilot.case_config import case_config
-    names = [step["artifact"] for step in case_config.collection_plan]
-    if case_config.memory_image:
-        for plugin in memory.triage_plan():
+    config = config or case_config
+    names = [step["artifact"] for step in config.collection_plan]
+    if config.memory_image:
+        for plugin in memory.triage_plan(config):
             names += [f"Memory.{n}" for n in _plugin_names(plugin)]
     return names
 
@@ -537,7 +539,7 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
     """
     from copilot import cases, conversation, memory
     from copilot.agent import auto_collect, status_line
-    from copilot.case_config import case_config
+    from copilot.case_config import CaseConfig, case_config
     from copilot.database import case_db
     spec = load_spec(spec_path)
     llm_with_tools, finalizer, model_name = model or make_model()      # before anything slow is started
@@ -559,7 +561,10 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
         f"memory {case_config.memory_image or 'none'})")
     triage, setup = [], []
     if from_case:
-        counts = cases.copy_data(from_case, run_id, triage=None if all_data else triage_sources())
+        # The earlier run's own triage list: an artifact added to the triage since may be one its agent
+        # collected with its own filters, which is not triage data.
+        source_triage = triage_sources(CaseConfig(cases._case_file(from_case)))
+        counts = cases.copy_data(from_case, run_id, triage=None if all_data else source_triage)
         copied = counts.pop("triage", None)
         triage.append(f"Data copied from case {from_case}" + ("" if all_data else " (its triage only)") + f": {counts}")
         log(f"[*] {triage[-1]}")

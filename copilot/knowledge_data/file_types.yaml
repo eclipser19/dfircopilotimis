@@ -1,0 +1,161 @@
+# File types recognised by their first bytes, and the extensions that normally carry them.
+#
+# copilot/file_types.py turns each entry into a YARA rule named FileType_<type>. The triage's content
+# scan passes them as YaraRule "@file_types" to Generic.Detection.Yara.Glob, which returns one row per
+# file with the first rule that matched. leads.py then lists files whose content does not match their
+# extension (or that have none): a 7-Zip archive named like a picture, a program named like a document.
+#
+#   type        identifier (letters, digits, _), used in the rule name
+#   what        shown to the agent and in the lead
+#   condition   YARA condition on the file's first bytes. Velociraptor scans an image's files in 1 MB
+#               blocks and evaluates it on each block, so only offsets near 0 are meaningful.
+#   strings     optional YARA strings section (for text signatures)
+#   extensions  fnmatch patterns, lower case, without the dot; "" = no extension. A file whose
+#               extension matches none is reported.
+#
+# Generic knowledge only: no case facts.
+
+- type: zip
+  what: ZIP container (also Office Open XML, OpenDocument, JAR, APK, EPUB)
+  condition: uint32be(0) == 0x504B0304 or uint32be(0) == 0x504B0506 or uint32be(0) == 0x504B0708
+  extensions: [zip, zipx, jar, war, ear, apk, aab, xapk, ipa, epub, xpi, nupkg, vsix, appx, appxbundle, msix,
+               msixbundle, docx, docm, dotx, dotm, xlsx, xlsm, xltx, xltm, xlam, pptx, pptm, potx, potm, ppsx,
+               ppsm, sldx, vsdx, vsdm, vssx, vstx, odt, ods, odp, odg, odf, odc, odb, ott, ots, otp, otg, kmz,
+               3mf, xps, oxps, cbz, whl, egg, pkpass, idml, pbix, twbx, key, pages, numbers, ora, kra, sb3,
+               xmind, sketch, mcpack, mcworld, crx]
+- type: sevenzip
+  what: 7-Zip archive
+  condition: uint32be(0) == 0x377ABCAF and uint16be(4) == 0x271C
+  extensions: [7z, "[0-9][0-9][0-9]"]
+- type: rar
+  what: RAR archive
+  condition: uint32be(0) == 0x52617221 and uint16be(4) == 0x1A07
+  extensions: [rar, cbr, "r[0-9][0-9]", "[0-9][0-9][0-9]"]
+- type: gzip
+  what: gzip-compressed data
+  condition: uint16be(0) == 0x1F8B and uint8(2) == 0x08
+  extensions: [gz, tgz, svgz, emz, wmz]
+- type: bzip2
+  what: bzip2-compressed data
+  condition: uint16be(0) == 0x425A and uint8(2) == 0x68
+  extensions: [bz2, tbz, tbz2]
+- type: xz
+  what: xz-compressed data
+  condition: uint32be(0) == 0xFD377A58 and uint16be(4) == 0x5A00
+  extensions: [xz, txz]
+- type: tar
+  what: tar archive
+  condition: uint32be(257) == 0x75737461 and uint8(261) == 0x72
+  extensions: [tar]
+- type: cab
+  what: Microsoft Cabinet archive
+  condition: uint32be(0) == 0x4D534346
+  extensions: [cab, msu, onepkg]
+- type: iso
+  what: ISO 9660 disc image
+  condition: uint32be(0x8001) == 0x43443030 and uint8(0x8005) == 0x31
+  extensions: [iso, img, udf]
+- type: vhd
+  what: VHD virtual disk
+  condition: uint32be(0) == 0x636F6E65 and uint32be(4) == 0x63746978
+  extensions: [vhd, avhd]
+- type: vhdx
+  what: VHDX virtual disk
+  condition: uint32be(0) == 0x76686478 and uint32be(4) == 0x66696C65
+  extensions: [vhdx, avhdx]
+- type: pe
+  what: Windows executable (PE)
+  condition: uint16(0) == 0x5A4D and uint32(0x3C) < 0x100000 and uint32(uint32(0x3C)) == 0x00004550
+  extensions: [exe, dll, sys, scr, cpl, ocx, com, drv, efi, mui, ax, acm, tsp, node, pyd, winmd, msstyles, ime,
+               rll, mun, bpl, xll, wll, tlb, olb, fon, flt, vxd, ex_, dl_, sy_]
+- type: elf
+  what: Linux/Unix executable (ELF)
+  condition: uint32be(0) == 0x7F454C46
+  extensions: ["", so, ko, o, elf, bin, axf, prx, out]
+- type: pdf
+  what: PDF document
+  strings: '$pdf = "%PDF-"'
+  condition: $pdf in (0..1024)
+  extensions: [pdf, ai]
+- type: ole
+  what: OLE compound file (Office 97-2003, Outlook message, MSI, Thumbs.db, password-protected Office)
+  condition: uint32be(0) == 0xD0CF11E0 and uint32be(4) == 0xA1B11AE1
+  extensions: [doc, dot, xls, xlt, xla, ppt, pot, pps, msg, oft, msi, msp, mst, pub, vsd, vss, vst, mpp, mpt, db,
+               wps, hwp, sldprt, sldasm, slddrw, max, suo, docx, docm, xlsx, xlsm, xlsb, pptx, pptm]
+- type: rtf
+  what: Rich Text Format document
+  condition: uint32be(0) == 0x7B5C7274 and uint8(4) == 0x66
+  extensions: [rtf, doc, dot]
+- type: jpeg
+  what: JPEG image
+  condition: uint16be(0) == 0xFFD8 and uint8(2) == 0xFF
+  extensions: ["jpg*", "jpeg*", jpe, jfif, jif, thm]
+- type: png
+  what: PNG image
+  condition: uint32be(0) == 0x89504E47 and uint32be(4) == 0x0D0A1A0A
+  extensions: [png, apng]
+- type: gif
+  what: GIF image
+  condition: uint32be(0) == 0x47494638 and (uint16be(4) == 0x3761 or uint16be(4) == 0x3961)
+  extensions: [gif]
+- type: tiff
+  what: TIFF image (also camera raw formats)
+  condition: uint32be(0) == 0x49492A00 or uint32be(0) == 0x4D4D002A
+  extensions: [tif, tiff, dng, nef, nrw, cr2, arw, srf, sr2, orf, pef, srw, "3fr", erf, kdc, dcr, mos]
+- type: webp
+  what: WebP image
+  condition: uint32be(0) == 0x52494646 and uint32be(8) == 0x57454250
+  extensions: [webp]
+- type: wave
+  what: WAVE audio
+  condition: uint32be(0) == 0x52494646 and uint32be(8) == 0x57415645
+  extensions: [wav, wave]
+- type: avi
+  what: AVI video
+  condition: uint32be(0) == 0x52494646 and uint32be(8) == 0x41564920
+  extensions: [avi]
+- type: isomedia
+  what: MP4 / QuickTime / HEIF media
+  condition: uint32be(4) == 0x66747970
+  extensions: [mp4, m4a, m4v, m4b, m4p, mov, qt, 3gp, 3g2, heic, heif, hif, avif, mj2, f4v, f4a, cr3]
+- type: mp3
+  what: MP3 audio (ID3 tag)
+  condition: uint16be(0) == 0x4944 and uint8(2) == 0x33
+  extensions: [mp3, mp2, aac]
+- type: flac
+  what: FLAC audio
+  condition: uint32be(0) == 0x664C6143
+  extensions: [flac]
+- type: ogg
+  what: Ogg audio/video
+  condition: uint32be(0) == 0x4F676753
+  extensions: [ogg, oga, ogv, opus, spx]
+- type: matroska
+  what: Matroska / WebM video
+  condition: uint32be(0) == 0x1A45DFA3
+  extensions: [mkv, mka, mks, mk3d, webm]
+- type: sqlite
+  what: SQLite database
+  strings: '$sqlite = "SQLite format 3\x00"'
+  condition: $sqlite at 0
+  extensions: [sqlite, sqlite3, db, db3, sdb, s3db, sqlitedb, sl3]
+- type: lnk
+  what: Windows shortcut (LNK)
+  condition: uint32(0) == 0x0000004C and uint32(4) == 0x00021401
+  extensions: [lnk]
+- type: evtx
+  what: Windows event log (EVTX)
+  condition: uint32be(0) == 0x456C6646 and uint32be(4) == 0x696C6500
+  extensions: [evtx]
+- type: registry
+  what: Windows registry hive
+  condition: uint32be(0) == 0x72656766
+  extensions: [dat, hve, hiv, log1, log2, sav]
+- type: pst
+  what: Outlook data file (PST/OST)
+  condition: uint32be(0) == 0x2142444E
+  extensions: [pst, ost]
+- type: keepass
+  what: KeePass password database
+  condition: uint32be(0) == 0x03D9A29A and (uint32be(4) == 0x67FB4BB5 or uint32be(4) == 0x65FB4BB5)
+  extensions: [kdbx, kdb]

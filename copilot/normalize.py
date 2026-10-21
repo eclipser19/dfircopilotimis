@@ -81,6 +81,7 @@ EVENT_TYPES = [
     ("Windows.Registry.RecentDocs*", "user_activity"),
     ("Windows.Forensics.RecycleBin*", "user_activity"),
     ("Windows.NTFS.*", "filesystem"),
+    ("Generic.Detection.Yara.Glob*", "filesystem"),
     ("*MFT*", "filesystem"),
     ("*USN*", "filesystem"),
     ("Windows.Persistence.*", "persistence"),
@@ -160,8 +161,10 @@ DESCRIPTION_TEMPLATES = [
                                       "[ as {RecyclePath}]"),
     ("Windows.Analysis.EvidenceOfDownload*", "downloaded file {DownloadedFilePath}[ from {HostUrl}| (no HostUrl)]"
                                              "[, referrer {ReferrerUrl}][, ZoneId {ZoneId}]"),
+    # File types from the first bytes (YaraRule "@file_types": FileType_<type>, what it is in Meta).
+    ("Generic.Detection.Yara.Glob*", "{OSPath} matched YARA rule {Rule}[ ({Meta.what})][, {Size} bytes]"),
 ]
-NORMALIZER_VERSION = 5
+NORMALIZER_VERSION = 6
 _FIELD_RE = re.compile(r"\{([^{}]+)\}")
 
 # Fields that make the best one-line description, in order of preference.
@@ -381,9 +384,17 @@ DESCRIPTION_ENTITIES = ["event_id", "user", "ip", "process", "command_line", "ha
 _OPTIONAL_RE = re.compile(r"\[([^\[\]]*)\]")
 
 
+def _get(row: dict, name: str):
+    """A field's value; "Meta.what" reads inside a nested object."""
+    value = row
+    for part in name.split("."):
+        value = value.get(part) if isinstance(value, dict) else None
+    return value
+
+
 def _from_template(template: str, row: dict) -> str:
     def has(name):
-        return row.get(name) not in (None, "")
+        return _get(row, name) not in (None, "")
 
     if not any(has(name) for name in _FIELD_RE.findall(template)):
         return ""
@@ -393,7 +404,7 @@ def _from_template(template: str, row: dict) -> str:
         return kept if all(has(n) for n in _FIELD_RE.findall(kept)) else otherwise
 
     text = _OPTIONAL_RE.sub(optional, template)
-    text = _FIELD_RE.sub(lambda m: str(row.get(m.group(1))) if has(m.group(1)) else "", text)
+    text = _FIELD_RE.sub(lambda m: str(_get(row, m.group(1))) if has(m.group(1)) else "", text)
     return " ".join(text.split())
 
 

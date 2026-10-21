@@ -34,6 +34,7 @@ DEFAULT_ARTIFACT_ALLOWLIST = [
     "Windows.System.Services",
     "Generic.Forensic.*",
     "Generic.Detection.Logs",
+    "Generic.Detection.Yara.Glob",
     "Linux.Forensics.*",
     "Linux.Syslog.*",
     "Linux.Ssh.*",
@@ -62,6 +63,7 @@ HEAVY_ARTIFACTS = [
     "Windows.Forensics.Usn*",
     "Windows.EventLogs.EvtxHunter*",
     "Windows.Search.*",
+    "Generic.Detection.Yara.*",
     "Windows.KapeFiles.*",
     "Generic.Forensic.Timeline*",
 ]

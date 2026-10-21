@@ -185,15 +185,20 @@ def test_reusing_an_earlier_run_takes_its_triage_only_and_collects_what_it_lacks
                               requested_at=datetime.now(timezone.utc).isoformat(), rows_ingested=1)
     case_db.ingest_artifact_results([{"Message": "collected later by the agent"}], "Windows.Search.FileFinder",
                                     "H", CLIENT)
+    # The triage has grown since, even by the artifact that agent collected with its own filters.
     spec = _spec(bench_dirs, case={"case": {"name": "Mini"}, "velociraptor": {"client_id": ""},
-                                   "collect": ["Generic.Client.Info", "Windows.Sys.StartupItems"]})
+                                   "collect": ["Generic.Client.Info", "Windows.Sys.StartupItems",
+                                               "Windows.Search.FileFinder"]})
     second = benchmark.run(spec, from_case=first["run_id"],
                            model=(ScriptedLLM(AIMessage(content="c"), AIMessage(content="d")), None, "s"), **quiet)
     assert second["from_case"] == first["run_id"] and "(its triage only)" in second["triage"][0]
     assert case_config.client_id == CLIENT                                  # the evidence comes with it
     assert case_db.search_events("collected later")["total"] == 0 and case_db.get_stats()["total_records"] >= 1
-    assert {c["artifact"] for c in case_db.get_collections()} == {"Generic.Client.Info", "Windows.Sys.StartupItems"}
-    assert any(line.startswith("Windows.Sys.StartupItems -> ") for line in second["triage"])   # collected now
+    assert {c["artifact"] for c in case_db.get_collections()} == {"Generic.Client.Info", "Windows.Sys.StartupItems",
+                                                                   "Windows.Search.FileFinder"}
+    assert "F.AGENT" not in {c["flow_id"] for c in case_db.get_collections()}
+    for collected_now in ("Windows.Sys.StartupItems -> ", "Windows.Search.FileFinder -> "):
+        assert any(line.startswith(collected_now) for line in second["triage"])
     assert second["code"].get("commit")                                     # which code produced the run
 
 

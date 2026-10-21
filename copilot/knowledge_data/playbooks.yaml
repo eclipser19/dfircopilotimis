@@ -97,6 +97,25 @@ indicator:
     - 'In the answer, separate real negatives (searched, not there) from checks that could not run on this image (parser needs a live system): only the first kind is evidence of absence.'
     - 'For blocking and hunting, list every source IP of a successful logon tied to the attacker (read from each 4624 / 1149 itself), not only the addresses that failed; accounts they created or used; files and hashes they brought; task and service names.'
 
+browsing:
+  question: What did users browse, search for, watch or download?
+  triggers: ['brows(e|ed|ing|er)', 'search(ed|es)? (for|on)\b', '\bwatch(ed|ing)?\b', 'web (history|activity|search)', 'visit(ed|s)?\b.{0,30}\b(site|page|url)', '(site|page)s? .{0,20}visit', '\bgoogle', '\byoutube', 'on the (web|internet)']
+  check:
+    - 'case_summary leads web_searches (the words decoded from search pages, as the user typed them, odd spellings included) and youtube_videos_opened, per user and browser, with times. They cover the collected browser history only.'
+    - 'Read each browser''s history whole, not only keyword hits: a history of a few hundred rows costs little to read (query_timeline with source = the history artifact), and keyword searches miss misspellings, other languages and words typed differently than you expect.'
+    - 'Every browser the users have: Chrome, Edge and Firefox (Windows.Applications.*), and others seen in Prefetch, UserAssist or program folders (Brave, Opera, Tor Browser). Tor Browser and private windows keep no history: say that instead of "nothing found".'
+    - 'For each item give the user (profile), the browser, the time and the words or page title.'
+    - 'Downloads: Zone.Identifier (Windows.Analysis.EvidenceOfDownload) and the listing of the users'' Downloads folders.'
+
+account_usage:
+  question: Which accounts were used, how often, and which one last?
+  triggers: ['used last', '\blast (used|user|account|logged|logon|login|sign)', 'how (many|often)\b.{0,40}\b(log|sign)', '(logon|login) counts?', 'most (recent|active) (user|account)', 'who (used|uses|was using) (this|the) (computer|machine|workstation|laptop)']
+  check:
+    - 'The registry keeps the machine''s own answers, whatever the event logs still hold: Windows.Forensics.SAM (source Parsed) gives each local account''s LoginCount and LastLoginDate. The last user name at the logon screen is in HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion\Winlogon (LastUsedUsername, DefaultUserName) and ...\Windows\CurrentVersion\Authentication\LogonUI (LastLoggedOnUser, LastLoggedOnSAMUser): Windows.Search.FileFinder with Accessor registry on those keys.'
+    - 'Event logs count only what they still hold (they roll over and can be cleared), and every logon type: count the interactive ones (4624 LogonType 2, 10, 11; 7 is an unlock) per account, and say which period the collected logs cover.'
+    - 'When the registry and the events disagree, give both numbers, each with its source. Domain accounts are not in the local SAM.'
+    - 'Last used: compare the registry''s last user with the latest interactive logon in the events; name both if they differ.'
+
 sessions:
   question: When did someone log on or off, and did they come back?
   triggers: ['log(ged)? ?(on|in|off|out)\b', 'logoff', 'logon', 'session', 'came back', 'come back', 'return(ed)?\b', '\bagain\b', 'reconnect', 'disconnect', 'restart', 'reboot', 'shut ?down']
@@ -126,9 +145,10 @@ credential_access:
 
 collection_exfiltration:
   question: Was data gathered or taken?
-  triggers: ['exfil', '\bstol(e|en)\b', '\b(take|taken|took)\b', 'leak', 'archive', '\.?\bzip\b', 'upload', 'data (was )?(gathered|collected)', '\bcollect(ed)?\b', 'files? (of interest|accessed|opened)']
+  triggers: ['exfil', '\bstol(e|en)\b', '\b(take|taken|took)\b', 'leak', 'archive', '\.?\bzip\b', 'upload', 'data (was )?(gathered|collected)', '\bcollect(ed)?\b', 'files? (of interest|accessed|opened)', 'disguis', 'extension', 'hid(e|den|ing)\b.{0,30}\bfiles?']
   check:
-    - 'Establish the intrusion start first (case_summary findings; the first logon or execution tied to the attacker). Only what happened from the intrusion on (the attacker''s first logon or execution), or what is tied to the attacker''s session (logon ID, source IP, account at that time), is the attacker''s. File activity before that is the owners'' normal use: say so instead of listing it as theft.'
+    - 'Establish who and from when first. After an intrusion: the attacker''s first logon or execution (case_summary findings); only what happened from then on, or what is tied to the attacker''s session (logon ID, source IP, account at that time), is the attacker''s, and earlier file activity is the owners'' normal use. For an insider: the account whose profile paths, shortcuts and sessions show the activity.'
+    - 'Files in the users'' folders: the triage usually lists them (Windows.Search.FileFinder) and types each by its first bytes (Generic.Detection.Yara.Glob, rules FileType_<type>): search those records by name or type (e.g. FileType_zip, FileType_sevenzip, FileType_rar). The case_summary lead files_whose_content_is_not_their_name lists archives or programs saved under another extension or none.'
     - 'Archives created then deleted: USN journal (FILE_CREATE, RENAME, FILE_DELETE) for .zip/.7z/.rar; MFT for surviving entries.'
     - 'Who did it: the user profile in the paths shows the account. A temp file in C:\Users\<name>\AppData\Local\Temp or a Recent\*.lnk under C:\Users\<name> means the action ran as <name>, even when the result lands in another user''s folder. Match it with that account''s logon session (4624/RDP 21) at the time.'
     - Files opened by the attacker's account (LNK, JumpLists, Shellbags) around the intrusion window.

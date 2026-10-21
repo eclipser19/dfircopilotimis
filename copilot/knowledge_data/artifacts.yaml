@@ -267,6 +267,17 @@
     - 'Keep the glob narrow (a folder, an extension): ** over a whole drive with a YaraRule reads every file.'
     - 'Machine registry on images (verified): HKEY_LOCAL_MACHINE\Software\... and HKEY_LOCAL_MACHINE\System\ControlSet001\... (an image has no CurrentControlSet). Useful keys: System\ControlSet001\Control\ComputerName\ComputerName\*, Software\Microsoft\Windows NT\CurrentVersion\* (ProductName, CurrentBuild, InstallDate), System\ControlSet001\Control\TimeZoneInformation\*, System\ControlSet001\Services\Tcpip\Parameters\Interfaces\*\* (DhcpIPAddress, DhcpDomain), Software\Microsoft\Windows\CurrentVersion\Authentication\LogonUI\* (LastLoggedOnUser), Software\Microsoft\Windows NT\CurrentVersion\Winlogon\*.'
     - 'Generic.Client.Info cannot describe an image (it asks WMI): the host name it shows is the virtual client''s. Take system facts from the registry as above.'
+    - 'The triage usually lists every file in the users'' Desktop, Documents, Downloads, Pictures, Videos, Music and OneDrive folders with this artifact: search those records by name (search_iocs) before collecting again.'
+
+- pattern: Generic.Detection.Yara.Glob*
+  what: YARA rules run over the files a glob finds
+  location: Any path glob (PathGlob, one glob; {a,b} alternatives and ** work)
+  meaning: 'Which files match a YARA rule. With YaraRule "@file_types" it types each file by its first bytes (rules FileType_<type> from knowledge_data/file_types.yaml: archives, programs, documents, images, databases...), so a file whose name hides its type shows up; the case_summary lead files_whose_content_is_not_their_name lists those.'
+  params: {PathGlob: one path glob, YaraRule: 'YARA rule text, or "@file_types"', SizeMax: largest file to scan in bytes, NumberOfHits: rows per file (default 1), DateAfter: file times after, DateBefore: file times before}
+  tips:
+    - 'It reads every file it scans in full: keep PathGlob to the folders in question and set SizeMax.'
+    - 'A file larger than SizeMax, or with no time inside DateAfter/DateBefore, is not scanned: no row is not proof the file is harmless.'
+    - 'The triage usually runs it with "@file_types" on the users'' folders; to type files elsewhere (a USB folder, the Recycle Bin, a temp folder), collect it with that YaraRule and another PathGlob.'
 
 - pattern: Windows.NTFS.MFT*
   what: NTFS Master File Table

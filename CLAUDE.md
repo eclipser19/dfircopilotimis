@@ -69,10 +69,11 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 | `copilot/memory.py` | Volatility 3 as a subprocess (`-r json`), plugin allowlist `PLUGINS`, triage, `strings` search done in Python, settings from `server.yaml` `memory:`. |
 | `copilot/vol_plugins/dfir_memsearch.py` | Our own Volatility plugin (loaded with `-p`): text or YARA search per process. Runs inside Volatility, imports nothing from `copilot`. |
 | `copilot/approvals.py` | Approval kinds (collect, memory, retract_finding, update/switch/create_case, lesson), modes confirm/auto/off per case, `ASK` hook set by the UI, `execute()` for queued requests. |
-| `copilot/knowledge.py` + `knowledge_data/` | `artifacts.yaml` (first matching pattern wins; `live_only` = refused on images; verified `params`; tips), `playbooks.yaml`, `event_ids.yaml`, `triage.yaml` (suggestions). |
+| `copilot/knowledge.py` + `knowledge_data/` | `artifacts.yaml` (first matching pattern wins; `live_only` = refused on images; verified `params`; tips), `playbooks.yaml`, `event_ids.yaml`, `triage.yaml` (suggestions), `file_types.yaml`. |
 | `copilot/forensic_artifacts.py` | "Where is X stored?": search over `knowledge_data/forensic_artifacts.yaml` (generated from ForensicArtifacts, Apache-2.0; `python -m copilot.forensic_artifacts import <checkout>`), returning ready FileFinder / NTUser parameters; the `find_data_location` tool. |
 | `copilot/lessons.py` | Lessons proposed by the agent, approved by a person, stored server-wide in `learned_knowledge.yaml`, merged into `knowledge.artifact_info`. Refuses case facts (IPs, hashes, domains). |
-| `copilot/leads.py` | Leads computed without the LLM, shown in `case_summary`: logons per source address (`logon_sources`, also the `logon_summary` tool), account/group changes, services, tasks, log clearing/Defender, downloads by origin, programs in user folders. Parses the `event_fields` part of descriptions; cached per database state. |
+| `copilot/leads.py` | Leads computed without the LLM, shown in `case_summary`: logons per source address (`logon_sources`, also the `logon_summary` tool), account/group changes, services, tasks, log clearing/Defender, downloads by origin, programs in user folders, files whose content is not their name (`renamed_content`), web searches and YouTube videos (`web_activity`, words decoded from search-page URLs). Parses the `event_fields` part of descriptions; cached per database state. |
+| `copilot/file_types.py` + `knowledge_data/file_types.yaml` | File types by their first bytes: one YARA rule `FileType_<type>` each; a parameter value `"@file_types"` is sent to Velociraptor as those rules (`collection.schedule`) but stored and audited by that name; `mismatch()` compares a typed file's extension with the type's usual ones. The triage runs it through `Generic.Detection.Yara.Glob` on the users' folders. |
 | `copilot/citations.py` | Evidence/finding ID lookup for answers; `md_literal` / `answer_markdown` keep attacker text from rendering as Markdown, links, images or math. |
 | `copilot/report.py`, `report_template.py`, `report_html.py`, `charts.py` | Report built from the DB (only the narrative comes from the LLM); HTML with `html=False` and a CSP; charts as static SVG. `report.Clock` converts recorded -> true UTC. |
 | `copilot/outputs.py` | Files produced for download (reports, exports), registered per case. |
@@ -82,7 +83,7 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 | `copilot/benchmark.py` | Benchmark runner: model checked first (`make_model` pings it), fresh `bench-*` case, triage (waits for unfinished flows: `finish_triage`) or `--from-case` (triage part only: `cases.copy_data(triage=)`, then the missing triage artifacts), investigation, fixed questions in fresh conversations, scoring in code (facts, true-UTC times near the fact's words, uncorrected times, invalid IDs, forbidden claims, times not in cited records), commit recorded, results in `benchmark_results/`. |
 | `cases/szechuan/` | Example case (DFIR Madness "Szechuan Sauce" desktop) and `answer_key.md`; used to tune the knowledge. |
 | `cases/szechuan-dc/` | The same case's domain controller: `case.yaml`, `benchmark.yaml` (questions and expected facts), `answer_key.md`. Benchmark (no longer fully blind). |
-| `cases/corporatesecrets/` | CyberDefenders "CorporateSecrets" (insider case, AD1 logical image read as a folder): benchmark run blind once (60.7%), never tuned on; `answer_key.md` has the setup. |
+| `cases/corporatesecrets/` | CyberDefenders "CorporateSecrets" (insider case, AD1 logical image read as a folder): benchmark run blind once (60.7%); its misses led to generic fixes, so no longer blind; `answer_key.md` has the setup. |
 | `cases/injector/` | CyberDefenders "Injector" (web server breach, raw disk + memory): benchmark (no longer fully blind); web logs via `Generic.Detection.Logs`. |
 | `cases/ou-server2022/` | Open University "Compromised Windows Server 2022 (simulation)" (E01, RDP + ransomware): benchmark (no longer fully blind); no published solution, so its key was built from a blind run's cited records, Hayabusa hits and lookups (`answer_key.md`). |
 | `tests/conftest.py` | `FakeVQL` (answers Velociraptor queries; `artifact_params` take names or dicts), fixtures `case`, `approve_all`, and isolation from real `server.yaml`/accounts/lessons. |
@@ -123,7 +124,8 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 - **Knowledge must stay generic.** The answer keys (`answer_key.md`, `benchmark.yaml`) score the
   agent, so prompts, tool descriptions and `knowledge_data/` must not contain facts of the test
   cases (their file names, IPs, users). Improve the agent on the desktop case, measure on the
-  benchmarks; `cases/corporatesecrets/` was run blind once: don't tune on it, so later runs compare with that one.
+  benchmarks. No benchmark is blind any more (`cases/corporatesecrets/` was run blind once, at 60.7%): an
+  unbiased number needs a new image.
 - **Streamlit quirks.** `RerunException`/`StopException` are `BaseException` (they can cut a turn
   short: `repair_history`); widget state is dropped when a widget is not drawn, so selections are
   copied to plain keys in `on_change`; `AppTest` cannot keep `st.dialog` open, so editors live in

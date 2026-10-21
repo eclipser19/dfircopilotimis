@@ -49,6 +49,17 @@ collect:
   - Windows.Applications.Chrome.History
   - Windows.Applications.Firefox.History
   - Windows.Applications.Edge.History
+  - Windows.Forensics.SAM              # local accounts: created, last logon, logon count
+  # Files in the users' folders, each file's type from its first bytes (copilot/knowledge_data/file_types.yaml)
+  - artifact: Windows.Search.FileFinder
+    parameters:
+      SearchFilesGlobTable: [C:/Users/*/Desktop/**, C:/Users/*/Documents/**, C:/Users/*/Downloads/**,
+                             C:/Users/*/Pictures/**, C:/Users/*/Videos/**, C:/Users/*/Music/**, C:/Users/*/OneDrive/**]
+  - artifact: Generic.Detection.Yara.Glob
+    parameters:
+      PathGlob: C:/Users/*/{Desktop,Documents,Downloads,Pictures,Videos,Music,OneDrive}/**
+      YaraRule: "@file_types"
+      SizeMax: 50000000
 
 collection:
   max_rows: 50000

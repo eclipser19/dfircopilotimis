@@ -1,8 +1,8 @@
 """
 Leads computed from the collected data without the LLM: who logged on from where (failures and
 successes per source address), account and group changes, new services and scheduled tasks, log
-clearing, Defender events, downloads and programs in user folders. Every item carries the evidence
-IDs to cite. They are starting points for the agent to confirm, not findings.
+clearing, Defender events, downloads, programs in user folders, files whose content is not what
+their name says, and what users searched for or watched on the web. Every item carries the evidence IDs to cite. They are starting points for the agent to confirm, not findings.
 
 Reading 100,000 logon records one search at a time cost the agent most of its budget and it still
 named the wrong source; grouping them here takes a second.
@@ -11,6 +11,9 @@ import ipaddress
 import json
 import re
 from collections import Counter
+from urllib.parse import parse_qs, urlsplit
+
+from copilot import file_types
 
 # Fields the normalizer puts at the start of an event's description (normalize.event_fields).
 _FIELD_RE = re.compile(r"(?:^|; )(LogonType|user|domain|ip|workstation|logon_id|by|by_logon_id|server|group|"
@@ -22,6 +25,7 @@ ACCOUNT_EVENTS = {"4720": "account created", "4722": "account enabled", "4724": 
                   "4728": "added to a global group", "4732": "added to a local group",
                   "4756": "added to a universal group"}
 SECTION_LIMIT = 15
+WEB_LIMIT = 40          # search words are short and each can matter
 # Command lines and paths that deserve a look when a service or task runs them.
 _USER_WRITABLE = re.compile(r"(?i)\\(users|programdata|temp|tmp|perflogs|recycle)|\\appdata\\|\\downloads\\|\\desktop\\")
 _LOLBINS = re.compile(r"(?i)\b(powershell|pwsh|cmd(\.exe)?\s*/c|psexec|rundll32|regsvr32|mshta|wscript|cscript|"
@@ -250,6 +254,98 @@ def user_folder_programs(db) -> list:
     return out
 
 
+def renamed_content(db) -> list:
+    """
+    Files whose first bytes say another type than their extension, or that have no extension (the
+    triage's content scan: Generic.Detection.Yara.Glob with YaraRule "@file_types"). A mismatch is a
+    reason to look, not proof of hiding: some programs use a common format under their own extension.
+    """
+    out, seen = [], set()
+    for row in _rows(db, "source LIKE 'Generic.Detection.Yara.Glob%'"):
+        raw = _raw(row)
+        path, rule = str(raw.get("OSPath") or ""), str(raw.get("Rule") or "")
+        if not rule.startswith(file_types.RULE_PREFIX) or path.lower() in seen:
+            continue
+        seen.add(path.lower())
+        wrong = file_types.mismatch(path, rule)
+        if wrong:
+            out.append({**_at(row), "path": path, **wrong, "size": raw.get("Size")})
+    return out
+
+
+# Search pages: (engine, host regex, path regex, parameter holding the words). Generic: no case facts.
+SEARCH_PAGES = [
+    ("Google", r"(^|\.)google\.[a-z.]+$", r"^/(search|webhp)?$", "q"),
+    ("Bing", r"(^|\.)bing\.com$", r"^/(search)?$", "q"),
+    ("DuckDuckGo", r"(^|\.)duckduckgo\.com$", r"^/(html/?)?$", "q"),
+    ("Yahoo", r"(^|\.)search\.yahoo\.", r"^/search", "p"),
+    ("Yandex", r"(^|\.)yandex\.", r"^/search", "text"),
+    ("Baidu", r"(^|\.)baidu\.com$", r"^/s$", "wd"),
+    ("Ecosia", r"(^|\.)ecosia\.org$", r"^/search", "q"),
+    ("Brave", r"(^|\.)search\.brave\.com$", r"^/search", "q"),
+    ("Startpage", r"(^|\.)startpage\.com$", r"search", "query"),
+    ("Ask", r"(^|\.)ask\.com$", r"^/web", "q"),
+    ("YouTube", r"(^|\.)youtube\.com$", r"^/results$", "search_query"),
+    ("Amazon", r"(^|\.)amazon\.", r"^/s$", "k"),
+    ("eBay", r"(^|\.)ebay\.", r"^/sch/", "_nkw"),
+    ("Wikipedia", r"(^|\.)wikipedia\.org$", r"^/w/index\.php$", "search"),
+]
+# Any other site's search page: a path with "search" in it and one of these parameters.
+SEARCH_PARAMETERS = ("q", "query", "search_query", "search", "keywords", "term", "text")
+_URL_FIELDS = ("visited_url", "url_visited", "url", "URL", "Url")
+
+
+def _browser(source: str) -> str:
+    parts = source.split("/")[0].split(".")
+    return parts[2] if len(parts) > 3 and parts[1] == "Applications" else parts[0]
+
+
+def _search_words(url: str) -> tuple:
+    """(engine, words) when the URL is a search results page, else None."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return None
+    host, path, query = (parts.hostname or "").lower(), parts.path or "/", parse_qs(parts.query)
+    for engine, host_re, path_re, param in SEARCH_PAGES:
+        if re.search(host_re, host):
+            words = (query.get(param) or [""])[0].strip()
+            return (engine, words) if words and re.search(path_re, path) else None
+    if "search" in path.lower():
+        words = next((query[p][0].strip() for p in SEARCH_PARAMETERS if (query.get(p) or [""])[0].strip()), "")
+        if words:
+            return host, words
+    return None
+
+
+def web_activity(db) -> dict:
+    """
+    What users searched for (the words decoded from search pages' URLs, so odd spellings show as typed) and
+    which YouTube videos they opened, per user and browser, from the collected browser history.
+    """
+    searches, videos = {}, {}
+    for row in _rows(db, "source LIKE 'Windows.Applications.%' OR source LIKE '%History%'"):
+        raw = _raw(row)
+        url = next((str(raw[f]) for f in _URL_FIELDS if raw.get(f)), "")
+        if not url:
+            continue
+        who = {"user": raw.get("User") or raw.get("Username") or "", "browser": _browser(row["source"])}
+        found = _search_words(url)
+        if found:
+            key = (who["user"], who["browser"], found[1].lower())
+            item = searches.setdefault(key, {"words": found[1], "engine": found[0], **who, **_at(row), "visits": 0})
+            item["visits"] += 1
+            continue
+        parts = urlsplit(url)
+        video = (parse_qs(parts.query).get("v") or [""])[0]
+        if video and re.search(r"(^|\.)youtube\.com$", (parts.hostname or "").lower()) and parts.path == "/watch":
+            title = re.sub(r"\s*-\s*YouTube$", "", str(raw.get("title") or "")).strip()
+            item = videos.setdefault((who["user"], video), {"title": title, "video": video, **who, **_at(row)})
+            item["title"] = item["title"] or title
+    by_time = lambda items: sorted(items, key=lambda i: i["timestamp_utc"] or "")
+    return {"searches": by_time(searches.values()), "videos": by_time(videos.values())}
+
+
 # Names that only a host serving web pages has (server programs, services, web roots). Generic: no case facts.
 WEB_SERVER_SIGNS = ("httpd.exe", "w3wp.exe", "nginx.exe", "php-cgi", "tomcat", "W3SVC", "inetpub", "htdocs",
                     "wwwroot", "apache2", "lighttpd")
@@ -290,10 +386,11 @@ def leads(db, sources_limit: int = 8) -> dict:
 
 
 def _compute(db, sources_limit: int) -> dict:
-    def capped(items):
-        return items[:SECTION_LIMIT] + ([f"... {len(items) - SECTION_LIMIT} more"] if len(items) > SECTION_LIMIT else [])
+    def capped(items, limit=SECTION_LIMIT):
+        return items[:limit] + ([f"... {len(items) - limit} more"] if len(items) > limit else [])
 
     logons = logon_sources(db, limit=sources_limit)
+    web = web_activity(db)
     out = {"logon_sources": logons["sources"],
            "account_and_group_changes": capped(account_changes(db)),
            "services_installed": capped(services(db)),
@@ -301,6 +398,9 @@ def _compute(db, sources_limit: int) -> dict:
            "log_clearing_and_defender": capped(log_clearing_and_defender(db)),
            "downloads_by_origin": capped(downloads(db)),
            "programs_in_user_folders": capped(user_folder_programs(db)),
+           "files_whose_content_is_not_their_name": capped(renamed_content(db)),
+           "web_searches": capped(web["searches"], WEB_LIMIT),
+           "youtube_videos_opened": capped(web["videos"], WEB_LIMIT),
            "web_server_signs": web_server(db)}
     out = {k: v for k, v in out.items() if v}
     out["about"] = ("Computed from the collected data without the model: starting points to confirm with the cited "

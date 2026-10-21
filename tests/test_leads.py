@@ -100,3 +100,22 @@ def test_case_summary_carries_the_leads_and_logon_summary_filters(case):
     assert [s["ip"] for s in out["sources"]] == ["203.0.113.5"]
     assert out["sources"][0]["workstations"] == {"ADMIN-HOME": 1}
     assert "No logon events" in tools.logon_summary.invoke({"ip": "192.0.2.1"})
+
+
+def test_web_searches_are_decoded_from_history_urls_per_user_and_browser(case):
+    chrome = [{"User": "tim", "visit_time": "2020-04-09T20:36:29Z", "title": "x - Google Search",
+               "visited_url": "https://www.google.com/search?q=hhoww+ddoo+i+fiirre&oq=hh"},
+              {"User": "tim", "visit_time": "2020-04-09T20:36:40Z", "title": "x - Google Search",
+               "visited_url": "https://www.google.com/search?q=HHOWW+ddoo+i+fiirre&start=10"},
+              {"User": "tim", "visit_time": "2020-04-09T20:37:00Z", "visited_url": "https://www.google.com/url?q=https://a.example"},
+              {"User": "jim", "visit_time": "2020-04-12T04:39:33Z", "title": "How To Hack - YouTube",
+               "visited_url": "https://www.youtube.com/watch?v=abc123&t=4s"}]
+    firefox = [{"User": "tim", "visit_time": "2020-04-09T20:45:07Z", "url_visited": "https://duckduckgo.com/?q=is+it+ok&t=ffab"}]
+    case.ingest_artifact_results(chrome, "Windows.Applications.Chrome.History", "H", "C.1")
+    case.ingest_artifact_results(firefox, "Windows.Applications.Firefox.History", "H", "C.1")
+    out = leads.leads(case)
+    searches = [(s["words"], s["user"], s["browser"], s["visits"]) for s in out["web_searches"]]
+    assert searches == [("hhoww ddoo i fiirre", "tim", "Chrome", 2), ("is it ok", "tim", "Firefox", 1)]
+    assert out["web_searches"][0]["engine"] == "Google" and out["web_searches"][0]["evidence_id"]
+    [video] = out["youtube_videos_opened"]
+    assert (video["title"], video["video"], video["user"]) == ("How To Hack", "abc123", "jim")
