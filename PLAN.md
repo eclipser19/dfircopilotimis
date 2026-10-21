@@ -64,9 +64,10 @@ evidence dump for building keys. Four benchmarks (`szechuan-dc`, `injector`, `ou
   are generic gaps: files in user folders are never listed and no file's type is read from its
   content; small sources (browser history) are keyword-searched instead of read whole, so odd
   spellings slip through; logon counts and the last user come from events, never from the SAM or
-  Winlogon; the dossier keeps intrusion headings on an insider case. **Addressed in code since, not yet
-  measured:** the user-folder listing with file types and its lead, the web-searches lead, the
-  `account_usage` and `browsing` playbooks, SAM in the triage, a dossier for either kind of case.
+  Winlogon; the dossier keeps intrusion headings on an insider case. **Addressed in code since,
+  measured at 82.1%** (20261021-081326): the user-folder listing with file types and its lead, the
+  web-searches lead, the `account_usage` and `browsing` playbooks, SAM in the triage, a dossier for
+  either kind of case.
 
 ## External review (Codex, 2026-10-20)
 
@@ -89,7 +90,8 @@ Still open from the review: steps 6 and 8 below (step 2 is done).
 The copilot investigates a disk and memory image end to end, writes a case dossier, answers questions
 from it with cited records, and builds the report; several investigators share one server with
 per-case and per-evidence access. Benchmarks: DC 83-91%, Injector 71%, OU ~50% (before the dossier);
-on CorporateSecrets, never tuned on, 60.7% blind: the honest estimate for a new kind of case.
+on CorporateSecrets 60.7% blind (the honest estimate for a new kind of case), 82.1% after generic fixes
+for its misses.
 From here, improvement comes from use, not from tuning on the benchmarks: analysts correct answers,
 add notes and confirm findings (`copilot/feedback.py`), the copilot takes those as given in the case,
 and `python -m copilot.feedback export` hands everything they said to whoever improves the knowledge
@@ -157,7 +159,7 @@ a change to the agent, to check nothing broke.
      restart loses nothing, and retries don't repeat side effects.
    - Volatility output is streamed and capped instead of buffered whole.
    - The orchestration moves out of the Streamlit page into shared services.
-7. ~~**File activity in triage.**~~ Done, not yet measured: the triage lists every file in the users'
+7. ~~**File activity in triage.**~~ Done and measured (CorporateSecrets 82.1%, DC found `secret.zip`): the triage lists every file in the users'
    Desktop, Documents, Downloads, Pictures, Videos, Music and OneDrive folders
    (`Windows.Search.FileFinder`), types each one up to 50 MB by its first bytes
    (`Generic.Detection.Yara.Glob` with `@file_types`, `knowledge_data/file_types.yaml`), and reads the
