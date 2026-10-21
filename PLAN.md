@@ -55,7 +55,9 @@ evidence dump for building keys. Four benchmarks (`szechuan-dc`, `injector`, `ou
   With the dossier and the leads two runs scored 80.0% and 78.7% in 25-37 minutes (*entry* 5/6,
   *ransomware* 5/5); their times are weaker (15-17/26: steps given by date or range only), and both
   missed the patch level's KB numbers, the explicit-credential logons and one remote address. The
-  timeline playbook (`26a6528`) targets the times.
+  timeline playbook (`26a6528`) targets the times; two leads (credentials used for other hosts,
+  shortcuts to other hosts) and the Windows Update events for the KB numbers (`3e218eb`) target the
+  three misses. Not measured yet.
 - **Consistency.** Questions in one run share only the findings, so two answers can disagree
   (one run called the administrator's home address the attacker in one answer and had the real
   chain in another).
