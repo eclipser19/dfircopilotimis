@@ -311,7 +311,9 @@ Before the model reads anything, the data is summarised without it: the case sum
 question starts with lists leads with their evidence IDs. They cover logons grouped by source
 address (failures, successes, accounts, logon types, workstation names, and guessing that worked),
 account and group changes, services installed, scheduled tasks with stored passwords or commands in
-user folders, log clearing and Defender events, downloads by origin, programs in user folders, files
+user folders, log clearing and Defender events, downloads by origin, credentials an account used for
+other servers (4648, with the program that used them), shortcuts to other hosts (shares, FTP or WebDAV
+locations, addresses in a shortcut's name), programs in user folders, files
 whose content is not what their name says (an archive without an extension, a program named like a
 picture), the words users searched for (decoded from the search pages in their browser history, so
 odd spellings show as typed) with the YouTube videos they opened, autostart entries that point into

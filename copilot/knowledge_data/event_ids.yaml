@@ -30,6 +30,9 @@
 - {id: 1102, channel: Security, meaning: Security log cleared, details: 'Anti-forensics. Only in the Security log: 1102 in other channels (e.g. RDPClient) means something else.'}
 - {id: 7045, channel: System, meaning: Service installed, details: 'ImagePath shows the binary; random names or binaries in Temp/System32 are suspicious (PsExec installs PSEXESVC). A service whose command is cmd.exe /c echo <name> > \\.\pipe\<name> (random short name) is Metasploit getsystem (named-pipe impersonation to become SYSTEM): privilege escalation by a Meterpreter session, not persistence.'}
 - {id: 7036, channel: System, meaning: Service state changed}
+- {id: 19, channel: System, meaning: Windows Update installed an update, details: 'Provider Microsoft-Windows-WindowsUpdateClient; the message names the update with its KB number (e.g. a monthly cumulative update).'}
+- {id: 20, channel: System, meaning: Windows Update installation failed, details: Provider Microsoft-Windows-WindowsUpdateClient; names the update and its KB.}
+- {id: 43, channel: System, meaning: Windows Update installation started, details: Provider Microsoft-Windows-WindowsUpdateClient; names the update and its KB.}
 - {id: 7040, channel: System, meaning: Service start type changed}
 - {id: 104, channel: System, meaning: Event log cleared, details: Anti-forensics.}
 - {id: 6005, channel: System, meaning: Event log service started (boot)}

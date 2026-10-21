@@ -1,7 +1,8 @@
 """
 Leads computed from the collected data without the LLM: who logged on from where (failures and
 successes per source address), account and group changes, new services and scheduled tasks, log
-clearing, Defender events, downloads, programs in user folders, files whose content is not what
+clearing, Defender events, downloads, credentials used for other hosts (4648), shortcuts to other hosts,
+programs in user folders, files whose content is not what
 their name says, what users searched for or watched on the web, the interactive sessions and what
 happened in each, autostart entries that point into user folders, and files whose timestamps look
 set by hand. Every item carries the evidence IDs to cite. They are starting points for the agent to confirm, not findings.
@@ -241,6 +242,105 @@ def downloads(db) -> list:
         g["last"] = _at(row)
         if len(g["examples"]) < 3:
             g["examples"].append(str(raw.get("DownloadedFilePath") or "")[-120:])
+    return sorted(groups.values(), key=lambda g: g["first"]["timestamp_utc"] or "")
+
+
+# Servers a 4648 names when the credentials were used on this machine itself (runas, scheduled tasks).
+_LOCAL_SERVERS = {"", "-", "localhost", "127.0.0.1", "::1"}
+_PROCESS_NAME = re.compile(r"(?im)^\s*Process Name:\s*(\S.*?)\s*$")
+
+
+def explicit_credentials(db) -> list:
+    """
+    4648: an account's credentials given explicitly for a connection to another server (runas /netonly,
+    PsExec -u, net use /user, RDP with typed credentials), grouped by who used whose credentials for which
+    server, with the program. It is logged on the machine they were used from; its address is the server's.
+    """
+    groups, seen = {}, set()
+    for row in _rows(db, "event_id = '4648'"):
+        f = _fields(row["description"])
+        server, raw = f.get("server", ""), _raw(row)
+        own = str(raw.get("Computer") or "").lower()
+        if server.lower() in _LOCAL_SERVERS or (own and server.lower() in (own, own.split(".")[0])):
+            continue
+        key = (row["first_seen"], f.get("by"), f.get("user"), server.lower())
+        if key in seen:                                   # the same event collected by two artifacts
+            continue
+        seen.add(key)
+        data = raw.get("EventData") if isinstance(raw.get("EventData"), dict) else {}
+        process = data.get("ProcessName") or next(iter(_PROCESS_NAME.findall(str(raw.get("Message") or ""))), "")
+        first = {**_at(row), **({"by_logon_id": f["by_logon_id"]} if f.get("by_logon_id") else {})}
+        g = groups.setdefault(key[1:], {"by": f.get("by"), "credentials_of": f.get("user"), "server": server,
+                                         "address": f.get("ip"), "count": 0, "first": first, "_programs": Counter()})
+        g["count"] += 1
+        g["last"] = _at(row)
+        if process and process != "-":
+            g["_programs"][process] += 1
+    for g in groups.values():
+        g["programs"] = list(g.pop("_programs"))[:3]
+        if any(_USER_WRITABLE.search(p) or _LOLBINS.search(p) or "mstsc" in p.lower() for p in g["programs"]):
+            g["look"] = "a program in a user folder, or a remote-admin tool"
+    # Those a person or their tools made first, then the rest in time order.
+    ranked = sorted(groups.values(), key=lambda g: ("look" not in g, g["first"]["timestamp_utc"] or ""))
+    return [{k: v for k, v in g.items() if v not in (None, "", [])} for g in ranked]
+
+
+# Shell folders that hold network locations: a shortcut into one has no host name in its path.
+_NETWORK_FOLDERS = {"871C5380-42A0-1069-A2EA-08002B30309D": "Internet folder (FTP or WebDAV location)",
+                    "F02C1A0D-BE21-4350-88B0-7367FC96EF3C": "Network folder",
+                    "208D2C60-3AEA-1069-A2D7-08002B30309D": "Network places"}
+_UNC = re.compile(r"(?<![\\\w])\\\\(?![.?]\\)([A-Za-z0-9][\w.$-]*)\\")
+_REMOTE_URL = re.compile(r"(?i)\b(?:ftps?|webdavs?|smb|file)://([A-Za-z0-9][\w.-]*)")
+_IPV4 = re.compile(r"(?<![\w.])(\d{1,3}(?:\.\d{1,3}){3})(?!\d|\.\d)")
+_SHORTCUT = re.compile(r"(?i)\.(lnk|automaticdestinations-ms|customdestinations-ms)$")
+
+
+def _strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, (dict, list)):
+        for item in value.values() if isinstance(value, dict) else value:
+            yield from _strings(item)
+
+
+def _hosts(text: str) -> set:
+    hosts = {h.lower() for h in _UNC.findall(text) + _REMOTE_URL.findall(text)}
+    for ip in _IPV4.findall(text):
+        try:
+            address = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if not (address.is_loopback or address.is_unspecified or address.is_multicast or ip.endswith(".0.0")
+                or ip.startswith("255.")):
+            hosts.add(ip)
+    return hosts
+
+
+def remote_locations(db) -> list:
+    """
+    Shortcuts, jump lists and shellbags that point to another host (UNC paths, FTP/WebDAV/SMB addresses,
+    IP addresses in their names or targets, network-location folders), grouped by host: places files may
+    have gone to or come from.
+    """
+    groups = {}
+    for row in _rows(db, "source LIKE 'Windows.Forensics.Lnk%' OR source LIKE 'Windows.Forensics.JumpList%' "
+                         "OR source LIKE 'Windows.Forensics.Shellbag%'"):
+        texts = list(_strings(_raw(row)))
+        hosts = set().union(*(_hosts(t) for t in texts)) if texts else set()
+        folders = {label for guid, label in _NETWORK_FOLDERS.items() if any(guid in t.upper() for t in texts)}
+        if not hosts and not folders:
+            continue
+        shortcut = next((t for t in texts if _SHORTCUT.search(t)), "")
+        for host in hosts or {"(no host name: " + ", ".join(sorted(folders)) + ")"}:
+            g = groups.setdefault(host, {"host": host, "count": 0, "first": _at(row), "examples": []})
+            if host in hosts and _scope(host) != "unknown":
+                g["scope"] = _scope(host)
+            if folders:
+                g["via"] = sorted(folders)
+            g["count"] += 1
+            g["last"] = _at(row)
+            if shortcut and shortcut not in g["examples"] and len(g["examples"]) < 3:
+                g["examples"].append(shortcut[-160:])
     return sorted(groups.values(), key=lambda g: g["first"]["timestamp_utc"] or "")
 
 
@@ -648,6 +748,8 @@ def _compute(db, sources_limit: int) -> dict:
            "scheduled_tasks_to_check": capped(tasks(db)),
            "log_clearing_and_defender": capped(log_clearing_and_defender(db)),
            "downloads_by_origin": capped(downloads(db)),
+           "credentials_used_for_other_hosts": capped(explicit_credentials(db)),
+           "remote_locations_opened": capped(remote_locations(db)),
            "programs_in_user_folders": capped(user_folder_programs(db)),
            "files_whose_content_is_not_their_name": capped(renamed_content(db)),
            "web_searches": capped(web["searches"], WEB_LIMIT),

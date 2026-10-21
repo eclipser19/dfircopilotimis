@@ -213,3 +213,39 @@ def test_the_code_reads_the_mft_records_of_the_files_the_sessions_touched(case, 
     sent = json.loads(next(env["DfirSpec"] for q, env in vql.calls if "collect_client" in q))["Windows.NTFS.MFT"]
     assert sent["FileRegex"] == "(?i)^(Szechuan Sauce\\.txt|Secret\\.zip|Beth_Secret\\.txt)$"
     assert sent["DateAfter"] == "" and "timestamps_set_by_hand" in note
+
+
+def test_credentials_used_for_other_hosts_and_shortcuts_to_them_are_leads(case):
+    def explicit(time, server, address, process="C:\\Users\\svc\\Downloads\\PsExec.exe"):
+        return {"EventTime": time, "EventID": 4648, "Channel": "Security", "EventRecordID": hash(time) % 10**6,
+                "EventData": {"SubjectUserName": "svc", "SubjectLogonId": "0x77", "TargetUserName": "svc",
+                              "TargetServerName": server, "IpAddress": address, "ProcessName": process}}
+    case.ingest_artifact_results([explicit("2024-02-05T23:19:01Z", "Desktop-001", "10.0.24.1"),
+                                  explicit("2024-02-05T23:20:00Z", "Desktop-001", "10.0.24.1"),
+                                  explicit("2024-02-05T23:22:19Z", "desktop-005", "10.0.24.9"),
+                                  explicit("2024-02-05T23:30:00Z", "localhost", "127.0.0.1", "C:\\Windows\\System32\\svchost.exe"),
+                                  {**explicit("2024-02-05T01:00:00Z", "dc01.corp.example", "10.0.0.1",
+                                              "C:\\Windows\\System32\\lsass.exe"), "Computer": "dc01.corp.example"},
+                                  explicit("2024-02-05T02:00:00Z", "fs01", "10.0.0.2", "C:\\Windows\\System32\\svchost.exe")],
+                                 "Windows.EventLogs.EvtxHunter", client_id="C.1")
+    used = leads.explicit_credentials(case)
+    # Not localhost or the machine itself; a remote-admin tool's first, the routine ones after.
+    assert [(u["server"], u["count"]) for u in used] == [("Desktop-001", 2), ("desktop-005", 1), ("fs01", 1)]
+    assert used[0]["by"] == "svc" and used[0]["address"] == "10.0.24.1" and used[0]["programs"][0].endswith("PsExec.exe")
+    assert used[0]["first"]["timestamp_utc"].startswith("2024-02-05T23:19:01") and used[0]["first"]["by_logon_id"] == "0x77"
+
+    recent = "C:\\Users\\svc\\AppData\\Roaming\\Microsoft\\Windows\\Recent\\"
+    case.ingest_artifact_results([
+        {"SourceFile": {"OSPath": recent + "files.example.org on 198.51.100.7.lnk", "Btime": "2024-02-06T19:56:19Z"},
+         "LinkTarget": {"LinkTarget": "871C5380-42A0-1069-A2EA-08002B30309D\\example.org"}},
+        {"SourceFile": {"OSPath": recent + "q3.lnk", "Btime": "2024-02-06T20:00:00Z"},
+         "LinkInfo": {"NetworkShareInfo": {"NetName": "\\\\FILESRV\\finance"}}},
+        {"SourceFile": {"OSPath": recent + "notes.lnk", "Btime": "2024-02-06T20:05:00Z"},
+         "LinkInfo": {"LocalBasePath": "C:\\Users\\svc\\Documents\\notes.txt"}},
+    ], "Windows.Forensics.Lnk", client_id="C.1")
+    remote = {r["host"]: r for r in leads.remote_locations(case)}
+    assert set(remote) == {"198.51.100.7", "filesrv"}
+    assert remote["198.51.100.7"]["scope"] == "external" and remote["198.51.100.7"]["via"] == [
+        "Internet folder (FTP or WebDAV location)"] and remote["198.51.100.7"]["examples"][0].endswith("198.51.100.7.lnk")
+    summary = json.loads(tools.case_summary.invoke({}))["leads"]
+    assert summary["credentials_used_for_other_hosts"] and summary["remote_locations_opened"]
