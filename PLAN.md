@@ -52,10 +52,10 @@ evidence dump for building keys. Four benchmarks (`szechuan-dc`, `injector`, `ou
 
 - **Large images.** On the OU server (~270,000 logon events) runs without a dossier took 45-110
   minutes and scored around 50%, each question re-investigating from scratch (300-500k tokens).
-  With the dossier and the leads one run scored 80.0% in 25 minutes (*entry* 5/6, *ransomware*
-  5/5); its times are weaker (17/26: steps given by date only), and the patch level's KB numbers,
-  the explicit-credential logons and some tool installs were missed. One run so far; the timeline
-  playbook (`26a6528`) targets the times.
+  With the dossier and the leads two runs scored 80.0% and 78.7% in 25-37 minutes (*entry* 5/6,
+  *ransomware* 5/5); their times are weaker (15-17/26: steps given by date or range only), and both
+  missed the patch level's KB numbers, the explicit-credential logons and one remote address. The
+  timeline playbook (`26a6528`) targets the times.
 - **Consistency.** Questions in one run share only the findings, so two answers can disagree
   (one run called the administrator's home address the attacker in one answer and had the real
   chain in another).
@@ -91,7 +91,7 @@ Still open from the review: steps 6 and 8 below (step 2 is done).
 
 The copilot investigates a disk and memory image end to end, writes a case dossier, answers questions
 from it with cited records, and builds the report; several investigators share one server with
-per-case and per-evidence access. Benchmarks (strict scoring): DC 83-96% (95.7% with the session leads and the MFT check), Injector 71%, OU 80.0%
+per-case and per-evidence access. Benchmarks (strict scoring): DC 83-96% (95.7% with the session leads and the MFT check), Injector 71%, OU 79-80%
 (~50% before the dossier and the leads);
 on CorporateSecrets 60.7% blind (the honest estimate for a new kind of case), 82.1% after generic fixes
 for its misses.
@@ -163,7 +163,7 @@ a change to the agent, to check nothing broke.
    - Autostart entries that point into user folders or through scripting tools (with the services and
      tasks leads: persistence that differs from the operating system's own).
    - Measured: DC 95.7% strictly (20261021-094310; 100% as run), the timestomp found again after two
-     misses; OU 80.0% (20261021-111449; ~50% before).
+     misses; OU 80.0% and 78.7% (20261021-111449, -123334; ~50% before).
 6. ~~**Durable investigations.**~~ Done:
    - Questions, the investigation, the triage and decided approvals run as jobs in a thread pool of
      the server (`copilot/jobs.py`), not in the page: a reload, a closed tab or another computer
