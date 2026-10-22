@@ -3,8 +3,9 @@ Collections the code makes from what was collected, before an investigation (no 
 
 The MFT records of the files touched in the sessions to check (leads.sessions: files with a time in
 the session's window in the USN journal, shortcuts, the Recycle Bin, downloads and the user-folder
-listing), so leads.timestamp_changes can show a file whose timestamps were set by hand, whichever
-file the model would have chosen to look at. Like the triage, it is the investigator's own action
+listing) and of the programs in user folders whose creation time was copied or set (a whole-second
+time: leads.COPIED_TIME), so leads.timestamp_changes can show a file whose timestamps were set by
+hand, and when it really arrived, whichever file the model would have chosen to look at. Like the triage, it is the investigator's own action
 (the investigation they started); collection.collect reuses an identical earlier collection, so
 investigating again repeats nothing.
 """
@@ -70,6 +71,12 @@ def touched_files(db=None) -> list:
     return names
 
 
+def copied_time_files(db=None) -> list:
+    """Names of the programs in user folders whose creation time was kept from an archive or set by hand."""
+    return [ntpath.basename(p["path"]) for p in leads.user_folder_programs(db or case_db)
+            if p.get("look") == leads.COPIED_TIME and p.get("path")]
+
+
 def before_investigation(emit=None) -> str:
     """
     Runs the checks the case allows (a Velociraptor client is set) and returns a note for the investigation
@@ -78,10 +85,10 @@ def before_investigation(emit=None) -> str:
     emit = emit or (lambda kind, payload: None)
     if case_config.client_id_error:
         return ""
-    names = touched_files()[:MAX_NAMES]
+    names = list(dict.fromkeys(copied_time_files() + touched_files()))[:MAX_NAMES]
     if not names:
         return ""
-    emit("tool", f"check: MFT records of {len(names)} files touched in the sessions to check")
+    emit("tool", f"check: MFT records of {len(names)} files touched in the sessions to check or with copied times")
     params = {"FileRegex": "(?i)^(" + "|".join(_literal(n) for n in names) + ")$",
               "DateAfter": "", "DateBefore": ""}          # their times are what is checked: no window
     from copilot.agent import status_line
@@ -91,5 +98,6 @@ def before_investigation(emit=None) -> str:
         return f"\nThe code could not read the MFT records of the files touched in the sessions to check: {e}\n"
     emit("collection", status_line(summary))
     return (f"\nBefore this turn the code collected the MFT records of {len(names)} files touched in the sessions to "
-            f"check ({summary.get('state')}, flow {summary.get('flow_id')}); case_summary's timestamps_set_by_hand "
-            f"lists those whose timestamps look set by hand.\n")
+            f"check or whose creation time was copied ({summary.get('state')}, flow {summary.get('flow_id')}); "
+            f"case_summary's timestamps_set_by_hand lists those whose timestamps look set by hand, with their $FN "
+            f"times (when they were written here).\n")

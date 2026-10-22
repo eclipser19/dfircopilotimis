@@ -94,6 +94,8 @@ questions:
         what: RDP (type 10) as admin from 31.220.85.162, 2024-02-06 20:11:00
         all: ["31.220.85.162"]
         time: "20:11:00"
+        # Other steps of that evening sit within two minutes (important.zip at 20:09:25-20:09:32, run 080757).
+        tolerance_seconds: 30
       - id: payload_written
         what: rename.exe written to C:\Users\admin\Desktop 2024-02-06 20:13:40, in that RDP session
         any: [["rename.exe"]]
@@ -303,6 +305,7 @@ questions:
         what: 2024-02-06 20:11:00 RDP as admin from 31.220.85.162
         all: ["31.220.85.162"]
         time: "20:11:00"
+        tolerance_seconds: 30
       - id: payload_written
         what: 2024-02-06 20:13:40 rename.exe written
         any: [["rename.exe"]]

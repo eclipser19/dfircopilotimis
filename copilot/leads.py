@@ -368,10 +368,22 @@ def _time_of(value, evidence_id: str) -> dict:
     return {"timestamp_utc": format_ts(ts), "evidence_id": evidence_id} if ts else {}
 
 
+# A creation time kept from an archive or set by hand, not the file's arrival here.
+COPIED_TIME = ("whole-second creation time: kept from an archive or set by hand, not when the file arrived; it was "
+               "written here at or before metadata_changed (its MFT $FN times, in timestamps_set_by_hand once read, "
+               "or the USN journal give the exact time)")
+
+
+def _whole_second(value) -> bool:
+    ts = parse_timestamp(value) if value else None
+    return bool(ts) and ts.microsecond == 0
+
+
 def user_folder_programs(db) -> list:
     """
-    Executables in user folders: when each was created there (the user-folder listing's BTime: when it
-    arrived) and what Amcache saw (presence with SHA1; its time is an inventory time, neither arrival nor run).
+    Executables in user folders: when each was created there (the user-folder listing's BTime; a whole-second
+    one was copied or set, then metadata_changed bounds the arrival) and what Amcache saw (presence with SHA1;
+    its time is an inventory time, neither arrival nor run).
     """
     listed = {}
     for row in _rows(db, "source LIKE 'Windows.Search.FileFinder%'"):
@@ -379,9 +391,11 @@ def user_folder_programs(db) -> list:
         path = str(raw.get("OSPath") or "")
         if not path or _flag(raw.get("IsDir")) or not _EXECUTABLE.search(path) or not _USER_WRITABLE.search(path):
             continue
-        listed.setdefault(_same_file(path).replace("/", "\\"), {
-            "path": path, "created": _time_of(raw.get("BTime"), row["evidence_id"]),
-            "modified": _time_of(raw.get("MTime"), row["evidence_id"])})
+        entry = {"path": path, "created": _time_of(raw.get("BTime"), row["evidence_id"]),
+                 "modified": _time_of(raw.get("MTime"), row["evidence_id"])}
+        if _whole_second(raw.get("BTime")):
+            entry.update(metadata_changed=_time_of(raw.get("CTime"), row["evidence_id"]), look=COPIED_TIME)
+        listed.setdefault(_same_file(path).replace("/", "\\"), entry)
     out, seen = [], set()
     for row in _rows(db, "source LIKE 'Windows.Forensics.Amcache%' OR source LIKE 'Windows.System.Amcache%'"):
         raw = _raw(row)
@@ -397,8 +411,13 @@ def user_folder_programs(db) -> list:
         out.append({**item, **{k: v for k, v in on_disk.items() if k != "path"}})
     out += listed.values()                   # listed in a user folder, not in Amcache
     out = [{k: v for k, v in item.items() if v} for item in out]
-    return sorted(_by_folder(out), key=lambda p: (p.get("created") or p.get("inventoried") or {}).get("timestamp_utc")
-                  or "")
+    return sorted(_by_folder(out), key=_arrival)
+
+
+def _arrival(item: dict) -> str:
+    """The time that orders a program (or a folder of them) by arrival: not a copied creation time."""
+    when = item.get("metadata_changed") if item.get("look") == COPIED_TIME else None
+    return (when or item.get("created") or item.get("inventoried") or {}).get("timestamp_utc") or ""
 
 
 FOLDER_GROUP = 4        # this many programs in one folder (a tool suite unpacked) are shown as one entry
@@ -414,7 +433,8 @@ def _by_folder(items: list) -> list:
         if len(group) < FOLDER_GROUP:
             out += group
             continue
-        created = sorted((p["created"] for p in group if p.get("created")), key=lambda c: c["timestamp_utc"])
+        created = sorted((p["created"] for p in group if p.get("created") and p.get("look") != COPIED_TIME),
+                         key=lambda c: c["timestamp_utc"])
         entry = {"folder": ntpath.dirname(group[0]["path"]), "programs": len(group),
                  "examples": [ntpath.basename(p["path"]) for p in group[:5]]}
         if created:

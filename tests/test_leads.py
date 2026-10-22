@@ -256,18 +256,22 @@ def test_programs_in_user_folders_carry_when_they_arrived(case):
         {"FullPath": "c:\\users\\svc\\desktop\\payload.exe", "SHA1": "ab" * 20, "Timestamp": "2024-02-07T21:00:10Z"},
     ], "Windows.Forensics.Amcache/InventoryApplicationFile", client_id="C.1")
     case.ingest_artifact_results([
+        # Extracted from an archive that kept its times: only the change time says when it was written here.
         {"OSPath": "\\\\.\\C:\\Users\\svc\\Desktop\\payload.exe", "IsDir": False, "Size": 10,
-         "BTime": "2024-02-06T20:13:40Z", "MTime": "2024-02-06T20:13:41Z"},
-        {"OSPath": "C:\\Users\\svc\\Downloads\\tool.exe", "IsDir": False, "BTime": "2024-02-05T23:14:00Z"},
-        {"OSPath": "C:\\Users\\svc\\Desktop\\notes.txt", "IsDir": False, "BTime": "2024-02-05T23:00:00Z"},
+         "BTime": "2016-03-24T00:00:00Z", "MTime": "2016-03-24T00:00:00Z", "CTime": "2024-02-06T20:13:40.4511Z"},
+        {"OSPath": "C:\\Users\\svc\\Downloads\\tool.exe", "IsDir": False, "BTime": "2024-02-05T23:14:00.2207Z"},
+        {"OSPath": "C:\\Users\\svc\\Desktop\\notes.txt", "IsDir": False, "BTime": "2024-02-05T23:00:00.1Z"},
     ] + [{"OSPath": f"C:\\Users\\Administrator\\Downloads\\Suite\\t{i}.exe", "IsDir": False,
-          "BTime": f"2023-11-04T15:33:{i:02d}Z"} for i in range(40)], "Windows.Search.FileFinder", client_id="C.1")
+          "BTime": f"2023-11-04T15:33:{i:02d}.5Z"} for i in range(40)], "Windows.Search.FileFinder", client_id="C.1")
     suite, tool, payload = leads.user_folder_programs(case)               # in order of arrival
     assert suite["programs"] == 40 and suite["folder"].endswith("\\Suite")          # one entry, not 40
     assert suite["created"]["timestamp_utc"] < suite["last_created"]["timestamp_utc"]
-    assert tool["path"].endswith("tool.exe") and "inventoried" not in tool          # listed only
-    assert payload["created"]["timestamp_utc"].startswith("2024-02-06T20:13:40")     # arrival, not Amcache's time
+    assert tool["path"].endswith("tool.exe") and "inventoried" not in tool and "look" not in tool   # listed only
+    assert payload["look"] == leads.COPIED_TIME                            # 2016 is not when it arrived
+    assert payload["metadata_changed"]["timestamp_utc"].startswith("2024-02-06T20:13:40")
     assert payload["inventoried"]["timestamp_utc"].startswith("2024-02-07T21:00:10") and payload["sha1"]
+    from copilot import checks
+    assert checks.copied_time_files(case) == ["payload.exe"]               # its MFT record is read before investigating
 
 
 def test_each_account_first_logon_and_first_rdp_from_a_source_are_shown(case):
