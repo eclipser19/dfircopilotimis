@@ -260,8 +260,29 @@ def test_programs_in_user_folders_carry_when_they_arrived(case):
          "BTime": "2024-02-06T20:13:40Z", "MTime": "2024-02-06T20:13:41Z"},
         {"OSPath": "C:\\Users\\svc\\Downloads\\tool.exe", "IsDir": False, "BTime": "2024-02-05T23:14:00Z"},
         {"OSPath": "C:\\Users\\svc\\Desktop\\notes.txt", "IsDir": False, "BTime": "2024-02-05T23:00:00Z"},
-    ], "Windows.Search.FileFinder", client_id="C.1")
-    tool, payload = leads.user_folder_programs(case)                     # in order of arrival
+    ] + [{"OSPath": f"C:\\Users\\Administrator\\Downloads\\Suite\\t{i}.exe", "IsDir": False,
+          "BTime": f"2023-11-04T15:33:{i:02d}Z"} for i in range(40)], "Windows.Search.FileFinder", client_id="C.1")
+    suite, tool, payload = leads.user_folder_programs(case)               # in order of arrival
+    assert suite["programs"] == 40 and suite["folder"].endswith("\\Suite")          # one entry, not 40
+    assert suite["created"]["timestamp_utc"] < suite["last_created"]["timestamp_utc"]
     assert tool["path"].endswith("tool.exe") and "inventoried" not in tool          # listed only
     assert payload["created"]["timestamp_utc"].startswith("2024-02-06T20:13:40")     # arrival, not Amcache's time
     assert payload["inventoried"]["timestamp_utc"].startswith("2024-02-07T21:00:10") and payload["sha1"]
+
+
+def test_each_account_first_logon_and_first_rdp_from_a_source_are_shown(case):
+    ip = "198.51.100.20"
+    case.ingest_artifact_results([
+        _logon(4624, "2024-02-05T22:55:18Z", "Administrator", ip, "kali", 3, "706976421"),
+        _logon(4624, "2024-02-05T23:00:28Z", "Administrator", ip, "kali", 10, "707000001"),
+        _logon(4624, "2024-02-05T23:05:22Z", "svc-new", ip, "kali", 10, "707379083"),
+        _logon(4624, "2024-02-05T23:24:53Z", "svc-new", ip, "kali", 10, "709718015"),
+    ], "Windows.EventLogs.EvtxHunter", client_id="C.1")
+    [source] = leads.logon_sources(case, ip=ip)["sources"]
+    assert source["first_success"]["timestamp_utc"].startswith("2024-02-05T22:55:18")
+    firsts = source["first_success_by_account"]
+    assert firsts["Administrator"] == {"first_rdp": {"timestamp_utc": firsts["Administrator"]["first_rdp"]["timestamp_utc"],
+                                                     "evidence_id": firsts["Administrator"]["first_rdp"]["evidence_id"],
+                                                     "logon_type": "10"}}
+    assert firsts["Administrator"]["first_rdp"]["timestamp_utc"].startswith("2024-02-05T23:00:28")
+    assert list(firsts["svc-new"]) == ["first"] and firsts["svc-new"]["first"]["timestamp_utc"].startswith("2024-02-05T23:05:22")

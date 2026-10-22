@@ -13,6 +13,7 @@ named the wrong source; grouping them here takes a second.
 import fnmatch
 import ipaddress
 import json
+import ntpath
 import re
 from collections import Counter
 from datetime import timedelta
@@ -105,7 +106,8 @@ def logon_sources(db, ip: str = None, account: str = None, start: str = None, en
         scope = "no address recorded" if address.startswith(NO_ADDRESS) else _scope(address)
         s = sources.setdefault(address, {"ip": address, "scope": scope, "failures": 0, "successes": 0,
                                          "explicit_credentials": 0, "rdp_events": 0, "_failed": Counter(),
-                                         "_accounts": Counter(), "_types": Counter(), "_workstations": Counter()})
+                                         "_accounts": Counter(), "_types": Counter(), "_workstations": Counter(),
+                                         "_first_by_account": {}})
         if f.get("workstation"):
             s["_workstations"][f["workstation"]] += 1
         event = row["event_id"]
@@ -124,6 +126,12 @@ def logon_sources(db, ip: str = None, account: str = None, start: str = None, en
                 s["first_success"] = success
                 s["success_after_failures"] = s["failures"] > 0
             s["last_success"] = success
+            # Each account's own first logon, and its first RDP: an account created later, or RDP after a
+            # network logon, starts a step of its own that the address's first success hides.
+            firsts = s["_first_by_account"].setdefault((f.get("user") or "?").lower(), {})
+            firsts.setdefault("first", success)
+            if f.get("LogonType") == "10":
+                firsts.setdefault("first_rdp", success)
         elif event == "4648":
             s["explicit_credentials"] += 1
         else:
@@ -144,6 +152,17 @@ def logon_sources(db, ip: str = None, account: str = None, start: str = None, en
                               ("logon_types", s["_types"]), ("workstations", s["_workstations"])):
             if counter:
                 item[name] = _top(counter)
+        firsts = {}
+        for account, seen_first in list(s["_first_by_account"].items())[:4]:
+            shown = {k: v for k, v in seen_first.items() if v is not s["first_success"]}
+            if shown.get("first_rdp") is shown.get("first"):
+                shown.pop("first_rdp", None)            # its first logon was RDP: once is enough
+            if shown:
+                firsts[seen_first["first"].get("user") or account] = {
+                    k: {"timestamp_utc": v["timestamp_utc"], "evidence_id": v["evidence_id"],
+                        "logon_type": v.get("logon_type")} for k, v in shown.items()}
+        if firsts:
+            item["first_success_by_account"] = firsts
         out.append(item)
     return {"sources": out, "sources_total": len(sources), "logon_events": len(seen),
             "note": "Logon types: 2 console, 3 network (SMB, credential checks), 10 RDP. A success right after "
@@ -378,7 +397,33 @@ def user_folder_programs(db) -> list:
         out.append({**item, **{k: v for k, v in on_disk.items() if k != "path"}})
     out += listed.values()                   # listed in a user folder, not in Amcache
     out = [{k: v for k, v in item.items() if v} for item in out]
-    return sorted(out, key=lambda p: (p.get("created") or p.get("inventoried") or {}).get("timestamp_utc") or "")
+    return sorted(_by_folder(out), key=lambda p: (p.get("created") or p.get("inventoried") or {}).get("timestamp_utc")
+                  or "")
+
+
+FOLDER_GROUP = 4        # this many programs in one folder (a tool suite unpacked) are shown as one entry
+
+
+def _by_folder(items: list) -> list:
+    """A folder holding many programs (an unpacked tool suite) as one entry, so single files stay in view."""
+    folders = {}
+    for item in items:
+        folders.setdefault(ntpath.dirname(item["path"]).lower(), []).append(item)
+    out = []
+    for group in folders.values():
+        if len(group) < FOLDER_GROUP:
+            out += group
+            continue
+        created = sorted((p["created"] for p in group if p.get("created")), key=lambda c: c["timestamp_utc"])
+        entry = {"folder": ntpath.dirname(group[0]["path"]), "programs": len(group),
+                 "examples": [ntpath.basename(p["path"]) for p in group[:5]]}
+        if created:
+            entry.update(created=created[0], last_created=created[-1])
+        else:
+            entry["inventoried"] = min((p["inventoried"] for p in group if p.get("inventoried")),
+                                       key=lambda c: c["timestamp_utc"] or "", default={})
+        out.append({k: v for k, v in entry.items() if v})
+    return out
 
 
 def renamed_content(db) -> list:

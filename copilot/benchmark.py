@@ -466,6 +466,38 @@ def save(results: dict, out_dir: str = RESULTS_DIR) -> tuple:
 
 
 # ---------------------------------------------------------------- running
+def velociraptor_problem() -> str:
+    """
+    "" when the Velociraptor API answers and knows the case's client; otherwise what is wrong. A run
+    started from an earlier run's data may collect nothing before the questions, so a stopped server
+    would otherwise show only as answers that could not collect (OU 20261022-074042).
+    """
+    from copilot import collection
+    from copilot.case_config import case_config
+    if case_config.client_id_error:
+        return case_config.client_id_error
+    try:
+        res = collection.get_vql().run_vql("SELECT client_id FROM clients(client_id=DfirClientId)",
+                                           env={"DfirClientId": case_config.client_id}, timeout=30)
+    except Exception as e:                    # no api_client.yaml, no gRPC module...
+        return f"The Velociraptor API is not reachable: {e}"
+    if res.get("error"):
+        return f"The Velociraptor API is not reachable: {res['error']}"
+    if not res.get("results"):
+        return f"Velociraptor does not know client {case_config.client_id}."
+    return ""
+
+
+# What a collect_artifact result starts with when the collection could not even start.
+COLLECTION_FAILED = "collection: Collection not started or failed:"
+
+
+def collection_failures(questions: list, investigation: dict = None) -> list:
+    """The collections the agent asked for that could not start (a server down, a refused request)."""
+    return [line[len("collection: "):] for part in [investigation or {}] + list(questions)
+            for line in part.get("log") or [] if line.startswith(COLLECTION_FAILED)]
+
+
 def image_problem(summaries: list) -> str:
     """
     A setup check on the disk triage: collections filtered to the case's time window all came back
@@ -689,7 +721,7 @@ def finish_triage(summaries: list, wait_minutes: float = TRIAGE_WAIT_MINUTES, lo
 def run(spec_path: str, client_id: str = None, memory_image: str = None, from_case: str = None,
         skip_triage: bool = False, only: list = None, model=None, out_dir: str = RESULTS_DIR, log=print,
         image_check: bool = True, triage_wait: float = TRIAGE_WAIT_MINUTES, investigate_first: bool = True,
-        all_data: bool = False) -> dict:
+        all_data: bool = False, velociraptor_check: bool = True) -> dict:
     """
     Runs a benchmark end to end and saves its results. model: (llm_with_tools, finalizer, name) for tests.
     investigate_first: the investigation turn writes the case dossier before the questions (as the app does
@@ -764,6 +796,11 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
         if case_config.memory_image:
             log("[*] Memory triage ...")
             triage += [status_line(s) for s in memory.triage(progress=lambda p: log(f"    {p}"))]
+    unreachable = velociraptor_problem() if velociraptor_check else ""
+    if unreachable and not only == ["none"]:
+        raise BenchmarkError(f"{unreachable} Stopped before the questions (case {run_id}): every collection they ask "
+                             f"for would fail. Start Velociraptor and the image's client (python -m copilot.selftest), "
+                             f"or pass --no-velociraptor-check to run anyway.")
     memory_broken = memory.unreadable_reason(case_config.memory_image) if case_config.memory_image else ""
     if memory_broken:      # a setup problem (e.g. no symbol table), not the agent's: memory questions are skipped
         setup.append(f"Volatility cannot read the memory image: {memory_broken[:300]}")
@@ -803,6 +840,9 @@ def run(spec_path: str, client_id: str = None, memory_image: str = None, from_ca
                   "log": entry["log"]}]
         conversation.save(run_id, chat, None)       # readable in the app as the run case's chat
     results["finished"] = datetime.now(timezone.utc).isoformat()
+    failed = collection_failures(results["questions"], results.get("investigation"))
+    if failed:           # answers that needed new data could not get it: not comparable with other runs
+        setup.append(f"{len(failed)} collections the agent asked for could not start, e.g. {failed[0][:200]}")
     results["totals"] = totals(results["questions"], results.get("investigation"))
     paths = save(results, out_dir)
     if results["totals"]["facts_total"]:
@@ -931,6 +971,8 @@ def main(argv=None) -> int:
     r.add_argument("--out", default=RESULTS_DIR)
     r.add_argument("--no-image-check", action="store_true",
                    help="run even if the time-window triage finds nothing (wrong image?)")
+    r.add_argument("--no-velociraptor-check", action="store_true",
+                   help="run even if the Velociraptor API does not answer (collections will fail)")
     r.add_argument("--triage-wait", type=float, default=TRIAGE_WAIT_MINUTES,
                    help=f"minutes to wait for triage collections still running (default {TRIAGE_WAIT_MINUTES})")
     r.add_argument("--no-investigate", action="store_true",
@@ -950,7 +992,8 @@ def main(argv=None) -> int:
             only = [q.strip() for q in args.questions.split(",")] if args.questions else None
             run(args.spec, args.client, args.memory_image, args.from_case, args.skip_triage, only, out_dir=args.out,
                 image_check=not args.no_image_check, triage_wait=args.triage_wait,
-                investigate_first=not args.no_investigate, all_data=args.all_data)
+                investigate_first=not args.no_investigate, all_data=args.all_data,
+                velociraptor_check=not args.no_velociraptor_check)
         elif args.command == "score":
             t = rescore(args.results, args.spec)["totals"]
             print(f"Score {t['score_percent']}%: facts {t['facts_found']}/{t['facts_total']}, "

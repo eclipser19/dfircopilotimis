@@ -235,6 +235,20 @@ def test_a_triage_entry_whose_parameters_changed_is_collected_again_and_kept_as_
                                                                                            "^(4624|4732)$"]
 
 
+def test_a_stopped_velociraptor_stops_the_run_before_the_questions(bench_dirs, monkeypatch):
+    class Down(FakeVQL):
+        def run_vql(self, query, env=None, timeout=None):
+            if "FROM clients(" in query:
+                return {"error": "UNAVAILABLE: 127.0.0.1:8001: connection refused", "results": [], "log": ""}
+            return super().run_vql(query, env, timeout)
+    monkeypatch.setattr(collection, "get_vql", lambda: Down())
+    with pytest.raises(benchmark.BenchmarkError, match="not reachable.*--no-velociraptor-check"):
+        benchmark.run(_spec(bench_dirs), client_id=CLIENT, model=(ScriptedLLM(), None, "s"),
+                      out_dir=str(bench_dirs / "results"), log=lambda *a: None)
+    failed = "collection: Collection not started or failed: Velociraptor call failed: UNAVAILABLE"
+    assert benchmark.collection_failures([{"log": ["tool: collect_artifact", failed]}]) == [failed[12:]]
+
+
 def test_a_broken_model_stops_the_run_before_anything_is_collected(bench_dirs, monkeypatch):
     class Broken:
         def invoke(self, messages):
