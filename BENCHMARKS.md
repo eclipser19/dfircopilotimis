@@ -18,6 +18,9 @@ item of an inline list ("events 4732, 4728, and 4756 returned no matching record
 sentence; no recorded score changed. From `7983fb2` a list's lead-in denies its items only when the denial
 is about the list ("No evidence was found of:"), not about something else ("..., not exploitation of a
 vulnerability:"); only OU 134744 changed (78.7% as run, 80.0%).
+**Questions share what earlier answers established from `76a558d`:** a later question starts from the
+statements earlier answers backed with records (`copilot/established.py`), as in the app, so a
+question's score can depend on the ones before it in the run.
 
 ## The benchmarks
 

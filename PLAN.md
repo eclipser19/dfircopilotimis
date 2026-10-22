@@ -63,8 +63,8 @@ evidence dump for building keys. Four benchmarks (`szechuan-dc`, `injector`, `ou
 - **Consistency.** Questions in one run share only the findings and the dossier, so two answers can
   disagree: one run called the administrator's home address the attacker in one answer and had the
   real chain in another; in the 20261022 checks, DC *malware* found no download source that *memory*
-  found, and Injector *accounts* found no group change that *commands* found in memory. Since the
-  commit after `246b3ed`, what an answer backs with records the dossier does not cite, and the searches
+  found, and Injector *accounts* found no group change that *commands* found in memory. Since
+  `76a558d`, what an answer backs with records the dossier does not cite, and the searches
   it says came back empty, reach every later conversation (`copilot/established.py`); a later answer is
   told to say when it corrects an earlier one. This works forward only: an earlier answer is not
   rewritten, and both examples above had the finding in the later question. Not measured yet.
