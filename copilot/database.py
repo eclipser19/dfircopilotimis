@@ -147,6 +147,16 @@ class CaseDatabase:
             );
 
             -- The case dossier written by an investigation turn (copilot/dossier.py); the latest counts.
+            CREATE TABLE IF NOT EXISTS answer_statements (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at   TEXT,
+                actor        TEXT,
+                question     TEXT,
+                kind         TEXT,
+                text         TEXT,
+                evidence_ids TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS dossiers (
                 dossier_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at TEXT,

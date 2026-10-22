@@ -674,6 +674,8 @@ def ask(text: str, llm_with_tools, finalizer, log=print) -> dict:
     try:
         answer = run_turn(llm_with_tools, history, case_config.max_steps, usage, case_config.max_tokens_per_turn,
                           finalizer, _emitter(steps_log, log))
+        from copilot import established
+        established.record(text, answer)        # later questions start from it, as in the app
     except Exception as e:                    # an LLM or tool failure ends this question, not the run
         error = f"{type(e).__name__}: {e}"
     calls = [{"name": c["name"], "args": c.get("args")} for m in history if isinstance(m, AIMessage)

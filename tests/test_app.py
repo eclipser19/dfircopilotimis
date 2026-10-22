@@ -184,6 +184,12 @@ def test_notes_and_confirmed_findings_in_the_findings_tab(app_env):
     assert at.dataframe[0].value["Confirmed by"].tolist()[0].startswith("investigator (")
     next(b for b in at.button if b.key == "note_rm_1").click().run()
     assert "admin's VPN address" not in at.session_state["chat_history"][0].content
+    from copilot import established
+    established.record("Which service?", f"- The **updater** service was installed (`{eid}`).", app_env)
+    at.run()
+    [kept] = [e for e in at.expander if e.label.startswith("Established in answers")]
+    assert kept.label.endswith("· 1") and "The updater service was installed" in _texts(at)
+    assert "Which service?" in at.session_state["chat_history"][0].content     # the next answer starts from it
 
 
 def test_agent_collection_waits_for_approval(app_env):

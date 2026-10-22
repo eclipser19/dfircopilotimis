@@ -63,8 +63,11 @@ evidence dump for building keys. Four benchmarks (`szechuan-dc`, `injector`, `ou
 - **Consistency.** Questions in one run share only the findings and the dossier, so two answers can
   disagree: one run called the administrator's home address the attacker in one answer and had the
   real chain in another; in the 20261022 checks, DC *malware* found no download source that *memory*
-  found, and Injector *accounts* found no group change that *commands* found in memory. What one
-  answer establishes does not reach the next unless it is recorded as a finding.
+  found, and Injector *accounts* found no group change that *commands* found in memory. Since the
+  commit after `246b3ed`, what an answer backs with records the dossier does not cite, and the searches
+  it says came back empty, reach every later conversation (`copilot/established.py`); a later answer is
+  told to say when it corrects an earlier one. This works forward only: an earlier answer is not
+  rewritten, and both examples above had the finding in the later question. Not measured yet.
 - **Variance.** The same code scored 95.7% and 65.2% on the DC. One run proves little.
 - **Only one model measured** (`gpt-5.6-luna`). Local models work but were never benchmarked.
 - **Memory** measured on two images only (DC, Injector).

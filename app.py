@@ -8,7 +8,7 @@ import streamlit as st
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 from copilot import (approvals, auth, cases, citations, collection, commands, config_check, conversation, dossier,
-                     feedback, jobs, knowledge, lessons, memory, outputs, report, session)
+                     established, feedback, jobs, knowledge, lessons, memory, outputs, report, session)
 from copilot import llm as llm_config
 from copilot.agent import TokenUsage
 from copilot.case_config import case_config
@@ -895,6 +895,15 @@ def findings_view(stats: dict, findings: list, notes: dict):
                  help="Also `/investigate` in the chat. Runs as its own conversation; requests it makes "
                       "wait for approval as usual. Progress and the dossier appear in 💬 Chat."):
         action = ("investigate", None)
+    kept = established.statements()
+    if kept:
+        with st.expander(f"Established in answers since the dossier · {len(kept)}"):
+            st.caption("Statements answers backed with records the dossier does not cite, and searches they say came "
+                       "back empty, kept by the code as written: every later question starts from them. Not reviewed; "
+                       "a new investigation takes them into the dossier.")
+            for s in kept:
+                said = ("searched, nothing found: " if s["kind"] == "not_found" else "") + s["text"]
+                st.markdown(f"- {citations.md_literal(said)}  \n  *asked:* {citations.md_literal(s['question'][:160])}")
 
     st.subheader(f"🚩 Findings · {len(findings)}")
     if not findings:

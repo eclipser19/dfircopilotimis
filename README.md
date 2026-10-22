@@ -264,6 +264,13 @@ it; every member of the case gets the new one with their next question. Its budg
 question's). Requests it makes (collections, memory runs) wait for approval as usual; their
 results go to the chat, so investigate again to fold them into the dossier.
 
+**What answers established.** After each answer the code (no model) keeps the statements it backed
+with records the dossier does not cite, and the searches it says came back empty. Every later
+conversation of the case, any investigator's, gets them right under the dossier ("established in
+earlier answers"), so a later answer starts from what an earlier one found and says so when its own
+evidence corrects one. They are the copilot's unreviewed statements, not findings, and are listed
+under the dossier in **🚩 Findings & dossier**; the next investigation takes them into the dossier.
+
 In the Streamlit app, the page shows the open case at a glance: its name, its evidence (client
 ID, host name, disk image file, memory image), the incident window and clock offset, how much data
 it holds, and its findings and dossier. Below are one tab per job:
@@ -529,7 +536,8 @@ Each run creates a fresh case `bench-<name>-<time>` from the spec's case file (a
 and memory runs approved automatically; case changes and lessons off), runs the triage without
 the LLM, runs the investigation that writes the case dossier (as the app does after triage; its
 steps, tokens and time count in the totals, and the scorecard shows the dossier), then asks every
-question in a fresh conversation that starts from the dossier. `--no-investigate` skips the
+question in a fresh conversation that starts from the dossier and from what the earlier questions'
+answers established (as in the app, so a question's score can depend on the ones before it). `--no-investigate` skips the
 investigation, as runs did before it existed; `--questions none` (a triage-only case) skips it
 too.
 

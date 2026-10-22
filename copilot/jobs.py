@@ -287,11 +287,15 @@ def _turn(work: _Work, text: str, show_user: bool, question: str = None) -> dict
     answer = run_turn(work.llm, history, case_config.max_steps, work.usage, case_config.max_tokens_per_turn,
                       work.finalizer, work.emit)
     work.checkpoint()
+    asked = question if question is not None else (text if show_user else "")
+    if answer:                      # what it established reaches the case's later conversations
+        from copilot import established
+        established.record(asked or "(the agent went on after an approval)", answer)
     content = answer or "\n\n".join(f"⚠️ {n}" for n in work.notices) or "No answer."
     # Links to local paths can't work in a browser; files come as download buttons instead.
     content = re.sub(r"\[([^\]]+)\]\((?!https?://)[^)]*\)", r"\1", content)
     work.say({"role": "assistant", "content": content, "log": work.log, "files": outputs.produced_since(before),
-              "answer": bool(answer), "question": question if question is not None else (text if show_user else "")})
+              "answer": bool(answer), "question": asked})
     return {"answered": bool(answer)}
 
 

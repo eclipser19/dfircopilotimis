@@ -174,6 +174,9 @@ def run_agent_loop():
         from copilot.knowledge import with_playbooks
         chat_history.append(HumanMessage(content=with_playbooks(text) if show_user else text))
         answer = run_turn(llm_with_tools, chat_history, MAX_STEPS, usage, case_config.max_tokens_per_turn, finalizer)
+        if answer:                  # what it established reaches the case's later conversations
+            from copilot import established
+            established.record(text if show_user else "(the agent went on after an approval)", answer)
         found = citations.cited(answer, case_db, case_config)
         if found["evidence"] or found["findings"]:
             print(f"\n[*] Cited in this answer ({citations.summary(found)}):\n{citations.as_text(found)}")

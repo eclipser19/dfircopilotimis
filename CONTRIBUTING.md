@@ -41,6 +41,7 @@ query could do in one. Each time it went wrong, it trusted one record or its own
 | It pages through thousands of rows to find a pattern | A deterministic tool or a lead in `copilot/leads.py` (e.g. logons grouped per source address), shown in `case_summary` |
 | It states something wrong or unsupported | A short rule in `copilot/prompts.py` (rules 9-11), or a check in code (e.g. `record_finding` keeps "high" confidence only when two different records agree) |
 | A collection fails or returns nothing and the agent misreads why | `copilot/collection.py`: the notes attached to empty, failed or truncated collections |
+| Two answers in a case contradict each other, or a later one ignores what an earlier one found | `copilot/established.py`: which lines of an answer are kept for later conversations (cited records the dossier doesn't cite, empty searches) and how they are framed in the prompt; the dossier (`copilot/dossier.py`) for what every question should start from |
 | Triage misses data every question needs | The case's `collect:` list, and the suggestions in `knowledge_data/triage.yaml` |
 | A file type is not recognised, or a normal extension is reported as a mismatch | `knowledge_data/file_types.yaml`: the type's first-bytes condition (YARA) and its usual extensions |
 
