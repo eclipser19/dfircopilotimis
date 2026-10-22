@@ -57,7 +57,9 @@ evidence dump for building keys. Four benchmarks (`szechuan-dc`, `injector`, `ou
   missed the patch level's KB numbers, the explicit-credential logons and one remote address. The
   timeline playbook (`26a6528`) targets the times; two leads (credentials used for other hosts,
   shortcuts to other hosts) and the Windows Update events for the KB numbers (`3e218eb`) target the
-  three misses. Not measured yet.
+  three misses. The leads found theirs in 074042 (a run with Velociraptor down, so *system* and the KB
+  numbers were not tested); per-account first logons and grouped tool folders (`ff67229`) target the
+  times still dated by the wrong event.
 - **Consistency.** Questions in one run share only the findings, so two answers can disagree
   (one run called the administrator's home address the attacker in one answer and had the real
   chain in another).
