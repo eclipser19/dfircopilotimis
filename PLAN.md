@@ -60,9 +60,11 @@ evidence dump for building keys. Four benchmarks (`szechuan-dc`, `injector`, `ou
   three misses. The leads found theirs in 074042 (a run with Velociraptor down, so *system* and the KB
   numbers were not tested); per-account first logons and grouped tool folders (`ff67229`) target the
   times still dated by the wrong event.
-- **Consistency.** Questions in one run share only the findings, so two answers can disagree
-  (one run called the administrator's home address the attacker in one answer and had the real
-  chain in another).
+- **Consistency.** Questions in one run share only the findings and the dossier, so two answers can
+  disagree: one run called the administrator's home address the attacker in one answer and had the
+  real chain in another; in the 20261022 checks, DC *malware* found no download source that *memory*
+  found, and Injector *accounts* found no group change that *commands* found in memory. What one
+  answer establishes does not reach the next unless it is recorded as a finding.
 - **Variance.** The same code scored 95.7% and 65.2% on the DC. One run proves little.
 - **Only one model measured** (`gpt-5.6-luna`). Local models work but were never benchmarked.
 - **Memory** measured on two images only (DC, Injector).
@@ -95,7 +97,7 @@ Still open from the review: steps 6 and 8 below (step 2 is done).
 
 The copilot investigates a disk and memory image end to end, writes a case dossier, answers questions
 from it with cited records, and builds the report; several investigators share one server with
-per-case and per-evidence access. Benchmarks (strict scoring): DC 83-96% (95.7% with the session leads and the MFT check), Injector 71%, OU 79-80%
+per-case and per-evidence access. Benchmarks (strict scoring): DC 83-96% (91.3% on the latest code), Injector 71-75%, OU 79-87%
 (~50% before the dossier and the leads);
 on CorporateSecrets 60.7% blind (the honest estimate for a new kind of case), 82.1% after generic fixes
 for its misses.
