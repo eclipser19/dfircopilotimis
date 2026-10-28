@@ -8,7 +8,8 @@ Volatility 3. Everything collected goes into a per-case SQLite database; the age
 tools, records findings with evidence IDs, and writes a templated report. Two front ends: a
 Streamlit web app for several signed-in investigators (`app.py`) and a CLI (`main.py`).
 `README.md` is the user guide; `PLAN.md` tracks status and next steps; `BENCHMARKS.md` records every
-benchmark run that matters (add a row after each); `CONTRIBUTING.md` says where to make which change.
+benchmark run that matters (add a row after each); `CONTRIBUTING.md` says where to make which change;
+`HANDOFF.md` says where the work stands and how the user works (read it first in a new session).
 
 ## Commands
 
