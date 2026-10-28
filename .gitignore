@@ -5,6 +5,7 @@ api_client.yaml
 # Velociraptor runtime files next to the code: client writebacks hold the client's private key,
 # remap files name your evidence paths, binaries are large. Root-level names used in the docs too.
 *.writeback.yaml
+*.writeback.yaml.bak
 deaddisk*.yaml
 /ou.yaml
 /injector.yaml

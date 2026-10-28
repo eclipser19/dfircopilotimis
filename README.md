@@ -189,9 +189,11 @@ Every answer can be corrected, and the copilot keeps what it is told:
   of the case gets them, above the dossier; when evidence contradicts one, the copilot says so instead
   of overriding it. "Investigate again" builds the next dossier on them. Other members of the case get
   them with their next question.
-- **Confirm a finding** (✅ in its row) once you have checked its records: the copilot treats it as
-  established, and the report shows who confirmed each finding ("Review" line, "Confirmed" column).
-  Retract the ones the data contradicts.
+- **Confirm a finding** (✅ in its row, or `/confirm <finding ID>` in the chat) once you have checked its
+  records: the copilot treats it as established, and the report shows who confirmed each finding ("Review"
+  line, "Confirmed" column). A report with unconfirmed findings says DRAFT at the top. With
+  `report.confirmed_findings_only: true` in `server.yaml` (or `output.confirmed_findings_only` in a case
+  file, which wins) only confirmed findings go into reports. Retract the ones the data contradicts.
 - **A correction that holds for every case** (how to read an artifact or a kind of record, never a fact
   of this case) can also be proposed as a lesson from the 👎 form; an admin accepts it (see below).
 - **For whoever improves the copilot**: `python -m copilot.feedback list` (counts per case) and

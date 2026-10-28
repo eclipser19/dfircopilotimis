@@ -9,7 +9,8 @@ tools, records findings with evidence IDs, and writes a templated report. Two fr
 Streamlit web app for several signed-in investigators (`app.py`) and a CLI (`main.py`).
 `README.md` is the user guide; `PLAN.md` tracks status and next steps; `BENCHMARKS.md` records every
 benchmark run that matters (add a row after each); `CONTRIBUTING.md` says where to make which change;
-`HANDOFF.md` says where the work stands and how the user works (read it first in a new session).
+`HANDOFF.md` says where the work stands and how the user works (read it first in a new session);
+`DEPLOY.md` is the install on a Windows forensic machine (HTTPS, services, backup).
 
 ## Commands
 
@@ -60,7 +61,8 @@ Python 3.10-3.12 (`.github/workflows/tests.yml`). New settings keys go into `cop
 | `copilot/agent.py` | Turn loop, token accounting (`TokenUsage`), history trimming/repair, CLI loop. |
 | `copilot/dossier.py` | Investigate once, then answer: one longer turn in its own conversation writes the case dossier (timeline, findings, entities, hypotheses, contradictions, gaps), stored in the `dossiers` table; `prompt_section()` puts the latest into every system prompt (`fit()` drops whole low-priority sections, never Gaps). Code, not the prompt, attaches the checklists the case needs (`checklists()`: web attack on `leads.web_server` signs, memory with an image) and appends a time check (`citations.time_mismatches`: times held neither as a timestamp nor in a field of the records cited on the same line). Run after triage (app, CLI), by `/investigate` / the Investigate button, and before benchmark questions. |
 | `copilot/established.py` | What earlier answers established: after each answer (`jobs._turn`, the CLI, `benchmark.ask`) `record()` keeps, without the model, its lines citing records the dossier and earlier statements don't (an "Evidence:" line joins the statement above it) and its "searched, nothing found" lines; `prompt_section()` puts those made since the latest dossier under it in every system prompt (latest answers first when too long); listed in the Findings & dossier tab. Not findings: unreviewed, never in the report. |
-| `copilot/feedback.py` | Investigators teach the copilot: notes and corrections per case (`feedback` table; `prompt_section()` puts them above the dossier in every system prompt), corrections of answers/dossiers (👎 in the app, `/wrong` in the CLI; `/note` `/notes` anywhere), confirmed findings (`findings.confirmed_by`, shown in `case_summary` and the report), and `python -m copilot.feedback list|export` across all cases (to `feedback_exports/`, git-ignored). |
+| `copilot/feedback.py` | Investigators teach the copilot: notes and corrections per case (`feedback` table; `prompt_section()` puts them above the dossier in every system prompt), corrections of answers/dossiers (👎 in the app, `/wrong` in the CLI; `/note` `/notes` anywhere), confirmed findings (`findings.confirmed_by`, ✅ or `/confirm`, shown in `case_summary` and the report; the report says
+DRAFT while some are unconfirmed, and `confirmed_findings_only` keeps those out), and `python -m copilot.feedback list|export` across all cases (to `feedback_exports/`, git-ignored). |
 | `copilot/tools.py` | Every LangChain tool the model can call, and their descriptions (sent on every step: keep them short). `_dump` serialises results and adds `true_utc` fields. `record_finding` keeps "high" confidence only when two different records agree (prompt rule 11: correlate before claiming). |
 | `copilot/prompts.py` | System prompt (rules, memory, lessons, approvals); the case part comes from `case_config.build_system_context()`. |
 | `copilot/case_config.py` | `CaseConfig`: one case's `case.yaml` (scope, clock offset, IOCs, triage list, allow/denylists, limits, memory image). `case_config` is a proxy to the current session's case. |

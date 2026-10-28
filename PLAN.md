@@ -129,8 +129,8 @@ a change to the agent, to check nothing broke.
    - The report lists each evidence source: host, disk image name and hash (`evidence:` in
      `case.yaml` or the settings form), memory image size and SHA-256 (hashed on first use),
      collections, rows and times; it warns about a changed image or mixed clients.
-   - Not covered: any signed-in investigator can still see which Velociraptor clients exist
-     (IDs and host names) through the agent's `search_clients` tool, though not use them.
+   - `search_clients` lists only the clients the user may put in a case (2026-10-28): clients of
+     investigations they are not part of, and new ones under `new_evidence: admins`, stay hidden.
 3. ~~**Investigate once, then answer.**~~ Built and partly measured: one longer agent turn
    (`copilot/dossier.py`, 40 steps by default) writes the case dossier (intrusion timeline,
    findings, key entities, hypotheses, contradictions, gaps) before any question; every later
@@ -203,7 +203,11 @@ a change to the agent, to check nothing broke.
    overlap helps); a shorter system prompt and fewer tools once the leads carry more of the work.
 9. **Prompt rewrite** once the tools are stable: fewer, shorter rules.
 10. **Release.**
-    - A person reviews findings before they reach a report.
+    - ~~A person reviews findings before they reach a report.~~ Done (2026-10-28): every report says
+      how many findings no investigator confirmed (DRAFT); with `report.confirmed_findings_only` (on in
+      `server.example.yaml`, per case `output.confirmed_findings_only`) only confirmed ones go in and the
+      report is refused while none is. Confirm in the Findings tab or with `/confirm <finding ID>`.
+    - ~~Deployment and backup guidance~~ done: `DEPLOY.md` (native Windows; a container design sketched).
     - Every change is audited; evidence manifests; export/restore checks.
-    - Deployment and backup guidance, PDF export, report sharing.
+    - PDF export, report sharing.
     - Evaluation across more models and images.
