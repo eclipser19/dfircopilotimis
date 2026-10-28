@@ -6,7 +6,8 @@ The author left after this release. What you get: a working DFIR copilot (disk i
 memory image through Volatility 3, an LLM agent that investigates, cites records and writes the report),
 tested (`python -m pytest tests`) and measured on four public cases (`BENCHMARKS.md`).
 
-- **Deploy it:** `DEPLOY.md` (one Windows machine, investigators over HTTPS). **Use it:** `README.md`.
+- **Deploy it:** `install.ps1` on a fresh Windows machine, then `add-image` per disk image and `start.ps1`
+  (`DEPLOY.md`: what it asks, backups, updates). **Use it:** `README.md`.
   **Change it:** `CONTRIBUTING.md`, then `CLAUDE.md` for the architecture and file map.
 - **How good it is:** strict scoring 75-91% on cases it was tuned on, 60.7% on the one case it saw blind
   (the honest number for a new kind of case). Answers can be wrong: reports carry only findings an
@@ -37,7 +38,9 @@ of each table), `CONTRIBUTING.md` ("Where to make which change").
 - Branch `claude/exciting-lovelace-89zljp`; work and push on that branch; no pull request unless asked.
 - Release work of 2026-10-28: `search_clients` lists only the clients the user may use; reports carry a
   review line (DRAFT when findings are unconfirmed) and, with `confirmed_findings_only`, only confirmed
-  findings; `/confirm <finding ID>` in the chat; `DEPLOY.md`.
+  findings; `/confirm <finding ID>` in the chat; `DEPLOY.md`; the installer (`copilot/install.py`,
+  `install.ps1`, `start.ps1`), run end to end on this machine (real Velociraptor download, a dead-disk
+  client enrolled, the app over HTTPS).
 - Tests: `python -m pytest tests`, all pass (about 3 minutes; 2 skipped on Windows). Keep them passing in any order.
 - Benchmarks, latest valid runs, strict scoring: OU 86.7% (`20261022-080757`), DC 91.3% (`085413`),
   Injector 75.0% (`083942`), CorporateSecrets 82.1% (`20261021-081326`). Three earlier OU runs: 78.7-80.0%.

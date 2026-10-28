@@ -10,7 +10,7 @@ Streamlit web app for several signed-in investigators (`app.py`) and a CLI (`mai
 `README.md` is the user guide; `PLAN.md` tracks status and next steps; `BENCHMARKS.md` records every
 benchmark run that matters (add a row after each); `CONTRIBUTING.md` says where to make which change;
 `HANDOFF.md` says where the work stands and how the user works (read it first in a new session);
-`DEPLOY.md` is the install on a Windows forensic machine (HTTPS, services, backup).
+`DEPLOY.md` is the install on a Windows forensic machine (`install.ps1`, HTTPS, start at boot, backup).
 
 ## Commands
 
@@ -20,6 +20,9 @@ python -m pytest tests                         # whole suite; needs no Velocirap
 python -m pytest tests/test_memory.py          # one file
 python -m pytest tests/test_app.py -k approve  # tests matching a name
 streamlit run app.py                           # web app
+powershell -File install.ps1                   # fresh Windows machine: Python, packages, then copilot.install setup
+python -m copilot.install add-image <E01|folder> --name N   # an image as its own dead-disk client
+python -m copilot.install start                # Velociraptor + image clients + app (start.ps1)
 python main.py                                 # CLI
 python -m copilot.selftest [--flow F.XXXX]     # check the Velociraptor setup without the LLM
 python -m copilot.config_check [file]          # unknown keys / wrong types in server.yaml and case files
@@ -85,6 +88,7 @@ DRAFT while some are unconfirmed, and `confirmed_findings_only` keeps those out)
 | `copilot/report.py`, `report_template.py`, `report_html.py`, `charts.py` | Report built from the DB (only the narrative comes from the LLM); HTML with `html=False` and a CSP; charts as static SVG. `report.Clock` converts recorded -> true UTC. |
 | `copilot/outputs.py` | Files produced for download (reports, exports), registered per case. |
 | `copilot/conversation.py` | Saves/restores each user's chat per case (`ui@user` / `agent@user` / `inbox@user`). Changes go through `append`, `update_message`, `save_history`, `begin` under a process lock (jobs and the page write the same conversation); `note_for_agent` leaves investigator actions in the inbox until the agent's next turn (`begin` moves them into the history). |
+| `copilot/install.py`, `install.ps1`, `start.ps1` | Fresh-machine install: `setup` (Velociraptor downloaded and hash-checked, server config with every port on 127.0.0.1 and the datastore in the data folder, API config, `server.yaml` with the shared-server defaults and a `deploy:` section, self-signed or PKI certificate, first admin), `add-image` (own client config, writeback and remap per image; client ID read from the writeback), `start` (frontend, the images' clients, Streamlit on 0.0.0.0 only with TLS). Data folder layout in `Layout`. |
 | `copilot/settings.py`, `llm.py`, `auth.py` | `server.yaml` (env vars win), the chat model, local accounts (PBKDF2, lockout). |
 | `copilot/iocs.py`, `commands.py`, `selftest.py` | IOC extraction, `/cases` `/case` `/help` chat commands, setup check. |
 | `copilot/benchmark.py` | Benchmark runner: model checked first (`make_model` pings it), fresh `bench-*` case, triage (waits for unfinished flows: `finish_triage`) or `--from-case` (triage part only: `cases.copy_data(triage=)`, then the triage artifacts missing or collected with other parameters: `collection.covers`), investigation, fixed questions in fresh conversations, where the time went (model, collections, memory, tools: `TokenUsage.spent`) and what the run depended on (`run_settings`: knowledge hashes, lessons, normalizer, limits), scoring in code (facts, not counted where their clause denies or doubts them (`denied`); true-UTC times near the fact's words, uncorrected times, invalid IDs, forbidden claims, times not in cited records), commit recorded, results in `benchmark_results/`. |

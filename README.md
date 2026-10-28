@@ -7,10 +7,60 @@ findings with evidence references, and produces a DFIR report.
 Status and next steps: [PLAN.md](PLAN.md). Measured results: [BENCHMARKS.md](BENCHMARKS.md).
 Working on the code: [CONTRIBUTING.md](CONTRIBUTING.md) and [CLAUDE.md](CLAUDE.md).
 
-## Quick start
+## Install on a fresh Windows machine
 
-From a fresh clone to a first answer. Each step is explained under [Setup](#setup); the files that
-git doesn't bring, and where they go, are listed under [What you need](#what-you-need-and-where-it-goes).
+The installer does every step below by itself and asks only what it can't know (the model, a
+certificate, the first admin's password). From the code folder, in PowerShell:
+
+```powershell
+git clone https://github.com/eclipser19/bananeabibenmiyaptim dfir-copilot; cd dfir-copilot
+powershell -ExecutionPolicy Bypass -File .\install.ps1      # 1. Python 3.12, packages, Velociraptor, settings, admin
+.\.venv\Scripts\python.exe -m copilot.install add-image D:\evidence\host.E01 --name host   # 2. per disk image
+.\start.ps1                                                 # 3. Velociraptor, the images' clients and the web app
+```
+
+4. Open the address `start` prints, sign in, **New case**: give it the image's client ID (printed by
+   `add-image`; `python -m copilot.install images` lists them all), run the triage it offers, then ask,
+   e.g. "How did the attacker get in?".
+
+What each step does:
+
+- **`install.ps1`** finds Python 3.12 (or installs it for this user with winget), makes `.venv` and
+  installs the exact tested packages (`requirements-lock.txt`), then runs `python -m copilot.install
+  setup`. That downloads Velociraptor 0.77.2 and checks its SHA-256, makes its server config (every port
+  on 127.0.0.1, the datastore in the data folder), the API config (`investigator` role), `server.yaml`
+  (the model; sign-in required, new evidence opened by admins, reports with confirmed findings only) and
+  the first admin account. For investigators on other computers give it a certificate (your company
+  PKI, or `self` for a self-signed one); without one the app answers on this machine only. It ends by
+  printing the two admin commands that open the firewall port and start everything at boot. Run it again
+  any time: what exists is kept.
+- **`add-image`** makes the image its own Velociraptor client (own identity, own remap file). E01: the
+  first segment, the others next to it; raw images too; a folder (an AD1 mounted with FTK Imager, or
+  collected files) holding `Windows` and `Users` works the same way. A running `start` picks new images
+  up by itself.
+- **`start.ps1`** (`python -m copilot.install start`) runs Velociraptor, every image's client and the web
+  app, logs into the data folder's `logs\`, and stops all of them with Ctrl+C.
+
+### Where things are
+
+| What | Where |
+|---|---|
+| Velociraptor: binary, `server.config.yaml` (holds its CA key), datastore | `<data folder>\velociraptor\` (data folder: `C:\dfir` unless you chose another) |
+| Each image's client: config, writeback (its identity), remap file | `<data folder>\velociraptor\images\<name>\` |
+| Logs of `start` | `<data folder>\logs\` |
+| Memory images, Volatility symbol tables, YARA rules | `<data folder>\memory\`, `symbols\`, `yara\` |
+| TLS certificate and key (when made with `self`) | `<data folder>\tls\` |
+| `server.yaml` (settings, the model's API key), `auth.yaml` (accounts), `api_client.yaml` (Velociraptor API key) | the code folder |
+| Cases: `cases\<id>\case.yaml`, and their database, chats and reports in `cases\<id>\data\` | the code folder |
+| Disk images | wherever you keep them (`add-image` records the path: moving an image means adding it again) |
+
+None of these are in git (keys, settings, evidence). Back up the data folder and those code-folder
+files together ([DEPLOY.md](DEPLOY.md): backups, updates, a certificate from your PKI later).
+
+Check at any time: `python -m copilot.config_check` (settings), `python -m copilot.selftest` (Velociraptor
+answers, a collection works), `python -m copilot.memory check` (Volatility, symbols, memory images).
+
+### By hand, or on another system
 
 1. `pip install -r requirements-lock.txt` (Python 3.10 to 3.12; the lock file holds the exact tested
    versions, `requirements.txt` the minimums).
@@ -27,42 +77,6 @@ git doesn't bring, and where they go, are listed under [What you need](#what-you
 
 `cases/szechuan/case.yaml` is a complete example case file. The benchmarks in `cases/` show what
 to expect, with answer keys.
-
-## What you need, and where it goes
-
-`git pull` brings only the code. Everything below is **not in git** (secrets, keys, evidence): copy it from
-the machine that already runs the copilot, or create it with the command shown. Paths are relative to the
-code folder (the folder with `app.py`); always start the app and the commands **from that folder**, since
-they look for these files there.
-
-| What | Where | How you get it |
-|---|---|---|
-| Python 3.12 and the packages | a `.venv` in the code folder | `py -3.12 -m venv .venv`, `.venv\Scripts\activate`, `pip install -r requirements-lock.txt` |
-| `velociraptor.exe` (0.77.2) | code folder | github.com/Velocidex/velociraptor/releases |
-| `server.config.yaml` | code folder | copy it, or `velociraptor.exe config generate -i` ([DEPLOY.md](DEPLOY.md) section 2) |
-| `api_client.yaml` | code folder (or `DFIR_API_CONFIG`) | copy it, or `velociraptor.exe --config server.config.yaml config api_client --name dfir_copilot --role investigator api_client.yaml` |
-| One client config + writeback + remap per image: `deaddisk-<case>_client.config.yaml`, `deaddisk-<case>.writeback.yaml` (and its `.bak`), `deaddisk-<case>.yaml` | code folder | copy them (keeps the client IDs your cases use), or create them ([Setup](#setup) step 2) |
-| Disk images (`.E01` and its segments) | anywhere, e.g. `D:\evidence\` | the remap file points at them: moving an image means running `deaddisk` again |
-| `server.yaml` | code folder (or `DFIR_SETTINGS`) | `copy server.example.yaml server.yaml`, then set `llm` (model, `api_key`) and `memory` |
-| `auth.yaml` | code folder (or `DFIR_AUTH_FILE`) | copy it, or `python -m copilot.auth add <you> --admin` (created on first use) |
-| Memory images | `memory.images_dir` in `server.yaml`, e.g. `C:\dfir\memory\` | copy the `.mem` / `.raw` files there |
-| Volatility symbol tables | `memory.symbols_dir`, e.g. `C:\dfir\symbols\` | copy the folder, or see [Memory analysis](#memory-analysis-volatility-3) |
-| YARA rules (optional) | `memory.yara_dir` | your `.yar` files |
-| TLS certificate and key | outside the code folder, e.g. `C:\dfir\tls\`; named in `.streamlit/config.toml` | company PKI ([DEPLOY.md](DEPLOY.md) section 5) |
-| Cases (`cases/<id>/case.yaml` and `cases/<id>/data/`) | `cases\` in the code folder | the example and benchmark case files come with git; their `data\` and every other case: copy the folders (app stopped), or create new cases in the app |
-| `learned_knowledge.yaml` | code folder | copy it (approved lessons); created when the first lesson is approved |
-
-Then, in this order (each step's command says what is wrong if something is missing):
-
-1. `python -m copilot.config_check`: settings and case files are readable and spelt right.
-2. Start Velociraptor (`velociraptor.exe --config server.config.yaml frontend`) and each image's
-   client (`velociraptor.exe --config deaddisk-<case>_client.config.yaml --remap deaddisk-<case>.yaml client`).
-3. `python -m copilot.selftest`: the API connects, the case's client answers, one collection works.
-4. `python -m copilot.memory check`: Volatility, symbols and memory images (skip without memory images).
-5. `streamlit run app.py`, sign in, open or create a case.
-
-For a server that others reach over the network (HTTPS, firewall, start at boot, backups), follow
-[DEPLOY.md](DEPLOY.md).
 
 ## Setup
 

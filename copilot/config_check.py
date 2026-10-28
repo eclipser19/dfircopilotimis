@@ -53,6 +53,7 @@ SERVER_SCHEMA = {
                "yara_dir": TEXT, "command": TEXT},
     "knowledge": {"learned_file": TEXT},
     "report": {"confirmed_findings_only": BOOL},
+    "deploy": {"data_dir": TEXT, "port": INT, "server_name": TEXT, "tls_cert": TEXT, "tls_key": TEXT},
 }
 
 
