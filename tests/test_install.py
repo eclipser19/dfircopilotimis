@@ -72,13 +72,15 @@ def test_each_image_becomes_its_own_client(tmp_path, monkeypatch):
     calls = []
 
     def run(cmd, **kwargs):
+        assert kwargs["env"]["__COMPAT_LAYER"] == "RunAsInvoker"
         calls.append(cmd)
         with open(cmd[-1], "w") as f:                                   # deaddisk writes the remap file
             f.write("remappings: []\n")
         return subprocess.CompletedProcess(cmd, 0, b"", b"")
 
     class Client:                                                        # writes its ID at once, like Velociraptor
-        def __init__(self, cmd, cwd, stdout, stderr):
+        def __init__(self, cmd, cwd, stdout, stderr, env):
+            assert env["__COMPAT_LAYER"] == "RunAsInvoker"              # no elevation asked (WinError 740)
             calls.append(cmd)
             with open(os.path.join(cwd, "writeback.yaml"), "w") as f:
                 f.write(f"client_id: C.{len(calls):016x}\n")

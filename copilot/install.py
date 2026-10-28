@@ -138,8 +138,15 @@ def download_velociraptor(dest: str, url: str = VELOCIRAPTOR_URL, sha256: str = 
     os.replace(part, dest)
 
 
+def vr_env() -> dict:
+    """Velociraptor's binary asks Windows for the highest rights available: for an administrator's
+    non-elevated window, starting it then fails (WinError 740). It needs no admin rights to read an image
+    or serve the copilot, so it runs with the caller's own (RunAsInvoker), like any program."""
+    return dict(os.environ, __COMPAT_LAYER="RunAsInvoker")
+
+
 def velociraptor_version(exe: str) -> str:
-    out = RUN([exe, "version"], capture_output=True, text=True, timeout=60)
+    out = RUN([exe, "version"], capture_output=True, text=True, timeout=60, env=vr_env())
     found = re.search(r"^version:\s*(\S+)", out.stdout or "", re.M)
     return found.group(1) if found else ""
 
@@ -153,7 +160,7 @@ def server_config_merge(layout: Layout) -> dict:
 
 
 def _velociraptor(layout: Layout, *args, capture: bool = True, timeout: int = 300):
-    out = RUN([layout.exe, *args], cwd=layout.vr_dir, capture_output=capture, timeout=timeout)
+    out = RUN([layout.exe, *args], cwd=layout.vr_dir, capture_output=capture, timeout=timeout, env=vr_env())
     if out.returncode != 0:
         detail = (out.stderr or b"").decode("utf-8", "replace").strip().splitlines()[-3:] if capture else []
         raise InstallError(f"velociraptor {' '.join(args[:3])} failed: {' / '.join(detail) or out.returncode}")
@@ -265,7 +272,7 @@ def images(layout: Layout) -> list:
 def _start_client(layout: Layout, folder: str, log):
     return POPEN([layout.exe, "--config", os.path.join(folder, "client.config.yaml"),
                   "--remap", os.path.join(folder, "remap.yaml"), "client"],
-                 cwd=folder, stdout=log, stderr=subprocess.STDOUT)
+                 cwd=folder, stdout=log, stderr=subprocess.STDOUT, env=vr_env())
 
 
 # ---------------------------------------------------------------- server.yaml, HTTPS, accounts
@@ -394,7 +401,7 @@ def start(layout: Layout, deploy: dict, wait_api: int = 90):
 
     def launch(label, cmd, cwd):
         log = open(os.path.join(layout.logs, f"{label}.log"), "ab")
-        procs[label] = POPEN(cmd, cwd=cwd, stdout=log, stderr=subprocess.STDOUT)
+        procs[label] = POPEN(cmd, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, env=vr_env())
         print(f"started {label} (log: {log.name})")
 
     try:
@@ -465,7 +472,7 @@ def setup() -> int:
     if ask_yes("Create an account for Velociraptor's own web GUI (https://127.0.0.1:8889, optional)?", False):
         name = ask("GUI account name", "admin")
         RUN([layout.exe, "--config", layout.server_config, "user", "add", name, "--role", "administrator"],
-            cwd=layout.vr_dir)
+            cwd=layout.vr_dir, env=vr_env())
 
     step("Server settings (server.yaml)")
     path = settings_path()
