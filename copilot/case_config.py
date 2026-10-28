@@ -245,6 +245,16 @@ class CaseConfig:
         formats = [f for f in formats if f in ("html", "md")]
         return formats or ["html"]
 
+    @property
+    def confirmed_findings_only(self) -> bool:
+        """Reports carry only the findings an investigator confirmed: case.yaml output.confirmed_findings_only,
+        else server.yaml report.confirmed_findings_only. Default: all findings, the unconfirmed ones marked."""
+        value = (self.data.get("output", {}) or {}).get("confirmed_findings_only")
+        if value is None or value == "":
+            from copilot import settings
+            return settings.flag("report", "confirmed_findings_only", "DFIR_CONFIRMED_FINDINGS_ONLY")
+        return value is True or str(value).strip().lower() in ("1", "true", "yes", "on")
+
     # --- Memory image (Volatility; see copilot/memory.py) ---
     def _memory(self) -> dict:
         memory = self.data.get("memory", {}) or {}

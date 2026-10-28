@@ -113,7 +113,15 @@ def search_clients() -> str:
     """
     Lists Velociraptor clients (dead-disk ones too). Setup only: collections use the case's client.
     """
+    from copilot import cases
     res = get_vql().run_vql("SELECT client_id, os_info.hostname AS hostname, os_info.system AS os FROM clients()")
+    # Only the clients this user may name in a case: others are evidence of investigations they are not part of.
+    results = res.get("results") or []
+    usable = cases.usable_clients(results)
+    res = dict(res, results=usable)
+    if len(usable) < len(results):
+        res["log"] = ((res.get("log") or "") + "\nClients you may not use (evidence of other investigations, "
+                      "or new evidence reserved for admins) are not listed.").strip()
     return safe_json_truncate(res)
 
 
@@ -421,6 +429,8 @@ def case_summary() -> str:
                           **({"confirmed_by": f["confirmed_by"]} if f.get("confirmed_by") else {})} for f in findings]
     retracted = case_db.get_findings(include_retracted=True)
     stats["retracted_findings"] = len(retracted) - len(findings)
+    if case_config.confirmed_findings_only:
+        stats["report"] = "Reports carry only findings with confirmed_by: write a report's summary from those alone."
     stats["leads"] = leads.leads(case_db)
     return _dump(stats)
 
@@ -962,6 +972,12 @@ def generate_report(executive_summary: str, recommendations: str, correlations: 
     if not case_db.get_stats().get("total_records"):
         return ("Report not generated: the case database is empty, so there is no evidence to report on. "
                 "Collect artifacts successfully first (see list_collections).")
+    active = case_db.get_findings()
+    confirmed = [f for f in active if f.get("confirmed_by")]
+    if case_config.confirmed_findings_only and active and not confirmed:
+        return ("Report not generated: this case's reports carry only findings an investigator confirmed, and none "
+                f"of its {len(active)} findings is confirmed yet. Ask the investigator to review them (✅ in the "
+                "Findings & dossier tab, or `/confirm <finding ID>` in the chat), then generate the report again.")
     from copilot import outputs
     from copilot.report_html import to_html
     import re
@@ -984,12 +1000,20 @@ def generate_report(executive_summary: str, recommendations: str, correlations: 
             f.write(report_md)
         outputs.register(base + ".md", "report", "DFIR report (Markdown)")
         written.append(base + ".md")
-    findings = case_db.get_findings()
+    if case_config.confirmed_findings_only:
+        review = (f"Only the {len(confirmed)} confirmed findings are in it; {len(active) - len(confirmed)} unconfirmed "
+                  f"were left out.\n" if len(confirmed) < len(active) else "")
+        included = len(confirmed)
+    else:
+        unconfirmed = len(active) - len(confirmed)
+        review = (f"Marked DRAFT: {unconfirmed} of {len(active)} findings are not confirmed by an investigator yet.\n"
+                  if unconfirmed else "")
+        included = len(active)
     return (
         f"Report generated:\n" + "".join(f"- {p}\n" for p in written) +
         "The investigator gets these as download buttons automatically: do not write links or file paths "
-        "in your answer.\n" +
-        f"Sections: Executive Summary, Scope & Evidence, Findings Overview ({len(findings)}), Evidence Timeline, "
+        "in your answer.\n" + review +
+        f"Sections: Executive Summary, Scope & Evidence, Findings Overview ({included}), Evidence Timeline, "
         f"Detailed Findings, Correlations, Indicators, Artifacts/Locations/Meanings, Recommendations, "
         f"appendices (collections, cited evidence records, retracted findings, audit log)."
     )

@@ -4,6 +4,7 @@ Chat commands handled locally, without the LLM (they cost no tokens):
   /case <id>      switch to another investigation (the conversation restarts)
   /note <text>    a fact or correction the copilot takes as given in this case (copilot/feedback.py)
   /notes          this case's notes; /notes remove <number> withdraws one
+  /confirm <id>   confirms a finding after checking its records (copilot/feedback.py)
   /help           this list
 /investigate (uses the LLM) is run by the CLI loop and the app themselves; so is /wrong <correction>
 in the CLI (correcting the last answer; the app has a button under each answer).
@@ -15,7 +16,7 @@ HELP = ("Commands (no LLM, free): `/cases` list cases · `/case <id>` switch cas
         "chat) · `/help`. CLI: `/new` starts a fresh conversation (Streamlit: sidebar button). "
         "`/investigate` (uses the LLM) investigates the whole case and writes the case dossier every question "
         "starts from. `/note <text>` gives the copilot a fact or correction it takes as given in this case; "
-        "`/notes` lists them (`/notes remove <number>`). "
+        "`/notes` lists them (`/notes remove <number>`). `/confirm <finding ID>` confirms a finding you checked. "
         "You can also just ask in words, e.g. \"switch to the szechuan case\" or \"create a case for host X\".")
 
 
@@ -43,6 +44,8 @@ def handle(text: str):
         return f"Switched to case `{info['id']}` — {info['name']}. Starting a fresh conversation for this case."
     if command in ("/note", "/notes"):
         return _notes(command, arg)
+    if command == "/confirm":
+        return _confirm(arg)
     if command == "/help":
         return HELP
     return f"Unknown command `{command}`. {HELP}"
@@ -67,3 +70,15 @@ def _notes(command: str, arg: str) -> str:
         return "No notes in this case yet. Add one with `/note <fact or correction>`."
     return "Notes the copilot takes as given in this case:\n\n" + "\n".join(
         f"- **{r['feedback_id']}** ({r.get('actor') or 'investigator'}): {r['comment']}" for r in rows)
+
+
+def _confirm(finding_id: str) -> str:
+    from copilot import feedback
+    if not finding_id:
+        return "Usage: `/confirm <finding ID>` (the IDs are in the Findings & dossier tab or `case_summary`)."
+    try:
+        found = feedback.confirm_finding(finding_id)
+    except feedback.FeedbackError as e:
+        return str(e)
+    from copilot.citations import md_literal
+    return f"Confirmed finding {found['finding_id']} ({md_literal(found['title'])}). Reports mark it ✔."

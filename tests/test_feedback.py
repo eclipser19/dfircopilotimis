@@ -54,6 +54,37 @@ def test_confirmed_findings_are_established_for_the_agent_and_the_report(case):
     assert "- **Review:** confirmed by investigator (" in report and "| Confirmed |" in report
 
 
+def test_reports_say_which_findings_no_investigator_confirmed(case, monkeypatch):
+    from copilot import tools
+    from copilot.report import build_report
+    case.ingest_artifact_results([{"EventTime": "2020-09-19T03:42:42Z", "Message": "service updater"},
+                                  {"EventTime": "2020-09-19T03:50:00Z", "Message": "task updater"}], "S", "H", "C.1")
+    first, second = [e["evidence_id"] for e in case.query_timeline()["events"]]
+    service = case.record_finding("Service updater installed", "d", [first], "medium")
+    case.record_finding("Task updater created", "d", [second], "medium")
+    report = build_report(case, case_config, "ES", "- R")
+    assert "**Review:** DRAFT. 2 of 2 findings have not been confirmed" in report
+
+    monkeypatch.setitem(case_config.data, "output", {"confirmed_findings_only": True})
+    out = tools.generate_report.invoke({"executive_summary": "S", "recommendations": "- R"})
+    assert out.startswith("Report not generated") and "none of its 2 findings is confirmed" in out
+    assert "Usage: `/confirm" in commands.handle("/confirm")
+    assert "No unique finding" in commands.handle("/confirm nope")
+    assert commands.handle(f"/confirm {service}").startswith(f"Confirmed finding {service}")
+    report = build_report(case, case_config, "ES", "- R")
+    assert "Service updater installed" in report and "Task updater created" not in report
+    assert "only findings confirmed by an investigator are included; 1 unconfirmed finding was left out" in report
+    out = tools.generate_report.invoke({"executive_summary": "S", "recommendations": "- R"})
+    assert out.startswith("Report generated") and "Only the 1 confirmed findings are in it" in out
+    assert json.loads(case_summary.invoke({}))["report"].startswith("Reports carry only findings with confirmed_by")
+
+    monkeypatch.setitem(case_config.data, "output", {})                 # server-wide setting, case unset
+    monkeypatch.setenv("DFIR_CONFIRMED_FINDINGS_ONLY", "1")
+    assert case_config.confirmed_findings_only
+    monkeypatch.setitem(case_config.data, "output", {"confirmed_findings_only": False})   # the case wins
+    assert not case_config.confirmed_findings_only
+
+
 def test_chat_commands_add_list_and_withdraw_notes(case):
     assert "No notes in this case yet" in commands.handle("/notes")
     assert "Write the fact" in commands.handle("/note")

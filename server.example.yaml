@@ -21,9 +21,10 @@ login:
   # Refuse to run without accounts (python -m copilot.auth add <username> --admin).
   required: true
   # Who may open the first case on a Velociraptor client or memory image no case uses yet:
-  # anyone (default) or admins. Evidence already in a case is always limited to the people
-  # who can open one of its cases.
-  # new_evidence: admins
+  # anyone (the default when unset) or admins. Evidence already in a case is always limited to
+  # the people who can open one of its cases. On a shared server keep it at admins: an admin
+  # opens the first case on each image and adds the investigators.
+  new_evidence: admins
 
 memory:
   # Memory analysis with Volatility 3. Install it once, with the Python that runs the copilot:
@@ -70,3 +71,10 @@ memory:
   #    Rule files (.yar / .yara) the agent may scan with go into this folder (sub-folders one
   #    level deep). Only these files can be used; rules can't be typed in.
   # yara_dir: 'C:\dfir\yara'
+
+report:
+  # Reports carry only the findings an investigator confirmed (✅ in the Findings & dossier tab,
+  # or /confirm <finding ID> in the chat); the others are left out and counted. With false, every
+  # finding goes in and a report with unconfirmed ones is marked DRAFT. A case can override it
+  # (case.yaml output.confirmed_findings_only).
+  confirmed_findings_only: true

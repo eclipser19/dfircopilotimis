@@ -7,6 +7,13 @@ REPORT_TEMPLATE = """# Digital Forensics & Incident Response Report
 **Case:** {{ case_name | md }}
 **Analyst:** {{ analyst | md }}
 **Generated:** {{ generated_at }}
+{% if unconfirmed %}
+**Review:** DRAFT. {{ unconfirmed }} of {{ findings | length }} findings have not been confirmed by an investigator (no ✔ in the Findings Overview).
+{% elif confirmed_only %}
+**Review:** only findings confirmed by an investigator are included{% if left_out %}; {{ left_out }} unconfirmed finding{{ "s were" if left_out != 1 else " was" }} left out{% endif %}.
+{% elif findings %}
+**Review:** every finding was confirmed by an investigator.
+{% endif %}
 
 ---
 

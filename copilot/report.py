@@ -226,9 +226,15 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
     stats = db.get_stats()
 
     # Findings, each timed by its own evidence (recorded host time), not by what the LLM typed.
+    # With confirmed_findings_only, those no investigator confirmed stay out (only their number is reported).
+    confirmed_only = config.confirmed_findings_only
+    active = db.get_findings()
+    left_out = sum(1 for f in active if not f.get("confirmed_by")) if confirmed_only else 0
     findings = []
     evidence_cache = {}
-    for raw in db.get_findings():
+    for raw in active:
+        if confirmed_only and not raw.get("confirmed_by"):
+            continue
         ids = json.loads(raw["evidence_ids"] or "[]")
         items = []
         for eid in ids:
@@ -350,6 +356,8 @@ def build_report(db, config, executive_summary: str, recommendations: str, corre
         clock_skewed=clock.skewed, clock_offset=config.clock_offset_minutes,
         stats=stats, in_window=in_window,
         findings=findings, timeline=timeline, timeline_truncated=timeline_truncated,
+        confirmed_only=confirmed_only, left_out=left_out,
+        unconfirmed=sum(1 for f in findings if not f.get("confirmed_by")),
         max_timeline=MAX_TIMELINE_ROWS, related=related, related_minutes=RELATED_WITHIN_MINUTES,
         indicators=indicators, iocs_searched=iocs_searched, artifacts=artifacts,
         collections=collections, audit_log=audit_log, retracted=retracted, cited=cited,

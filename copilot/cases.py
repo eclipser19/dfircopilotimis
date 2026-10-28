@@ -336,6 +336,12 @@ def usable_memory_images(user=CURRENT) -> list:
     return [i for i in memory.available_images() if not source_problem("memory", i["name"], user, index)]
 
 
+def usable_clients(rows: list, user=CURRENT) -> list:
+    """The Velociraptor client rows ({client_id, ...}) this user may put in a case."""
+    index = _case_sources()
+    return [r for r in rows if not source_problem("client", str((r or {}).get("client_id") or ""), user, index)]
+
+
 def collected_sources(case_id: str) -> dict:
     """The evidence this case's database already holds data from: {"client": [...], "memory": [...]}."""
     import sqlite3

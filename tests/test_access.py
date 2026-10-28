@@ -242,6 +242,30 @@ def test_memory_images_of_other_investigations_are_not_offered(team, monkeypatch
         cases.create("c", "C", memory_image="a.mem")
 
 
+def test_search_clients_lists_only_clients_the_user_may_use(team, monkeypatch):
+    from copilot import tools
+
+    class Clients:
+        def run_vql(self, query, env=None, **kwargs):
+            return {"results": [{"client_id": c, "hostname": h} for c, h in
+                                ((ONE, "BOBS-HOST"), (TWO, "NEW-IMAGE"), (THREE, "OTHER"))], "log": ""}
+
+    monkeypatch.setattr(tools, "get_vql", lambda: Clients())
+    as_user(monkeypatch, "bob")
+    cases.create("bob-case", "Bob's case", client_id=ONE)
+    as_user(monkeypatch, "alice")
+    cases.create("alice-case", "Alice's case", client_id=THREE)
+    assert "BOBS-HOST" in tools.search_clients.invoke({})              # admins see every client
+    as_user(monkeypatch, "carol")
+    listed = tools.search_clients.invoke({})
+    assert "NEW-IMAGE" in listed and "BOBS-HOST" not in listed and ONE not in listed and "OTHER" not in listed
+    assert "are not listed" in listed
+    monkeypatch.setenv("DFIR_NEW_EVIDENCE", "admins")                  # unused evidence: admins only
+    assert "NEW-IMAGE" not in tools.search_clients.invoke({})
+    as_user(monkeypatch, "bob")
+    assert "BOBS-HOST" in tools.search_clients.invoke({})
+
+
 def test_a_case_keeps_the_evidence_its_data_came_from(team, monkeypatch):
     as_user(monkeypatch, None)
     cases.create("a", "A", client_id=ONE)

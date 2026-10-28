@@ -37,7 +37,7 @@ CASE_SCHEMA = {
     "collect": LIST,
     "collection": {"max_rows": INT, "apply_time_window": BOOL, "agent_collections": one_of(*MODES)},
     "artifacts": {"allow": LIST},
-    "output": {"report_formats": LIST, "dir": TEXT},
+    "output": {"report_formats": LIST, "dir": TEXT, "confirmed_findings_only": BOOL},
     "agent": {"allow_raw_vql": BOOL, "max_steps": INT, "max_tokens_per_turn": INT,
               "investigate_steps": INT, "investigate_tokens": INT,
               "approvals": {kind: one_of(*MODES) for kind in ACTIONS}},
@@ -52,6 +52,7 @@ SERVER_SCHEMA = {
     "memory": {"images_dir": TEXT, "symbols_dir": TEXT, "offline": BOOL, "timeout": NUMBER,
                "yara_dir": TEXT, "command": TEXT},
     "knowledge": {"learned_file": TEXT},
+    "report": {"confirmed_findings_only": BOOL},
 }
 
 
