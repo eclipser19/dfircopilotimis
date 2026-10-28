@@ -97,6 +97,18 @@ git pull
 ```
 Then restart the task. Stored descriptions are rebuilt by themselves when the normalizer changed.
 
+## Local only (investigators on the server through Remote Desktop)
+
+When investigators can't reach the server's port (another subnet, a network firewall that lets only RDP
+through), they connect with Remote Desktop and use the app in a browser on the server:
+`http://localhost:8501`. Leave `tls_cert` / `tls_key` out of `server.yaml`'s `deploy:` section (the app then
+listens on 127.0.0.1 only: passwords never cross the network, no certificate or firewall rule is needed),
+and remove the rule if it was made: `Remove-NetFirewallRule -DisplayName 'DFIR Copilot'` (admin). Sign-in,
+cases, access and each investigator's own chats work the same. Windows Server allows two RDP sessions at a
+time without Remote Desktop Services licences. To open it to the network later: ask the network team to
+allow the app's port from the investigators' subnet, add the certificate below, the firewall rule (setup
+prints it), and restart.
+
 ## A certificate from the PKI later
 
 Put the PEM files somewhere outside the code folder and set them in `server.yaml`:
