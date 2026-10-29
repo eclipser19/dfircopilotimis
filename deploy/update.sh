@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Updates the copilot from git (or from files you copied into /opt/dfir-copilot) and restarts it.
+# Updates the copilot from git (or from files you copied into /opt/dfir-copilot) and restarts it when it runs
+# in the background (start.sh --background).
 #   sudo /opt/dfir-copilot/deploy/update.sh            WHEELS=/path/to/wheels for no internet
 # Running questions get up to 10 minutes to finish; one cut off is offered for Continue afterwards.
 # Stored descriptions are rebuilt by themselves when the normalizer changed.
@@ -16,10 +17,16 @@ else
   .venv/bin/pip install -q -r requirements-lock.txt
 fi
 install -m 0755 deploy/dfir-admin /usr/local/bin/dfir-admin
+install -d -o dfir -g dfir -m 0750 case_data
 if [ -d /run/systemd/system ]; then
   install -m 0644 deploy/systemd/* /etc/systemd/system/
   systemctl daemon-reload
 fi
 dfir-admin config_check || true
-systemctl restart dfir-copilot
-echo "Updated to $(git log -1 --format='%h %s' 2>/dev/null || echo 'the copied files') and restarted."
+if systemctl is-active --quiet dfir-copilot 2>/dev/null; then
+  systemctl restart dfir-copilot
+  echo "Updated to $(git log -1 --format='%h %s' 2>/dev/null || echo 'the copied files') and restarted."
+else
+  echo "Updated to $(git log -1 --format='%h %s' 2>/dev/null || echo 'the copied files'). If start.sh runs in a terminal,"
+  echo "stop it there (Ctrl+C) and start it again."
+fi

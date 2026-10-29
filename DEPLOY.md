@@ -109,8 +109,8 @@ listens on 127.0.0.1 only: passwords never cross the network, no certificate or 
 and remove the rule if it was made: `Remove-NetFirewallRule -DisplayName 'DFIR Copilot'` (admin). Sign-in,
 cases, access and each investigator's own chats work the same. Windows Server allows two RDP sessions at a
 time without Remote Desktop Services licences. To open it to the network later: ask the network team to
-allow the app's port from the investigators' subnet, add the certificate below, the firewall rule (setup
-prints it), and restart.
+allow the app's port from the investigators' subnet, add a certificate (`python -m copilot.install https
+--name <name>`: self-signed, or below), the firewall rule (setup prints it), and restart.
 
 ## A certificate from the PKI later
 
@@ -143,7 +143,8 @@ sudo git clone https://github.com/eclipser19/bananeabibenmiyaptim /opt/dfir-copi
 sudo /opt/dfir-copilot/deploy/install.sh
 ```
 It installs the Ubuntu packages, makes the `dfir` account and the folders, the Python environment with the
-exact tested packages, the `dfir-copilot` service and the nightly backup, then runs setup, which asks the
+exact tested packages, the `dfir-copilot` service (used by `start.sh --background`) and the nightly backup,
+then runs setup, which asks the
 questions in the table of section 1 (data folder: `/srv/dfir`) and downloads Velociraptor's Linux build,
 checked against its SHA-256. Setup runs as the `dfir` account, not as root, so the service can use what it
 makes: at "Data folder" press Enter for `/srv/dfir`, the folder the installer made for it. For another
@@ -163,14 +164,30 @@ group read where it is (`sudo chgrp -R dfir <folder>; sudo chmod -R g+rX <folder
 share read-only with `gid=dfir`. `dfir-admin` runs any copilot command as that account with the service's
 settings (`sudo dfir-admin config_check`, `memory check`, `selftest`, `feedback export`, `benchmark run ...`).
 
-**Run**
+**Run** with `start.sh`, the Linux `start.ps1`:
 ```bash
-sudo systemctl enable --now dfir-copilot      # Velociraptor, every image's client, the app; at every boot
-journalctl -u dfir-copilot -f                 # what it does; each part's log in /srv/dfir/logs
+sudo /opt/dfir-copilot/start.sh               # Velociraptor, every image's client, the app; Ctrl+C stops all
+sudo /opt/dfir-copilot/start.sh --background  # the same, kept running after logout and started at every boot
+sudo /opt/dfir-copilot/start.sh --status      # running in the background? its last lines
+sudo /opt/dfir-copilot/start.sh --stop        # stops the background one (and its start at boot)
 sudo dfir-admin selftest                      # Velociraptor answers and a collection works (needs a case)
 ```
-Images added while it runs start within seconds. A restart loses nothing (interrupted questions are offered
-for **Continue**).
+Without `--background` it stops when its terminal closes: use `--background` on a server nobody stays
+logged in to. Each part's log is in `/srv/dfir/logs`. Images added while it runs start within seconds. A
+restart loses nothing (interrupted questions are offered for **Continue**).
+
+**From other computers, or the host of this VM.** The app answers on the network only over HTTPS (people
+sign in with passwords); without a certificate it answers on this machine alone, at `http://localhost:8501`.
+Do not change its address by hand; give it a certificate instead, then start it again:
+```bash
+sudo dfir-admin install https --name 192.168.56.10    # the name or address people type; self-signed
+sudo dfir-admin install https --name dfir01.corp.example --cert <pem> --key <pem>   # a PKI one
+```
+Then open `https://192.168.56.10:8501` (browsers warn once about a self-signed certificate). `ip -4 addr`
+shows this machine's addresses. For the host of a VM: a bridged or host-only network adapter gives the VM
+an address the host reaches; VMware's NAT does too; VirtualBox's NAT does not, so add a port forward
+(Settings → Network → Port Forwarding: host 8501 → guest 8501) and open `https://localhost:8501` on the
+host.
 
 **Investigators in another subnet.** They only use the web page. Ask the network team for one rule:
 investigators' subnet → this machine, TCP 8501 (or the port you chose). For a model in the cloud, this
@@ -185,12 +202,12 @@ this machine only (see "Local only" above).
 `sudo /opt/dfir-copilot/deploy/backup.sh /mnt/backup/dfir`). It needs no stop: each case database is copied
 safely while the app runs, with the case files, chats and reports, `/etc/dfir-copilot`, Velociraptor's keys,
 every image's identity (client IDs stay the same) and the TLS files. Not the evidence, memory images or
-Velociraptor's datastore. Restore: stop the service, put `cases/` back under `/srv/dfir/cases` and unpack
-`settings.tar.gz` at `/`, start it, `sudo dfir-admin selftest`. The backup holds keys and evidence-derived
-data: store it like the evidence.
+Velociraptor's datastore. Restore: stop it, put `cases/` back under `/srv/dfir/cases` (and
+`code_case_data/case.db` into `/opt/dfir-copilot/case_data/`), unpack `settings.tar.gz` at `/`, start it,
+`sudo dfir-admin selftest`. The backup holds keys and evidence-derived data: store it like the evidence.
 
-**Update**: `sudo /opt/dfir-copilot/deploy/update.sh` (git pull, packages, restart; running questions get up
-to ten minutes to finish).
+**Update**: `sudo /opt/dfir-copilot/deploy/update.sh` (git pull, packages; it restarts a `--background` one,
+giving running questions up to ten minutes to finish; one running in a terminal you stop and start again).
 
 **Without internet.** On another Ubuntu machine of the same version (22.04 for SIFT) with internet:
 ```bash

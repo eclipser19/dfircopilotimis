@@ -7,8 +7,8 @@ memory image through Volatility 3, an LLM agent that investigates, cites records
 tested (`python -m pytest tests`) and measured on four public cases (`BENCHMARKS.md`).
 
 - **Deploy it:** `install.ps1` on a fresh Windows machine, then `add-image` per disk image and `start.ps1`;
-  on SANS SIFT or Ubuntu `sudo deploy/install.sh`, then `sudo dfir-admin install add-image` and the
-  `dfir-copilot` service (`DEPLOY.md`: what it asks, the network rule for another subnet, backups, updates). **Use it:** `README.md`.
+  on SANS SIFT or Ubuntu `sudo deploy/install.sh`, then `sudo dfir-admin install add-image` and
+  `sudo ./start.sh` (`--background` to keep it running; `DEPLOY.md`: what it asks, the network rule for another subnet, backups, updates). **Use it:** `README.md`.
   **Change it:** `CONTRIBUTING.md`, then `CLAUDE.md` for the architecture and file map.
 - **How good it is:** strict scoring 75-91% on cases it was tuned on, 60.7% on the one case it saw blind
   (the honest number for a new kind of case). Answers can be wrong: reports carry only findings an

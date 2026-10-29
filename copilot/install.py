@@ -20,6 +20,7 @@ import argparse
 import datetime
 import getpass
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -324,7 +325,7 @@ def self_signed_certificate(cert_path: str, key_path: str, name: str, days: int 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
     now = datetime.datetime.now(datetime.timezone.utc)
-    alt = [x509.DNSName(n) for n in dict.fromkeys([name, socket.gethostname(), "localhost"]) if n]
+    alt = [_san(n) for n in dict.fromkeys([name, socket.gethostname(), "localhost", "127.0.0.1"]) if n]
     cert = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject).public_key(key.public_key())
             .serial_number(x509.random_serial_number())
             .not_valid_before(now - datetime.timedelta(minutes=5)).not_valid_after(now + datetime.timedelta(days=days))
@@ -335,6 +336,39 @@ def self_signed_certificate(cert_path: str, key_path: str, name: str, days: int 
                                   serialization.NoEncryption()))
     with open(cert_path, "wb") as f:
         f.write(cert.public_bytes(serialization.Encoding.PEM))
+
+
+def _san(name: str):
+    """A subject alternative name: an address (reached as https://10.0.0.5:8501) or a host name."""
+    from cryptography import x509
+    try:
+        return x509.IPAddress(ipaddress.ip_address(name))
+    except ValueError:
+        return x509.DNSName(name)
+
+
+def enable_https(layout: Layout, name: str, cert: str = "", key: str = "") -> dict:
+    """Serves the app to other computers: a PKI certificate, or a self-signed one for `name`, into server.yaml's
+    deploy section (the rest of the file is kept). `start` then listens on every address, over HTTPS."""
+    path = settings_path()
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        raise InstallError(f"{path} doesn't exist yet: run setup first.")
+    if cert:
+        if not (os.path.isfile(cert) and key and os.path.isfile(key)):
+            raise InstallError("Give an existing certificate file and its key file (--cert and --key).")
+        cert, key = os.path.abspath(cert), os.path.abspath(key)
+    else:
+        os.makedirs(layout.tls, exist_ok=True)
+        cert, key = os.path.join(layout.tls, "cert.pem"), os.path.join(layout.tls, "key.pem")
+        self_signed_certificate(cert, key, name)
+    deploy = data.setdefault("deploy", {})
+    deploy.update({"server_name": name, "tls_cert": cert, "tls_key": key})
+    deploy.setdefault("data_dir", layout.data_dir)
+    write_server_yaml(path, data)
+    return deploy
 
 
 def _tls_answers(layout: Layout, server_name: str) -> dict:
@@ -561,27 +595,28 @@ Done. Next:
        $s = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
        Register-ScheduledTask -TaskName 'DFIR Copilot' -Action $a -Settings $s -Trigger (New-ScheduledTaskTrigger -AtStartup) -User SYSTEM -RunLevel Highest""")
     else:
-        print("  (No certificate: the app is reachable from this machine only. Run setup again after deleting "
-              "server.yaml, or add deploy.tls_cert / tls_key to it, to open it to investigators.)")
+        print(f"  (No certificate: the app is reachable from this machine only. To open it to investigators:\n"
+              f"   {python} -m copilot.install https --name <name or address they type>)")
     print("Backups and updates: DEPLOY.md.")
     return 0
 
 
 def _linux_next_steps(deploy: dict, tls: bool) -> str:
-    """What to do after setup on Linux, where deploy/install.sh made the dfir-copilot service and dfir-admin."""
+    """What to do after setup on Linux, where deploy/install.sh made start.sh's service and dfir-admin."""
     port = deploy.get("port") or DEFAULT_PORT
     network = (f"  5. Investigators in another subnet: the network team allows TCP {port} from their subnet to this\n"
                f"     machine. This machine's own firewall: deploy/install.sh with INVESTIGATOR_NET=<their subnet>."
                if tls else
-               "  (No certificate: the app answers on this machine only. Delete server.yaml and run setup again,\n"
-               "   or add deploy.tls_cert / tls_key to it, to open it to investigators.)")
+               "  (No certificate: the app answers on this machine only. To open it to other computers:\n"
+               "   sudo dfir-admin install https --name <name or address they type>, then start again.)")
     return f"""
 Done. Next:
   1. Add each disk image (E01: the first segment, the others in the same folder; the dfir group must read it):
        sudo dfir-admin install add-image /srv/dfir/evidence/<image>.E01 --name <short-name>
-  2. Start everything now and at every boot (Velociraptor, every image's client, the app):
-       sudo systemctl enable --now dfir-copilot          logs: journalctl -u dfir-copilot, {deploy.get('data_dir', DEFAULT_DATA_DIR)}/logs
+  2. Start everything (Velociraptor, every image's client, the app); Ctrl+C stops it:
+       sudo /opt/dfir-copilot/start.sh          or --background: keeps running after logout and at every boot
      then open {app_url(deploy)}, sign in, New case, and give it the image's client ID.
+     Logs: {deploy.get('data_dir', DEFAULT_DATA_DIR)}/logs
   3. Check Velociraptor once it runs: sudo dfir-admin selftest
   4. More accounts: sudo dfir-admin auth add <name>   (--admin for admins)
 {network}
@@ -597,6 +632,11 @@ def main(argv=None) -> int:
     add.add_argument("--name", help="short name (default: from the file name)")
     sub.add_parser("images", help="the images added and their client IDs")
     sub.add_parser("start", help="Velociraptor, the images' clients and the web app")
+    https = sub.add_parser("https", help="open the app to other computers over HTTPS (a self-signed certificate "
+                                         "unless --cert/--key give a PKI one)")
+    https.add_argument("--name", help="the name or address investigators type (default: this machine's name)")
+    https.add_argument("--cert", default="", help="certificate file (PEM) from your PKI")
+    https.add_argument("--key", default="", help="its private key file (PEM)")
     args = parser.parse_args(argv)
     os.chdir(CODE_DIR)
     try:
@@ -616,6 +656,12 @@ def main(argv=None) -> int:
                 print(f"{info.get('name')}\t{info.get('client_id') or '?'}\t{info.get('path', '')}")
             if not rows:
                 print("No images yet: python -m copilot.install add-image <path> --name <short-name>")
+            return 0
+        if args.command == "https":
+            deploy = enable_https(layout, args.name or socket.getfqdn(), args.cert, args.key)
+            print(f"Wrote {settings_path()}: the app will answer at {app_url(deploy)} (and at this machine's "
+                  f"addresses) after the next start."
+                  + ("" if args.cert else " Browsers warn once about a self-signed certificate."))
             return 0
         return start(layout, deploy_settings())
     except InstallError as e:

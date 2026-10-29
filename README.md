@@ -24,7 +24,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1      # 1. Python 3.12, pa
    e.g. "How did the attacker get in?".
 
 On SANS SIFT or Ubuntu: `sudo git clone ... /opt/dfir-copilot`, then `sudo /opt/dfir-copilot/deploy/install.sh`
-(the same questions; it runs as a systemd service): [DEPLOY.md, Linux](DEPLOY.md#linux-sans-sift-or-ubuntu).
+(the same questions), `sudo dfir-admin install add-image ...` and `sudo /opt/dfir-copilot/start.sh`
+(`--background` keeps it running): [DEPLOY.md, Linux](DEPLOY.md#linux-sans-sift-or-ubuntu).
 
 What each step does:
 

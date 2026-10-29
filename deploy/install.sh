@@ -44,6 +44,9 @@ PY=$(command -v python3) || die "python3 is missing"
 say "Service account 'dfir', folders"
 id dfir >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin dfir
 install -d -o dfir -g dfir -m 0750 "$DATA" "$DATA/cases" "$DATA/evidence" "$DATA/backups" "$DATA/work"
+# The data of the case the app opens before one is picked (the code folder's case.yaml): the app runs in the
+# code folder, which belongs to root, so this one folder in it belongs to the service account.
+install -d -o dfir -g dfir -m 0750 "$APP/case_data"
 # Settings, accounts and the API key live outside the code folder; the service account writes them in setup.
 install -d -o root -g dfir -m 0770 "$CONF"
 if [ ! -f "$CONF/env" ]; then
@@ -83,10 +86,10 @@ install -m 0755 "$APP/deploy/dfir-admin" /usr/local/bin/dfir-admin
 if [ -d /run/systemd/system ]; then
   install -m 0644 "$APP"/deploy/systemd/* /etc/systemd/system/
   systemctl daemon-reload
-  systemctl enable dfir-copilot.service dfir-backup.timer >/dev/null
-  systemctl start dfir-backup.timer
+  systemctl enable --now dfir-backup.timer >/dev/null
+  # The copilot itself starts with start.sh: in a window, or --background to keep it running and start at boot.
 else
-  warn "No systemd here: the service is not installed (run: sudo dfir-admin install start)."
+  warn "No systemd here: the service is not installed (sudo /opt/dfir-copilot/start.sh runs it in a window)."
 fi
 
 if [ -t 0 ]; then

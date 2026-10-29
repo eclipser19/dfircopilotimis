@@ -119,6 +119,24 @@ def test_self_signed_certificate_names_the_server(tmp_path):
     assert b"PRIVATE KEY" in (tmp_path / "k.pem").read_bytes()
 
 
+def test_https_opens_the_app_to_other_computers_and_keeps_the_settings(tmp_path, monkeypatch):
+    from cryptography import x509
+    settings = tmp_path / "server.yaml"
+    install.write_server_yaml(str(settings), {"llm": {"model": "m"}, "deploy": {"data_dir": str(tmp_path), "port": 8501}})
+    monkeypatch.setenv("DFIR_SETTINGS", str(settings))
+    monkeypatch.chdir(tmp_path)                                    # main() moves to the code folder; this restores it
+    assert install.main(["https", "--name", "192.168.56.10"]) == 0
+    data = yaml.safe_load(settings.read_text())
+    assert data["llm"] == {"model": "m"} and data["deploy"]["port"] == 8501
+    deploy = install.deploy_settings()
+    cmd = install.streamlit_command(deploy)
+    assert cmd[cmd.index("--server.address") + 1] == "0.0.0.0" and install.app_url(deploy) == "https://192.168.56.10:8501"
+    cert = x509.load_pem_x509_certificate(open(deploy["tls_cert"], "rb").read())
+    alt = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+    assert "192.168.56.10" in [str(a) for a in alt.get_values_for_type(x509.IPAddress)]
+    assert install.main(["https", "--cert", str(tmp_path / "none.pem"), "--key", "k"]) == 1   # files must exist
+
+
 def test_setup_asks_only_what_it_cannot_know_and_skips_what_is_done(tmp_path, monkeypatch):
     monkeypatch.setenv("DFIR_SETTINGS", str(tmp_path / "server.yaml"))
     monkeypatch.setenv("DFIR_AUTH_FILE", str(tmp_path / "auth.yaml"))
@@ -167,7 +185,7 @@ def test_linux_gets_its_own_build_binary_name_and_next_steps(tmp_path, monkeypat
         assert os.access(dest, os.X_OK)                                    # it can be run as it is
     steps = install._linux_next_steps({"port": 8501, "tls_cert": "c", "tls_key": "k", "server_name": "sift01",
                                        "data_dir": "/srv/dfir"}, True)
-    assert "sudo dfir-admin install add-image" in steps and "systemctl enable --now dfir-copilot" in steps
+    assert "sudo dfir-admin install add-image" in steps and "sudo /opt/dfir-copilot/start.sh" in steps
     assert "https://sift01:8501" in steps and "allows TCP 8501" in steps
 
 
