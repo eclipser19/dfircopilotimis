@@ -1,4 +1,7 @@
-# Deploying DFIR Copilot on a Windows forensic machine
+# Deploying DFIR Copilot on a forensic machine
+
+Windows: sections 1-5 below. Linux (SANS SIFT or Ubuntu): [Linux](#linux-sans-sift-or-ubuntu). Both run the same
+installer (`python -m copilot.install`): the same questions, layout and checks.
 
 One Windows machine runs everything; investigators use the web app from their own computers over
 HTTPS. The model is reached over the network (any OpenAI-compatible endpoint).
@@ -120,6 +123,81 @@ deploy:
 ```
 Restart. Without `tls_cert`/`tls_key` the app listens on 127.0.0.1 only: passwords never cross the
 network in clear text.
+
+## Linux (SANS SIFT or Ubuntu)
+
+For a SIFT Workstation (Ubuntu 22.04, Python 3.10) or Ubuntu 24.04. The copilot gets its own Python
+environment and its own account (`dfir`), so SIFT's tools and its own Volatility are untouched, and
+analysts keep using the desktop as before. Checked end to end in a container: install, setup, an image
+added, everything started, a collection through the copilot, a backup.
+
+| Where | What |
+|---|---|
+| `/opt/dfir-copilot` | the code (this repository) and its `.venv` |
+| `/etc/dfir-copilot` | `server.yaml`, `auth.yaml`, `api_client.yaml`, `env` (the service's settings) |
+| `/srv/dfir` | the data folder: Velociraptor (binary, keys, datastore, one folder per image), `cases/`, `logs/`, `memory/`, `symbols/`, `tls/`, `backups/` |
+
+**Install**
+```bash
+sudo git clone https://github.com/eclipser19/bananeabibenmiyaptim /opt/dfir-copilot
+sudo /opt/dfir-copilot/deploy/install.sh
+```
+It installs the Ubuntu packages, makes the `dfir` account and the folders, the Python environment with the
+exact tested packages, the `dfir-copilot` service and the nightly backup, then runs setup, which asks the
+questions in the table of section 1 (data folder: `/srv/dfir`) and downloads Velociraptor's Linux build,
+checked against its SHA-256. Options, as environment variables before the command: `WHEELS=<folder>` and
+`VELOCIRAPTOR_BIN=<file>` without internet (below), `INVESTIGATOR_NET=<subnet>` for the firewall.
+
+**Images and accounts**
+```bash
+sudo dfir-admin install add-image /srv/dfir/evidence/host.E01 --name host   # prints its client ID
+sudo dfir-admin install images                                             # every image and its client ID
+sudo dfir-admin auth add <investigator>                                    # --admin for admins
+```
+The `dfir` account must be able to read the image: put it under `/srv/dfir/evidence`, or let the `dfir`
+group read where it is (`sudo chgrp -R dfir <folder>; sudo chmod -R g+rX <folder>`), or mount the evidence
+share read-only with `gid=dfir`. `dfir-admin` runs any copilot command as that account with the service's
+settings (`sudo dfir-admin config_check`, `memory check`, `selftest`, `feedback export`, `benchmark run ...`).
+
+**Run**
+```bash
+sudo systemctl enable --now dfir-copilot      # Velociraptor, every image's client, the app; at every boot
+journalctl -u dfir-copilot -f                 # what it does; each part's log in /srv/dfir/logs
+sudo dfir-admin selftest                      # Velociraptor answers and a collection works (needs a case)
+```
+Images added while it runs start within seconds. A restart loses nothing (interrupted questions are offered
+for **Continue**).
+
+**Investigators in another subnet.** They only use the web page. Ask the network team for one rule:
+investigators' subnet → this machine, TCP 8501 (or the port you chose). For a model in the cloud, this
+machine also needs HTTPS out to it, directly or through your proxy (`HTTPS_PROXY=` in
+`/etc/dfir-copilot/env`). Nothing else crosses: Velociraptor listens on this machine only, and the evidence
+stays where it is. This machine's own firewall: run `install.sh` again with
+`INVESTIGATOR_NET=10.20.0.0/16` (and `ADMIN_NET=` for SSH, default the same). An investigator checks the way
+in from Windows with `Test-NetConnection <this machine> -Port 8501`. Without a certificate the app answers on
+this machine only (see "Local only" above).
+
+**Backup** runs every night at 02:30 into `/srv/dfir/backups` (the last 14 kept; another folder:
+`sudo /opt/dfir-copilot/deploy/backup.sh /mnt/backup/dfir`). It needs no stop: each case database is copied
+safely while the app runs, with the case files, chats and reports, `/etc/dfir-copilot`, Velociraptor's keys,
+every image's identity (client IDs stay the same) and the TLS files. Not the evidence, memory images or
+Velociraptor's datastore. Restore: stop the service, put `cases/` back under `/srv/dfir/cases` and unpack
+`settings.tar.gz` at `/`, start it, `sudo dfir-admin selftest`. The backup holds keys and evidence-derived
+data: store it like the evidence.
+
+**Update**: `sudo /opt/dfir-copilot/deploy/update.sh` (git pull, packages, restart; running questions get up
+to ten minutes to finish).
+
+**Without internet.** On another Ubuntu machine of the same version (22.04 for SIFT) with internet:
+```bash
+git clone https://github.com/eclipser19/bananeabibenmiyaptim dfir-copilot && cd dfir-copilot
+python3 -m venv /tmp/w && /tmp/w/bin/pip install --upgrade pip && /tmp/w/bin/pip wheel -r requirements-lock.txt -w wheels
+curl -LO https://github.com/Velocidex/velociraptor/releases/download/v0.77.2/velociraptor-v0.77.2-linux-amd64
+```
+Copy the repository folder (with `wheels/`) to `/opt/dfir-copilot` and the binary next to it, then
+`sudo WHEELS=/opt/dfir-copilot/wheels VELOCIRAPTOR_BIN=<the binary> /opt/dfir-copilot/deploy/install.sh`
+(the binary is refused unless its SHA-256 is the pinned one). Answer "no" to internet in setup and bring
+the symbol tables (README, "Symbols and offline use").
 
 ## By hand
 

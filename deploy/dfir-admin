@@ -8,5 +8,5 @@ set -euo pipefail
 [ $# -ge 1 ] || { sed -n '2,5p' "$0" >&2; exit 1; }
 module=$1; shift
 case "$module" in ''|*[!a-z_]*) echo "Unknown command: $module" >&2; exit 1 ;; esac
-exec sudo -u dfir -H /bin/bash -c 'set -a; . /etc/dfir-copilot/env; set +a; cd /srv/dfir/work
+exec sudo -u dfir -H /bin/bash -c 'umask 027; set -a; . /etc/dfir-copilot/env; set +a; cd /srv/dfir/work
 PYTHONPATH=/opt/dfir-copilot exec /opt/dfir-copilot/.venv/bin/python -m "copilot.$0" "$@"' "$module" "$@"

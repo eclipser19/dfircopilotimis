@@ -2,6 +2,7 @@
 # Updates the copilot from git (or from files you copied into /opt/dfir-copilot) and restarts it.
 #   sudo /opt/dfir-copilot/deploy/update.sh            WHEELS=/path/to/wheels for no internet
 # Running questions get up to 10 minutes to finish; one cut off is offered for Continue afterwards.
+# Stored descriptions are rebuilt by themselves when the normalizer changed.
 set -euo pipefail
 APP=/opt/dfir-copilot
 [ "$(id -u)" -eq 0 ] || { echo "Run as root: sudo $0" >&2; exit 1; }

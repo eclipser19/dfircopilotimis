@@ -1,20 +1,21 @@
-# DFIR Copilot web app (Streamlit over HTTPS on port 8501).
+# DFIR Copilot: Velociraptor, every image's dead-disk client and the web app (python -m copilot.install start).
 [Unit]
-Description=DFIR Copilot web app
-After=network-online.target dfir-velociraptor.service
+Description=DFIR Copilot (Velociraptor, image clients, web app)
+After=network-online.target
 Wants=network-online.target
 
 [Service]
 User=dfir
 Group=dfir
-WorkingDirectory=/srv/dfir/work
+WorkingDirectory=/opt/dfir-copilot
 EnvironmentFile=/etc/dfir-copilot/env
-ExecStart=/opt/dfir-copilot/.venv/bin/streamlit run /opt/dfir-copilot/app.py \
-    --server.address 0.0.0.0 --server.port 8501 --server.headless true \
-    --server.sslCertFile /etc/dfir-copilot/tls/cert.pem --server.sslKeyFile /etc/dfir-copilot/tls/key.pem \
-    --browser.gatherUsageStats false
+# Keys, settings and case data readable by the dfir account and group only.
+UMask=0027
+# start's own lines reach journalctl -u dfir-copilot as they are printed.
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/dfir-copilot/.venv/bin/python -m copilot.install start
 Restart=on-failure
-RestartSec=5
+RestartSec=10
 # A normal stop lets running questions finish; one cut off is offered for Continue after the restart.
 TimeoutStopSec=600
 

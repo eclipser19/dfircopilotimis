@@ -152,3 +152,20 @@ def test_setup_asks_only_what_it_cannot_know_and_skips_what_is_done(tmp_path, mo
 
     answers = iter(["", "n"])                                            # again: only the folder and the GUI question
     assert install.setup() == 0 and len(downloads) == 1
+
+
+def test_linux_gets_its_own_build_binary_name_and_next_steps(tmp_path, monkeypatch):
+    monkeypatch.setattr(install, "SYSTEM", "linux")
+    assert os.path.basename(install.Layout(str(tmp_path)).exe) == "velociraptor"
+    url, sha256 = install.VELOCIRAPTOR_BUILDS["linux"]
+    assert url.endswith(f"v{install.VELOCIRAPTOR_VERSION}-linux-amd64") and len(sha256) == 64
+    payload = b"\x7fELF not really velociraptor"
+    monkeypatch.setattr(install.urllib.request, "urlopen", lambda url, timeout: io.BytesIO(payload))
+    dest = tmp_path / "velociraptor"
+    install.download_velociraptor(str(dest), sha256=hashlib.sha256(payload).hexdigest())
+    if os.name != "nt":
+        assert os.access(dest, os.X_OK)                                    # it can be run as it is
+    steps = install._linux_next_steps({"port": 8501, "tls_cert": "c", "tls_key": "k", "server_name": "sift01",
+                                       "data_dir": "/srv/dfir"}, True)
+    assert "sudo dfir-admin install add-image" in steps and "systemctl enable --now dfir-copilot" in steps
+    assert "https://sift01:8501" in steps and "allows TCP 8501" in steps

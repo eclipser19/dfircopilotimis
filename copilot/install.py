@@ -1,6 +1,7 @@
 """
-Installs the copilot on a fresh Windows machine, asking only what it can't know. `install.ps1` runs
-`setup` after it has installed Python and the packages.
+Installs the copilot on a fresh Windows or Linux machine (SANS SIFT, Ubuntu), asking only what it can't
+know. `install.ps1` (Windows) and `deploy/install.sh` (Linux) run `setup` after they have installed Python
+and the packages.
 
   python -m copilot.install setup                         Velociraptor (downloaded, server, API), server.yaml,
                                                           HTTPS certificate, first admin account
@@ -10,8 +11,9 @@ Installs the copilot on a fresh Windows machine, asking only what it can't know.
   python -m copilot.install start                         Velociraptor, every image's client and the web app
                                                           (images added later start by themselves); Ctrl+C stops all
 
-What it makes goes into the data folder (server.yaml `deploy.data_dir`, default C:\\dfir), except the files
-the copilot reads from the code folder: server.yaml, auth.yaml, api_client.yaml. Every step is skipped
+What it makes goes into the data folder (server.yaml `deploy.data_dir`, default C:\\dfir or /srv/dfir), except the
+files the copilot reads from the code folder (or where DFIR_SETTINGS, DFIR_AUTH_FILE, DFIR_API_CONFIG point):
+server.yaml, auth.yaml, api_client.yaml. Every step is skipped
 when its file exists, so running setup again only fills in what is missing.
 """
 import argparse
@@ -30,10 +32,17 @@ import urllib.request
 import yaml
 
 VELOCIRAPTOR_VERSION = "0.77.2"                 # the version the copilot was tested with
-VELOCIRAPTOR_URL = ("https://github.com/Velocidex/velociraptor/releases/download/"
-                    f"v{VELOCIRAPTOR_VERSION}/velociraptor-v{VELOCIRAPTOR_VERSION}-windows-amd64.exe")
-VELOCIRAPTOR_SHA256 = "686e4f5888fdd66d07ace3b6c1cbd7d2dd0d8d5fb4d3b5d905a7df3341dfb86f"   # GitHub's digest
-DEFAULT_DATA_DIR = r"C:\dfir"
+_RELEASE = ("https://github.com/Velocidex/velociraptor/releases/download/"
+            f"v{VELOCIRAPTOR_VERSION}/velociraptor-v{VELOCIRAPTOR_VERSION}-")
+# The release file for each system and its SHA-256. Windows: GitHub's digest. Linux: the release file's
+# (two downloads, 2026-10-21 and 2026-10-29, agree; GitHub's API was not reachable to cross-check it).
+VELOCIRAPTOR_BUILDS = {
+    "windows": (_RELEASE + "windows-amd64.exe", "686e4f5888fdd66d07ace3b6c1cbd7d2dd0d8d5fb4d3b5d905a7df3341dfb86f"),
+    "linux": (_RELEASE + "linux-amd64", "6c4c23c466d892788ff56ddcd3a31f844e4c0d797ade454c5e2625eb9e427077"),
+}
+SYSTEM = "windows" if os.name == "nt" else "linux"
+VELOCIRAPTOR_URL, VELOCIRAPTOR_SHA256 = VELOCIRAPTOR_BUILDS[SYSTEM]
+DEFAULT_DATA_DIR = r"C:\dfir" if SYSTEM == "windows" else "/srv/dfir"
 DEFAULT_PORT = 8501
 API_PORT = 8001
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$")
@@ -73,7 +82,7 @@ class Layout:
     def __init__(self, data_dir: str):
         self.data_dir = os.path.abspath(data_dir)
         self.vr_dir = os.path.join(self.data_dir, "velociraptor")
-        self.exe = os.path.join(self.vr_dir, "velociraptor.exe")
+        self.exe = os.path.join(self.vr_dir, "velociraptor.exe" if SYSTEM == "windows" else "velociraptor")
         self.server_config = os.path.join(self.vr_dir, "server.config.yaml")
         self.client_template = os.path.join(self.vr_dir, "client.config.yaml")
         self.datastore = os.path.join(self.vr_dir, "datastore")
@@ -135,6 +144,8 @@ def download_velociraptor(dest: str, url: str = VELOCIRAPTOR_URL, sha256: str = 
     if digest.hexdigest() != sha256:
         os.remove(part)
         raise InstallError(f"The download's SHA-256 is {digest.hexdigest()}, not the published {sha256}: not used.")
+    if SYSTEM != "windows":
+        os.chmod(part, 0o755)
     os.replace(part, dest)
 
 
@@ -427,7 +438,8 @@ def start(layout: Layout, deploy: dict, wait_api: int = 90):
                     print(f"started {label} (client {info.get('client_id') or '?'})")
             for label in ("velociraptor", "app"):
                 if procs[label].poll() is not None:
-                    print(f"{label} stopped (exit {procs[label].returncode}): see {layout.logs}\\{label}.log")
+                    print(f"{label} stopped (exit {procs[label].returncode}): see "
+                          f"{os.path.join(layout.logs, label + '.log')}")
                     return 1
             time.sleep(5)
     except KeyboardInterrupt:
@@ -513,6 +525,9 @@ def setup() -> int:
     deploy = deploy_settings()
     tls = bool(deploy.get("tls_cert") and deploy.get("tls_key"))
     python = sys.executable
+    if SYSTEM != "windows":
+        print(_linux_next_steps(deploy, tls))
+        return 0
     print(f"""
 Done. Next:
   1. Add each disk image (E01: the first segment; the others in the same folder):
@@ -532,6 +547,27 @@ Done. Next:
               "server.yaml, or add deploy.tls_cert / tls_key to it, to open it to investigators.)")
     print("Backups and updates: DEPLOY.md.")
     return 0
+
+
+def _linux_next_steps(deploy: dict, tls: bool) -> str:
+    """What to do after setup on Linux, where deploy/install.sh made the dfir-copilot service and dfir-admin."""
+    port = deploy.get("port") or DEFAULT_PORT
+    network = (f"  5. Investigators in another subnet: the network team allows TCP {port} from their subnet to this\n"
+               f"     machine. This machine's own firewall: deploy/install.sh with INVESTIGATOR_NET=<their subnet>."
+               if tls else
+               "  (No certificate: the app answers on this machine only. Delete server.yaml and run setup again,\n"
+               "   or add deploy.tls_cert / tls_key to it, to open it to investigators.)")
+    return f"""
+Done. Next:
+  1. Add each disk image (E01: the first segment, the others in the same folder; the dfir group must read it):
+       sudo dfir-admin install add-image /srv/dfir/evidence/<image>.E01 --name <short-name>
+  2. Start everything now and at every boot (Velociraptor, every image's client, the app):
+       sudo systemctl enable --now dfir-copilot          logs: journalctl -u dfir-copilot, {deploy.get('data_dir', DEFAULT_DATA_DIR)}/logs
+     then open {app_url(deploy)}, sign in, New case, and give it the image's client ID.
+  3. Check Velociraptor once it runs: sudo dfir-admin selftest
+  4. More accounts: sudo dfir-admin auth add <name>   (--admin for admins)
+{network}
+Backups and updates: DEPLOY.md (Linux)."""
 
 
 def main(argv=None) -> int:

@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Backs up what cannot be collected again: the cases (databases copied safely while the app runs, chats,
-# reports), the settings and accounts, and the dead-disk clients' identities (so client IDs stay the same).
-# Not the evidence or memory images (keep the originals) or Velociraptor's datastore (collected again if needed).
-#   sudo /opt/dfir-copilot/deploy/backup.sh [destination folder]     (nightly by the dfir-backup timer)
-# The backup holds secrets (keys, accounts) and evidence-derived data: keep it as protected as the evidence.
+# Backs up what cannot be collected again, while the copilot runs: the cases (each database copied safely,
+# plus case files, chats and reports), the settings and accounts, Velociraptor's keys and every image's
+# client identity (so client IDs stay the same after a restore), and the TLS files. Not the evidence or
+# memory images (keep the originals), Velociraptor's datastore, logs or binary (made again by setup).
+#   sudo /opt/dfir-copilot/deploy/backup.sh [destination folder]     (nightly: the dfir-backup timer)
+# The backup holds keys, accounts and evidence-derived data: store it like the evidence.
 set -euo pipefail
 DATA=/srv/dfir
 KEEP=${KEEP:-14}                     # backups kept in the default folder
@@ -17,8 +18,12 @@ find "$DATA/cases" -name case.db -type f | while read -r db; do
   mkdir -p "$(dirname "$out")"
   sqlite3 "$db" ".backup '$out'"
 done
-tar -czf "$dest/settings.tar.gz" -C / etc/dfir-copilot srv/dfir/velociraptor/server.config.yaml \
-  srv/dfir/velociraptor/client.config.yaml srv/dfir/deaddisk $( [ -f $DATA/learned_knowledge.yaml ] && echo srv/dfir/learned_knowledge.yaml )
+parts=(etc/dfir-copilot)
+for p in srv/dfir/velociraptor srv/dfir/tls srv/dfir/learned_knowledge.yaml; do
+  [ -e "/$p" ] && parts+=("$p")
+done
+tar -czf "$dest/settings.tar.gz" -C / --exclude 'srv/dfir/velociraptor/datastore' \
+  --exclude 'srv/dfir/velociraptor/velociraptor' --exclude '*.log' "${parts[@]}"
 chmod -R go-rwx "$dest"
 echo "Backup written to $dest ($(du -sh "$dest" | cut -f1))"
 

@@ -23,6 +23,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1      # 1. Python 3.12, pa
    `add-image`; `python -m copilot.install images` lists them all), run the triage it offers, then ask,
    e.g. "How did the attacker get in?".
 
+On SANS SIFT or Ubuntu: `sudo git clone ... /opt/dfir-copilot`, then `sudo /opt/dfir-copilot/deploy/install.sh`
+(the same questions; it runs as a systemd service): [DEPLOY.md, Linux](DEPLOY.md#linux-sans-sift-or-ubuntu).
+
 What each step does:
 
 - **`install.ps1`** finds Python 3.12 (or installs it for this user with winget), makes `.venv` and

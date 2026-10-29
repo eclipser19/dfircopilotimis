@@ -50,3 +50,6 @@ imagetest/
 *.ad1
 *.E0[0-9]
 *.mem
+
+# Python packages brought for an install without internet (DEPLOY.md, Linux)
+wheels/
