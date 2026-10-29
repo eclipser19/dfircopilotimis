@@ -169,3 +169,21 @@ def test_linux_gets_its_own_build_binary_name_and_next_steps(tmp_path, monkeypat
                                        "data_dir": "/srv/dfir"}, True)
     assert "sudo dfir-admin install add-image" in steps and "systemctl enable --now dfir-copilot" in steps
     assert "https://sift01:8501" in steps and "allows TCP 8501" in steps
+
+
+def test_a_data_folder_setup_cannot_write_is_asked_again(tmp_path, monkeypatch, capsys):
+    good, bad = str(tmp_path / "data"), "/nowhere/dfir"
+    answers = iter([bad, good])
+    monkeypatch.setattr(install, "INPUT", lambda prompt: next(answers))
+    monkeypatch.setattr(install, "SYSTEM", "linux")
+    real_make = install.Layout.make
+
+    def make(self):
+        if self.data_dir == os.path.abspath(bad):
+            raise PermissionError(13, "Permission denied")
+        real_make(self)
+    monkeypatch.setattr(install.Layout, "make", make)
+    layout = install.data_folder({})
+    assert layout.data_dir == os.path.abspath(good) and os.path.isdir(layout.vr_dir)
+    out = capsys.readouterr().out
+    assert "cannot write /nowhere/dfir" in out and "sudo install -d -o" in out

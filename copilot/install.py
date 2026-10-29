@@ -452,12 +452,30 @@ def start(layout: Layout, deploy: dict, wait_api: int = 90):
 
 
 # ---------------------------------------------------------------- setup
+def data_folder(existing: dict) -> Layout:
+    """The data folder, asked until it is one the account running setup can write (on Linux that account is
+    the service's, dfir, not root: deploy/install.sh runs setup as it)."""
+    while True:
+        layout = Layout(ask("Data folder (Velociraptor, logs, memory images, symbols)",
+                            existing.get("data_dir") or DEFAULT_DATA_DIR))
+        try:
+            layout.make()
+            return layout
+        except PermissionError:
+            user = getpass.getuser()
+            print(f"[!] Setup runs as the account '{user}', which cannot write {layout.data_dir}.")
+            if SYSTEM == "windows":
+                print("    Pick a folder this account can write, e.g. on a data disk.")
+            else:
+                print(f"    Press Enter for {DEFAULT_DATA_DIR} (made for it by deploy/install.sh), or give it the folder first:\n"
+                      f"      sudo install -d -o {user} -g {user} -m 0750 {layout.data_dir}\n"
+                      f"    (not a folder in someone's home, such as a Desktop: the service cannot use those).")
+
+
 def setup() -> int:
     print("DFIR Copilot setup. Press Enter to take the value in [brackets].")
     existing = deploy_settings()
-    layout = Layout(ask("Data folder (Velociraptor, logs, memory images, symbols)",
-                        existing.get("data_dir") or DEFAULT_DATA_DIR))
-    layout.make()
+    layout = data_folder(existing)
 
     step(f"Velociraptor {VELOCIRAPTOR_VERSION}")
     if not os.path.isfile(layout.exe):

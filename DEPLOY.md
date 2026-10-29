@@ -145,7 +145,11 @@ sudo /opt/dfir-copilot/deploy/install.sh
 It installs the Ubuntu packages, makes the `dfir` account and the folders, the Python environment with the
 exact tested packages, the `dfir-copilot` service and the nightly backup, then runs setup, which asks the
 questions in the table of section 1 (data folder: `/srv/dfir`) and downloads Velociraptor's Linux build,
-checked against its SHA-256. Options, as environment variables before the command: `WHEELS=<folder>` and
+checked against its SHA-256. Setup runs as the `dfir` account, not as root, so the service can use what it
+makes: at "Data folder" press Enter for `/srv/dfir`, the folder the installer made for it. For another
+disk, give the folder to that account first (`sudo install -d -o dfir -g dfir -m 0750 /mnt/big/dfir`), never
+a folder inside someone's home such as a Desktop; setup asks again when it cannot write the one given.
+Options, as environment variables before the command: `WHEELS=<folder>` and
 `VELOCIRAPTOR_BIN=<file>` without internet (below), `INVESTIGATOR_NET=<subnet>` for the firewall.
 
 **Images and accounts**
