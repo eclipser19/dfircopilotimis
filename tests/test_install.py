@@ -137,6 +137,19 @@ def test_https_opens_the_app_to_other_computers_and_keeps_the_settings(tmp_path,
     assert install.main(["https", "--cert", str(tmp_path / "none.pem"), "--key", "k"]) == 1   # files must exist
 
 
+def test_an_installed_copy_runs_in_its_work_folder_not_the_code_folder(tmp_path, monkeypatch):
+    settings = tmp_path / "server.yaml"                # deploy/install.sh: the code folder belongs to root
+    install.write_server_yaml(str(settings), {"deploy": {"data_dir": str(tmp_path / "data")}})
+    monkeypatch.setenv("DFIR_SETTINGS", str(settings))
+    monkeypatch.chdir(tmp_path)
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.setenv("DFIR_WORK_DIR", str(work))
+    assert install.main(["images"]) == 0 and os.getcwd() == str(work)     # start launches the app here too
+    monkeypatch.delenv("DFIR_WORK_DIR")
+    assert install.work_dir() == install.CODE_DIR
+
+
 def test_setup_asks_only_what_it_cannot_know_and_skips_what_is_done(tmp_path, monkeypatch):
     monkeypatch.setenv("DFIR_SETTINGS", str(tmp_path / "server.yaml"))
     monkeypatch.setenv("DFIR_AUTH_FILE", str(tmp_path / "auth.yaml"))

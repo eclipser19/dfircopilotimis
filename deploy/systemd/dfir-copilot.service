@@ -7,7 +7,8 @@ Wants=network-online.target
 [Service]
 User=dfir
 Group=dfir
-WorkingDirectory=/opt/dfir-copilot
+# The code folder belongs to root: the copilot runs in the data folder (DFIR_WORK_DIR in the env file).
+WorkingDirectory=/srv/dfir/work
 EnvironmentFile=/etc/dfir-copilot/env
 # Keys, settings and case data readable by the dfir account and group only.
 UMask=0027

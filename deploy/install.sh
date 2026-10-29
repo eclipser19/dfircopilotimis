@@ -44,9 +44,6 @@ PY=$(command -v python3) || die "python3 is missing"
 say "Service account 'dfir', folders"
 id dfir >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin dfir
 install -d -o dfir -g dfir -m 0750 "$DATA" "$DATA/cases" "$DATA/evidence" "$DATA/backups" "$DATA/work"
-# The data of the case the app opens before one is picked (the code folder's case.yaml): the app runs in the
-# code folder, which belongs to root, so this one folder in it belongs to the service account.
-install -d -o dfir -g dfir -m 0750 "$APP/case_data"
 # Settings, accounts and the API key live outside the code folder; the service account writes them in setup.
 install -d -o root -g dfir -m 0770 "$CONF"
 if [ ! -f "$CONF/env" ]; then
@@ -58,10 +55,13 @@ DFIR_AUTH_FILE=$CONF/auth.yaml
 DFIR_API_CONFIG=$CONF/api_client.yaml
 DFIR_CASES_DIR=$DATA/cases
 DFIR_LEARNED_FILE=$DATA/learned_knowledge.yaml
+# The copilot runs here, not in the code folder (root's): what it writes outside a case folder lands here.
+DFIR_WORK_DIR=$DATA/work
 HOME=$DATA
 EOF
   chown root:dfir "$CONF/env"; chmod 0640 "$CONF/env"
 fi
+grep -q '^DFIR_WORK_DIR=' "$CONF/env" || echo "DFIR_WORK_DIR=$DATA/work" >> "$CONF/env"   # env files from before
 
 say "Python environment ($APP/.venv)"
 [ -x "$APP/.venv/bin/python" ] || "$PY" -m venv "$APP/.venv"

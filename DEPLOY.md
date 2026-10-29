@@ -135,7 +135,7 @@ added, everything started, a collection through the copilot, a backup.
 |---|---|
 | `/opt/dfir-copilot` | the code (this repository) and its `.venv` |
 | `/etc/dfir-copilot` | `server.yaml`, `auth.yaml`, `api_client.yaml`, `env` (the service's settings) |
-| `/srv/dfir` | the data folder: Velociraptor (binary, keys, datastore, one folder per image), `cases/`, `logs/`, `memory/`, `symbols/`, `tls/`, `backups/` |
+| `/srv/dfir` | the data folder: Velociraptor (binary, keys, datastore, one folder per image), `cases/`, `logs/`, `memory/`, `symbols/`, `tls/`, `backups/`, `work/` (where the copilot runs: the code folder stays read-only to it) |
 
 **Install**
 ```bash
@@ -202,9 +202,8 @@ this machine only (see "Local only" above).
 `sudo /opt/dfir-copilot/deploy/backup.sh /mnt/backup/dfir`). It needs no stop: each case database is copied
 safely while the app runs, with the case files, chats and reports, `/etc/dfir-copilot`, Velociraptor's keys,
 every image's identity (client IDs stay the same) and the TLS files. Not the evidence, memory images or
-Velociraptor's datastore. Restore: stop it, put `cases/` back under `/srv/dfir/cases` (and
-`code_case_data/case.db` into `/opt/dfir-copilot/case_data/`), unpack `settings.tar.gz` at `/`, start it,
-`sudo dfir-admin selftest`. The backup holds keys and evidence-derived data: store it like the evidence.
+Velociraptor's datastore. Restore: stop it, put `cases/` back under `/srv/dfir/cases`, unpack `settings.tar.gz` at
+`/`, start it, `sudo dfir-admin selftest`. The backup holds keys and evidence-derived data: store it like the evidence.
 
 **Update**: `sudo /opt/dfir-copilot/deploy/update.sh` (git pull, packages; it restarts a `--background` one,
 giving running questions up to ten minutes to finish; one running in a terminal you stop and start again).

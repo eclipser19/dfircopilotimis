@@ -10,6 +10,7 @@ APP=/opt/dfir-copilot
 cd "$APP"
 if git remote get-url origin >/dev/null 2>&1 && [ -z "${NO_PULL:-}" ]; then
   git pull --ff-only
+  NO_PULL=1 exec "$APP/deploy/update.sh" "$@"        # the rest as the version just pulled says
 fi
 if [ -n "${WHEELS:-}" ]; then
   .venv/bin/pip install -q --no-index --find-links "$WHEELS" -r requirements-lock.txt
@@ -17,7 +18,9 @@ else
   .venv/bin/pip install -q -r requirements-lock.txt
 fi
 install -m 0755 deploy/dfir-admin /usr/local/bin/dfir-admin
-install -d -o dfir -g dfir -m 0750 case_data
+# Settings added since the env file was written (deploy/install.sh writes it once).
+grep -q '^DFIR_WORK_DIR=' /etc/dfir-copilot/env || echo "DFIR_WORK_DIR=/srv/dfir/work" >> /etc/dfir-copilot/env
+install -d -o dfir -g dfir -m 0750 /srv/dfir/work
 if [ -d /run/systemd/system ]; then
   install -m 0644 deploy/systemd/* /etc/systemd/system/
   systemctl daemon-reload

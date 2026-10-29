@@ -22,10 +22,6 @@ find "$CASES" -name case.db -type f | while read -r db; do
   mkdir -p "$(dirname "$out")"
   sqlite3 "$db" ".backup '$out'"
 done
-if [ -f /opt/dfir-copilot/case_data/case.db ]; then       # the case the app opens before one is picked
-  mkdir -p "$dest/code_case_data"
-  sqlite3 /opt/dfir-copilot/case_data/case.db ".backup '$dest/code_case_data/case.db'"
-fi
 parts=(etc/dfir-copilot)
 for p in "$DATA/velociraptor" "$DATA/tls" /srv/dfir/learned_knowledge.yaml; do
   [ -e "$p" ] && parts+=("${p#/}")

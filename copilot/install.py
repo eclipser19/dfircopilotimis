@@ -13,7 +13,8 @@ and the packages.
 
 What it makes goes into the data folder (server.yaml `deploy.data_dir`, default C:\\dfir or /srv/dfir), except the
 files the copilot reads from the code folder (or where DFIR_SETTINGS, DFIR_AUTH_FILE, DFIR_API_CONFIG point):
-server.yaml, auth.yaml, api_client.yaml. Every step is skipped
+server.yaml, auth.yaml, api_client.yaml. The copilot runs in the code folder, or in DFIR_WORK_DIR when that is
+set (deploy/install.sh: the code folder belongs to root). Every step is skipped
 when its file exists, so running setup again only fills in what is missing.
 """
 import argparse
@@ -105,6 +106,13 @@ class Layout:
 
 def code_path(name: str) -> str:
     return os.path.join(CODE_DIR, name)
+
+
+def work_dir() -> str:
+    """The folder the copilot runs in: the code folder (server.yaml, auth.yaml, cases and the example case.yaml
+    there), or DFIR_WORK_DIR for an installed copy whose code folder it may not write and whose settings files
+    environment variables name (deploy/install.sh). The app writes there what has no case folder of its own."""
+    return os.environ.get("DFIR_WORK_DIR") or CODE_DIR
 
 
 def settings_path() -> str:
@@ -440,7 +448,7 @@ def start(layout: Layout, deploy: dict, wait_api: int = 90):
     added. Stops everything when one of the three stops (a scheduled task then restarts it all)."""
     if not os.path.isfile(layout.server_config):
         raise InstallError("Run `python -m copilot.install setup` first (no Velociraptor server config).")
-    os.chdir(CODE_DIR)                                    # the copilot finds server.yaml, auth.yaml... here
+    os.chdir(work_dir())                                  # the copilot finds server.yaml, auth.yaml... here
     os.makedirs(layout.logs, exist_ok=True)
     procs = {}
 
@@ -460,7 +468,7 @@ def start(layout: Layout, deploy: dict, wait_api: int = 90):
             if procs["velociraptor"].poll() is not None:
                 raise InstallError(f"Velociraptor stopped at once: see {os.path.join(layout.logs, 'velociraptor.log')}")
             time.sleep(1)
-        launch("app", streamlit_command(deploy), CODE_DIR)
+        launch("app", streamlit_command(deploy), work_dir())
         print(f"\nThe copilot: {app_url(deploy)}   (Ctrl+C stops everything)")
         while True:
             for info in images(layout):
@@ -638,7 +646,7 @@ def main(argv=None) -> int:
     https.add_argument("--cert", default="", help="certificate file (PEM) from your PKI")
     https.add_argument("--key", default="", help="its private key file (PEM)")
     args = parser.parse_args(argv)
-    os.chdir(CODE_DIR)
+    os.chdir(work_dir())
     try:
         if args.command == "setup":
             return setup()
