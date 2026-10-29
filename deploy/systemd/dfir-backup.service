@@ -1,0 +1,6 @@
+[Unit]
+Description=DFIR Copilot backup (cases, settings, dead-disk client identities)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/dfir-copilot/deploy/backup.sh

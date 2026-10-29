@@ -1,0 +1,22 @@
+# DFIR Copilot web app (Streamlit over HTTPS on port 8501).
+[Unit]
+Description=DFIR Copilot web app
+After=network-online.target dfir-velociraptor.service
+Wants=network-online.target
+
+[Service]
+User=dfir
+Group=dfir
+WorkingDirectory=/srv/dfir/work
+EnvironmentFile=/etc/dfir-copilot/env
+ExecStart=/opt/dfir-copilot/.venv/bin/streamlit run /opt/dfir-copilot/app.py \
+    --server.address 0.0.0.0 --server.port 8501 --server.headless true \
+    --server.sslCertFile /etc/dfir-copilot/tls/cert.pem --server.sslKeyFile /etc/dfir-copilot/tls/key.pem \
+    --browser.gatherUsageStats false
+Restart=on-failure
+RestartSec=5
+# A normal stop lets running questions finish; one cut off is offered for Continue after the restart.
+TimeoutStopSec=600
+
+[Install]
+WantedBy=multi-user.target

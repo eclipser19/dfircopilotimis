@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Runs a copilot command as the service account, with the service's settings. Examples:
+#   sudo dfir-admin auth add alice --admin     sudo dfir-admin auth list       sudo dfir-admin config_check
+#   sudo dfir-admin memory check [image]       sudo dfir-admin feedback export sudo dfir-admin lessons list
+#   sudo dfir-admin selftest                   sudo dfir-admin benchmark run /opt/dfir-copilot/cases/<name>/benchmark.yaml --client C.<id>
+set -euo pipefail
+[ "$(id -u)" -eq 0 ] || { echo "Run it with sudo: sudo dfir-admin $*" >&2; exit 1; }
+[ $# -ge 1 ] || { sed -n '2,5p' "$0" >&2; exit 1; }
+module=$1; shift
+case "$module" in ''|*[!a-z_]*) echo "Unknown command: $module" >&2; exit 1 ;; esac
+exec sudo -u dfir -H /bin/bash -c 'set -a; . /etc/dfir-copilot/env; set +a; cd /srv/dfir/work
+PYTHONPATH=/opt/dfir-copilot exec /opt/dfir-copilot/.venv/bin/python -m "copilot.$0" "$@"' "$module" "$@"
